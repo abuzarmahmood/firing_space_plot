@@ -9,13 +9,12 @@ import tables
 import easygui
 import os
 import numpy as np
-
-import re
 import matplotlib.pyplot as plt
-from scipy.optimize import curve_fit
 from scipy.ndimage.filters import gaussian_filter1d
-from scipy.stats import kruskal
-import shutil
+import scipy.signal as sig
+from sklearn.manifold import TSNE
+from sklearn.manifold import LocallyLinearEmbedding as LLE
+from mpl_toolkits.mplot3d import Axes3D
 
 ###################### Open file and extract data ################
 dir_name = "/media/sf_shared_folder/jian_you_data/tastes_separately/file_1"
@@ -51,11 +50,39 @@ off_spikes = [spikes[i][off_trials[i],:,:] for i in range(len(dig_in))] #Index t
 on_spikes = [spikes[i][on_trials[i],:,:] for i in range(len(dig_in))] #Index trials with laser
 
 ################### Convert spikes to firing rates ##################
-off_firing = 
+step_size = 25
+window_size = 250
+tot_time = 7000
+
+off_firing = []
 
 for l in range(len(off_spikes)):
-    for i in range(off_spikes[0].shape[0]):
-        for j in range(off_spikes[0].shape[1]):
-            for k in range(off_spikes[0].shape[2]):
-                off_firing[i, j, k] = np.mean(off_firing[i, j, step_size*k:step_size*k + bin_window_size])
+    # [trials, nrns, time]
+    this_off_firing = np.zeros((off_spikes[0].shape[0],off_spikes[0].shape[1],int((tot_time-window_size)/step_size)-1))
+    for i in range(this_off_firing.shape[0]):
+        for j in range(this_off_firing.shape[1]):
+            for k in range(this_off_firing.shape[2]):
+                this_off_firing[i, j, k] = np.mean(off_spikes[l][i, j, step_size*k:step_size*k + window_size])
+    this_off_firing = this_off_firing.reshape((this_off_firing.shape[1],this_off_firing.shape[0]*this_off_firing.shape[2]))
+    off_firing.append(this_off_firing)
+    
+## Maybe smooth firing rates
 
+## Test plots for spikes to firing rate  
+# =============================================================================
+# inds = [0,3,1]
+# spikes = off_spikes[inds[0]][inds[1],inds[2],:]
+# rate = off_firing[inds[0]][inds[1],inds[2],:]
+# rate2 = sig.resample(rate,spikes.shape[0])
+# rate2 = rate2/np.max(rate2)
+# plt.plot(spikes)
+# plt.plot(rate2)
+# =============================================================================
+
+################### Reduce dimensions ########################
+off_f_red = LLE(n_neighbors = 50,n_components=3).fit_transform(np.transpose(this_off_firing))
+off_f_red = TSNE(n_components=2).fit_transform(np.transpose(this_off_firing))
+
+fig = plt.figure()
+ax = Axes3D(fig)
+ax.scatter(off_f_red[:,0],off_f_red[:,1],off_f_red[:,2])
