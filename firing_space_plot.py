@@ -10,11 +10,15 @@ import easygui
 import os
 import numpy as np
 import matplotlib.pyplot as plt
+from matplotlib.colors import Colormap
+import matplotlib.animation as animation
+
 from scipy.ndimage.filters import gaussian_filter1d
 import scipy.signal as sig
 from sklearn.manifold import TSNE
 from sklearn.manifold import LocallyLinearEmbedding as LLE
 from mpl_toolkits.mplot3d import Axes3D
+import time
 
 ###################### Open file and extract data ################
 dir_name = "/media/sf_shared_folder/jian_you_data/tastes_separately/file_1"
@@ -65,7 +69,8 @@ for l in range(len(off_spikes)):
                 this_off_firing[i, j, k] = np.mean(off_spikes[l][i, j, step_size*k:step_size*k + window_size])
     this_off_firing = this_off_firing.reshape((this_off_firing.shape[1],this_off_firing.shape[0]*this_off_firing.shape[2]))
     off_firing.append(this_off_firing)
-    
+
+## Make sure there are not problems with reshaping    
 ## Maybe smooth firing rates
 
 ## Test plots for spikes to firing rate  
@@ -81,8 +86,45 @@ for l in range(len(off_spikes)):
 
 ################### Reduce dimensions ########################
 off_f_red = LLE(n_neighbors = 50,n_components=3).fit_transform(np.transpose(this_off_firing))
-off_f_red = TSNE(n_components=2).fit_transform(np.transpose(this_off_firing))
+off_f_red = TSNE(n_components=3).fit_transform(np.transpose(this_off_firing))
 
+## 3D Plot for single trajectory
 fig = plt.figure()
 ax = Axes3D(fig)
-ax.scatter(off_f_red[:,0],off_f_red[:,1],off_f_red[:,2])
+i = 1
+trial_len = int((tot_time-window_size)/step_size)-1
+ran_inds = np.arange((trial_len*i),(trial_len*(i+1)))
+this_cmap = Colormap('hsv')
+p = ax.scatter(off_f_red[ran_inds,0],off_f_red[ran_inds,1],off_f_red[ran_inds,2],c =np.linspace(1,255,len(ran_inds)),cmap='prism')
+ax.plot(off_f_red[ran_inds,0],off_f_red[ran_inds,1],off_f_red[ran_inds,2])
+fig.colorbar(p)
+
+## 3D animated scatter plot (DOESN'T WORK)
+fig = plt.figure()
+ax = Axes3D(fig)
+scat = ax.scatter(off_f_red[0,0],off_f_red[0,1],off_f_red[0,2])
+
+def animate(i):
+    scat.set_xdata(off_f_red[i,0])
+    scat.set_ydata(off_f_red[i,1])
+    scat.set_zdata(off_f_red[i,2])
+    
+anim = animation.FuncAnimation(fig, animate, interval = 100, frames = len(ran_inds)-1)
+plt.draw()
+plt.show()
+
+def main():
+    numframes = 100
+
+    fig = plt.figure()
+    scat = ax.scatter(off_f_red[i,0],off_f_red[i,1],off_f_red[i,2])
+
+    ani = animation.FuncAnimation(fig, update_plot, frames=xrange(numframes),
+                                  fargs=(color_data, scat))
+    plt.show()
+
+def update_plot(i, data, scat):
+    scat.set_array(data[i])
+    return scat,
+
+main()
