@@ -4,7 +4,7 @@
 # 3.5) Maybe smooth firing rate
 # 4) Project into 'n' dim space and reduce dimensions
 
-# Normalize firing rate, use only responsive neurons (probs not needed)
+# Use only responsive neurons (probs not needed)
 # Try projecting all tastes at same time
 ######################### Import dat ish #########################
 import tables
@@ -14,11 +14,14 @@ import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib.colors import Colormap
 import matplotlib.animation as animation
+from scipy.spatial import distance_matrix as dist_mat
+from scipy import stats
 
 from scipy.ndimage.filters import gaussian_filter1d
 import scipy.signal as sig
 from sklearn.manifold import TSNE
 from sklearn.manifold import LocallyLinearEmbedding as LLE
+from sklearn.decomposition import PCA
 from mpl_toolkits.mplot3d import Axes3D
 import time
 
@@ -59,12 +62,12 @@ on_spikes = [spikes[i][on_trials[i],:,:] for i in range(len(dig_in))] #Index tri
 step_size = 25
 window_size = 250
 tot_time = 7000
-
+firing_len = int((tot_time-window_size)/step_size)-1
 off_firing = []
 
 for l in range(len(off_spikes)): # How TF do you get nan's from means?
     # [trials, nrns, time]
-    this_off_firing = np.zeros((off_spikes[0].shape[0],off_spikes[0].shape[1],int((tot_time-window_size)/step_size)-1))
+    this_off_firing = np.zeros((off_spikes[0].shape[0],off_spikes[0].shape[1],firing_len))
     for i in range(this_off_firing.shape[0]):
         for j in range(this_off_firing.shape[1]):
             for k in range(this_off_firing.shape[2]):
@@ -81,6 +84,69 @@ for l in range(len(off_firing)):
 
 all_off_f = np.asarray(off_firing)
 all_off_f = all_off_f.reshape((all_off_f.shape[1],all_off_f.shape[0]*all_off_f.shape[2]))
+
+############ Euclidean distance from starting point of each trial ############
+# First attempt -> straight up subtraction from starting point
+# Part A -> Run a loop over all trials
+dist_list = []
+for taste in off_firing:
+    dist_temp = np.empty((taste.shape[1]))
+    for i in range(taste.shape[1]):
+        dist_temp[i] = np.linalg.norm(taste[:,i] - taste[:,0])
+    dist_list.append(dist_temp)
+    
+fig=plt.figure(figsize=(21, 6))
+columns = 7
+rows = 2
+count = 0
+for i in range(1, columns*rows +1):
+    fig.add_subplot(rows, columns, i)
+    plt.plot(dist_list[0][count*firing_len:(count+1)*firing_len])
+    count +=1
+plt.show()
+    
+# Part B -> Run over all trials but use respective basline for every trial
+
+# Part C -> Calculate a distance matrix...patterning will show regularity of trajectory
+# Normalize and sum dist matrices for all trials
+# Assuming state transition are bounded in time, there should be a trend
+# Observation: Trials for different tastes show different structure
+taste = 3
+dist_array = np.empty((firing_len,firing_len,np.int(off_firing[0].shape[1]/firing_len)))
+for trial in range(dist_array.shape[2]):
+    dat = np.transpose(off_firing[taste][:,firing_len*trial:firing_len*(trial+1)])
+    dist_array[:,:,trial] = dist_mat(dat,dat)
+
+fig=plt.figure(figsize=(21, 6))
+columns = 7
+rows = 2
+count = 0
+for i in range(1, columns*rows +1):
+    fig.add_subplot(rows, columns, i)
+    plt.imshow(stats.zscore(dist_array[:,:,count]))
+    count +=1
+plt.show()
+#fig.savefig('taste%i.png' % taste)
+
+
+
+for i in range(15):
+    fig = plt.figure()
+    #p = plt.imshow(stats.zscore(np.sum(dist_array,axis=2)))
+    p = plt.imshow(stats.zscore(dist_array[:,:,i]))
+    fig.colorbar(p)
+
+# Second attempt -> subtract means of chunks of time-points to avert noise effects
+
+# Third attempt
+# Use PCA find relevant parts of trajectory
+# See if 95% variance can be explained by significantly lower dimensions
+pca = PCA(n_components=12)
+pca.fit(off_firing[0])
+np.sum(pca.explained_variance_ratio_)
+
+
+###############################################################################
 #all_off_f = all_off_f[~np.isnan(all_off_f)]
 ## Make sure there are not problems with reshaping    
 ## Maybe smooth firing rates
@@ -98,7 +164,6 @@ all_off_f = all_off_f.reshape((all_off_f.shape[1],all_off_f.shape[0]*all_off_f.s
 
 ## All da neurons, all da tastes, and ALL DA PLOTS!
 # =============================================================================
-# rows = len(train_rate)
 # rows = len(train_rate)
 # cols = train_rate[0].shape[1]
 # count = 1
@@ -119,12 +184,12 @@ all_off_f = all_off_f.reshape((all_off_f.shape[1],all_off_f.shape[0]*all_off_f.s
 ################### Reduce dimensions ########################
 off_f_red = LLE(n_neighbors = 50,n_components=3).fit_transform(np.transpose(all_off_f))
 off_f_red = LLE(n_neighbors = 50,n_components=3).fit_transform(np.transpose(off_firing[0]))
-off_f_red = TSNE(n_components=3).fit_transform(np.transpose(this_off_firing))
+off_f_red = TSNE(n_components=3).fit_transform(np.transpose(all_off_f))
 
 ## 3D Plot for single trajectory
 fig = plt.figure()
 ax = Axes3D(fig)
-i = 2
+i = 3
 trial_len = int((tot_time-window_size)/step_size)-1
 ran_inds = np.arange((trial_len*i),(trial_len*(i+1)))
 this_cmap = Colormap('hsv')
