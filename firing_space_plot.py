@@ -22,7 +22,7 @@ import scipy.signal as sig
 from sklearn.manifold import TSNE
 from sklearn.manifold import LocallyLinearEmbedding as LLE
 from sklearn.decomposition import PCA
-from mpl_toolkits.mplot3d import Axes3D
+#from mpl_toolkits.mplot3d import Axes3D
 import time
 
 ###################### Open file and extract data ################
@@ -60,11 +60,12 @@ on_spikes = [spikes[i][on_trials[i],:,:] for i in range(len(dig_in))] #Index tri
 
 ################### Convert spikes to firing rates ##################
 step_size = 25
-window_size = 250
+window_size = 500
 tot_time = 7000
 firing_len = int((tot_time-window_size)/step_size)-1
 off_firing = []
 
+## Moving Window
 for l in range(len(off_spikes)): # How TF do you get nan's from means?
     # [trials, nrns, time]
     this_off_firing = np.zeros((off_spikes[0].shape[0],off_spikes[0].shape[1],firing_len))
@@ -72,19 +73,37 @@ for l in range(len(off_spikes)): # How TF do you get nan's from means?
         for j in range(this_off_firing.shape[1]):
             for k in range(this_off_firing.shape[2]):
                 this_off_firing[i, j, k] = np.mean(off_spikes[l][i, j, step_size*k:step_size*k + window_size])
-    this_off_firing = this_off_firing.reshape((this_off_firing.shape[1],this_off_firing.shape[0]*this_off_firing.shape[2]))
+    #this_off_firing = this_off_firing.reshape((this_off_firing.shape[1],this_off_firing.shape[0]*this_off_firing.shape[2]))
     off_firing.append(this_off_firing)
+    
+## Inter-spike interval
+# =============================================================================
+# off_firing = []
+# for l in range(len(off_spikes)):
+#     this_off_firing = np.zeros(off_spikes[0].shape)
+#     for i in range(this_off_firing.shape[0]):
+#         for j in range(this_off_firing.shape[1]):
+#             this_trial = off_spikes[l][m,n,:]
+#             spike_inds = np.where(off_spikes[l][i,j,:]>0)[0]
+#             f_rate = np.reciprocal(np.diff(spike_inds).astype(float))
+#             for k in range(len(f_rate)):
+#                 this_off_firing[i,j,spike_inds[k]:] = f_rate[k]
+#     off_firing.append(this_off_firing)  
+# =============================================================================
+    
     
 # Normalize firing
 for l in range(len(off_firing)):
     for m in range(off_firing[0].shape[0]):
-        min_val = np.min(off_firing[l][m,:])
-        max_val = np.max(off_firing[l][m,:])
-        off_firing[l][m,:] = (off_firing[l][m,:] - min_val)/(max_val-min_val)
+        for n in range(off_firing[0].shape[1]):
+            min_val = np.min(off_firing[l][m,n,:])
+            max_val = np.max(off_firing[l][m,n,:])
+            off_firing[l][m,n,:] = (off_firing[l][m,n,:] - min_val)/(max_val-min_val)
 
 all_off_f = np.asarray(off_firing)
 all_off_f = all_off_f.reshape((all_off_f.shape[1],all_off_f.shape[0]*all_off_f.shape[2]))
 
+##############################################################################
 ############ Euclidean distance from starting point of each trial ############
 # First attempt -> straight up subtraction from starting point
 # Part A -> Run a loop over all trials
@@ -147,20 +166,35 @@ np.sum(pca.explained_variance_ratio_)
 
 
 ###############################################################################
+def lin_interp(seq, new_len, normalize=True):
+    # Do linear interpolation with however many multiple you can fit
+    # With remaining ones, just insert values randomly
+    interp_len = new_len//len(seq)
+    new_seq = []
+    try:
+        [new_seq.append(np.linspace(seq[i],seq[i+1],interp_len)) for i in range(len(seq))]
+    except:
+        pass
+    new_seq = np.asarray(new_seq)
+    new_seq = np.reshape(new_seq, ((new_seq.shape[0]*new_seq.shape[1]),1))
+    
+    if normalize:
+        new_seq = new_seq/np.max(new_seq)
+    
+    return new_seq
+
 #all_off_f = all_off_f[~np.isnan(all_off_f)]
 ## Make sure there are not problems with reshaping    
 ## Maybe smooth firing rates
 
 ## Test plots for spikes to firing rate  
-# =============================================================================
-# inds = [0,3,1]
-# spikes = off_spikes[inds[0]][inds[1],inds[2],:]
-# rate = off_firing[inds[0]][inds[1],inds[2],:]
-# rate2 = sig.resample(rate,spikes.shape[0])
-# rate2 = rate2/np.max(rate2)
-# plt.plot(spikes)
-# plt.plot(rate2)
-# =============================================================================
+inds = [2,3,4] # Taste, trial, nrn
+spikes = off_spikes[inds[0]][inds[1],inds[2],:]
+rate = off_firing[inds[0]][inds[1],inds[2],:]
+#rate2 = sig.resample(rate,spikes.shape[0])
+#rate2 = rate2/np.max(rate2)
+plt.plot(spikes)
+plt.plot(lin_interp(rate,len(spikes)))
 
 ## All da neurons, all da tastes, and ALL DA PLOTS!
 # =============================================================================
@@ -182,9 +216,9 @@ np.sum(pca.explained_variance_ratio_)
 # =============================================================================
 
 ################### Reduce dimensions ########################
-off_f_red = LLE(n_neighbors = 50,n_components=3).fit_transform(np.transpose(all_off_f))
-off_f_red = LLE(n_neighbors = 50,n_components=3).fit_transform(np.transpose(off_firing[0]))
-off_f_red = TSNE(n_components=3).fit_transform(np.transpose(all_off_f))
+off_f_red = LLE(n_neighbors = 50,n_components=2).fit_transform(np.transpose(all_off_f))
+#off_f_red = LLE(n_neighbors = 50,n_components=3).fit_transform(np.transpose(off_firing[0]))
+#off_f_red = TSNE(n_components=3).fit_transform(np.transpose(all_off_f))
 
 ## 3D Plot for single trajectory
 fig = plt.figure()
@@ -198,32 +232,30 @@ p = ax.scatter(off_f_red[ran_inds,0],off_f_red[ran_inds,1],off_f_red[ran_inds,2]
 ax.plot(off_f_red[ran_inds,0],off_f_red[ran_inds,1],off_f_red[ran_inds,2])
 fig.colorbar(p)
 
-## 3D animated scatter plot (DOESN'T WORK)
-fig = plt.figure()
-ax = Axes3D(fig)
-scat = ax.scatter(off_f_red[0,0],off_f_red[0,1],off_f_red[0,2])
+## 2D animated scatter plot
+###########################
+fig, ax = plt.subplots()
+x, y = off_f_red[:,0],off_f_red[:,1]
+sc = ax.scatter([],[])
+plt.xlim(min(x),max(x))
+plt.ylim(min(y),max(y))
 
 def animate(i):
-    scat.set_xdata(off_f_red[i,0])
-    scat.set_ydata(off_f_red[i,1])
-    scat.set_zdata(off_f_red[i,2])
-    
-anim = animation.FuncAnimation(fig, animate, interval = 100, frames = len(ran_inds)-1)
-plt.draw()
+    #x.append(np.random.rand(1)*10)
+    #y.append(np.random.rand(1)*10)
+    #sc.set_offsets(np.c_[x,y])
+    sc.set_offsets([x[i],y[i]])
+
+ani = animation.FuncAnimation(fig, animate, 
+                frames=range(len(x)), interval=10, repeat=True) 
 plt.show()
 
-def main():
-    numframes = 100
+###############################
+x, y = off_f_red[:,0],off_f_red[:,1]
+plt.scatter(x,y,c=np.floor(np.linspace(0,4,len(x))))
+plt.colorbar()
 
-    fig = plt.figure()
-    scat = ax.scatter(off_f_red[i,0],off_f_red[i,1],off_f_red[i,2])
-
-    ani = animation.FuncAnimation(fig, update_plot, frames=xrange(numframes),
-                                  fargs=(color_data, scat))
-    plt.show()
-
-def update_plot(i, data, scat):
-    scat.set_array(data[i])
-    return scat,
-
-main()
+## Plot all trajectories to see tastewise effect
+################################################
+x, y = off_f_red[:,0],off_f_red[:,1]
+all_trajs = [np.concatenate(x[(i*firing_len):(i+1)*firing_len]) for i in ]
