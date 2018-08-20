@@ -1,3 +1,12 @@
+#  ______ _      _               _______        _           _                   
+# |  ____(_)    (_)             |__   __|      (_)         | |                  
+# | |__   _ _ __ _ _ __   __ _     | |_ __ __ _ _  ___  ___| |_ ___  _ __ _   _ 
+# |  __| | | '__| | '_ \ / _` |    | | '__/ _` | |/ _ \/ __| __/ _ \| '__| | | |
+# | |    | | |  | | | | | (_| |    | | | | (_| | |  __/ (__| || (_) | |  | |_| |
+# |_|    |_|_|  |_|_| |_|\__, |    |_|_|  \__,_| |\___|\___|\__\___/|_|   \__, |
+#                         __/ |               _/ |                         __/ |
+#                        |___/               |__/                         |___/
+
 # 1) Open single file for now
 # 2) extract spiking for all tastes for on&off conditions
 # 3) Compute firing rate for ENTIRE 7s (or whatever length of recording)
@@ -25,7 +34,14 @@ from sklearn.decomposition import PCA
 #from mpl_toolkits.mplot3d import Axes3D
 import time
 
-###################### Open file and extract data ################
+#   _____      _     _____        _        
+#  / ____|    | |   |  __ \      | |       
+# | |  __  ___| |_  | |  | | __ _| |_ __ _ 
+# | | |_ |/ _ \ __| | |  | |/ _` | __/ _` |
+# | |__| |  __/ |_  | |__| | (_| | || (_| |
+#  \_____|\___|\__| |_____/ \__,_|\__\__,_|
+#
+
 dir_name = "/media/sf_shared_folder/jian_you_data/tastes_separately/file_1"
 os.chdir(dir_name)
 file_list = os.listdir('./')
@@ -100,10 +116,26 @@ for l in range(len(off_firing)):
             max_val = np.max(off_firing[l][m,n,:])
             off_firing[l][m,n,:] = (off_firing[l][m,n,:] - min_val)/(max_val-min_val)
 
-all_off_f = np.asarray(off_firing)
-all_off_f = all_off_f.reshape((all_off_f.shape[1],all_off_f.shape[0]*all_off_f.shape[2]))
 
-##############################################################################
+all_off_f_temp = np.asarray(off_firing)
+all_off_f = np.zeros((all_off_f_temp.shape[2], int(all_off_f_temp.size / all_off_f_temp.shape[2])))
+count = 0
+for i in range(all_off_f_temp.shape[0]):
+    for j in range(all_off_f_temp.shape[1]):
+        for k in range(all_off_f_temp.shape[3]):
+            all_off_f[:,count] = all_off_f_temp[i,j,:,k]
+            count += 1
+
+#
+#  ______           _ _     _ _               _____  _     _   
+# |  ____|         | (_)   | (_)             |  __ \(_)   | |  
+# | |__  _   _  ___| |_  __| |_  __ _ _ __   | |  | |_ ___| |_ 
+# |  __|| | | |/ __| | |/ _` | |/ _` | '_ \  | |  | | / __| __|
+# | |___| |_| | (__| | | (_| | | (_| | | | | | |__| | \__ \ |_ 
+# |______\__,_|\___|_|_|\__,_|_|\__,_|_| |_| |_____/|_|___/\__|
+#
+
+
 ############ Euclidean distance from starting point of each trial ############
 # First attempt -> straight up subtraction from starting point
 # Part A -> Run a loop over all trials
@@ -130,10 +162,12 @@ plt.show()
 # Normalize and sum dist matrices for all trials
 # Assuming state transition are bounded in time, there should be a trend
 # Observation: Trials for different tastes show different structure
-taste = 3
-dist_array = np.empty((firing_len,firing_len,np.int(off_firing[0].shape[1]/firing_len)))
+taste = 0
+#dist_array = np.empty((firing_len,firing_len,np.int(off_firing[0].shape[1]/firing_len)))
+dist_array = np.empty((firing_len,firing_len,off_firing[0].shape[0]))
 for trial in range(dist_array.shape[2]):
-    dat = np.transpose(off_firing[taste][:,firing_len*trial:firing_len*(trial+1)])
+    #dat = np.transpose(off_firing[taste][:,firing_len*trial:firing_len*(trial+1)])
+    dat = np.transpose(off_firing[taste][trial,:,:])
     dist_array[:,:,trial] = dist_mat(dat,dat)
 
 fig=plt.figure(figsize=(21, 6))
@@ -188,7 +222,7 @@ def lin_interp(seq, new_len, normalize=True):
 ## Maybe smooth firing rates
 
 ## Test plots for spikes to firing rate  
-inds = [2,3,4] # Taste, trial, nrn
+inds = [1,3,4] # Taste, trial, nrn
 spikes = off_spikes[inds[0]][inds[1],inds[2],:]
 rate = off_firing[inds[0]][inds[1],inds[2],:]
 #rate2 = sig.resample(rate,spikes.shape[0])
@@ -214,6 +248,14 @@ plt.plot(lin_interp(rate,len(spikes)))
 #    
 # fig.tight_layout()
 # =============================================================================
+
+#  _____  _             _____          _            _   _             
+# |  __ \(_)           |  __ \        | |          | | (_)            
+# | |  | |_ _ __ ___   | |__) |___  __| |_   _  ___| |_ _  ___  _ __  
+# | |  | | | '_ ` _ \  |  _  // _ \/ _` | | | |/ __| __| |/ _ \| '_ \ 
+# | |__| | | | | | | | | | \ \  __/ (_| | |_| | (__| |_| | (_) | | | |
+# |_____/|_|_| |_| |_| |_|  \_\___|\__,_|\__,_|\___|\__|_|\___/|_| |_|
+#
 
 ################### Reduce dimensions ########################
 off_f_red = LLE(n_neighbors = 50,n_components=2).fit_transform(np.transpose(all_off_f))
@@ -255,6 +297,11 @@ x, y = off_f_red[:,0],off_f_red[:,1]
 plt.scatter(x,y,c=np.floor(np.linspace(0,4,len(x))))
 plt.colorbar()
 
+x, y = off_f_red[:,0],off_f_red[:,1]
+for i in range(4):
+    inds = range(int(i*(off_f_red.shape[0]/4)), int((i+1)*(off_f_red.shape[0]/4)))
+    plt.figure()
+    plt.scatter(x[inds],y[inds])
 ## Plot all trajectories to see tastewise effect
 ################################################
 x, y = off_f_red[:,0],off_f_red[:,1]
