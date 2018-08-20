@@ -17,7 +17,7 @@
 # Try projecting all tastes at same time
 ######################### Import dat ish #########################
 import tables
-import easygui
+#import easygui
 import os
 import numpy as np
 import matplotlib.pyplot as plt
@@ -42,7 +42,8 @@ import time
 #  \_____|\___|\__| |_____/ \__,_|\__\__,_|
 #
 
-dir_name = "/media/sf_shared_folder/jian_you_data/tastes_separately/file_1"
+#dir_name = "/media/sf_shared_folder/jian_you_data/tastes_separately/file_1"
+dir_name = "/media/bigdata/jian_you_data/all_tastes/file_1/"
 os.chdir(dir_name)
 file_list = os.listdir('./')
 hdf5_name = ''
@@ -302,7 +303,25 @@ for i in range(4):
     inds = range(int(i*(off_f_red.shape[0]/4)), int((i+1)*(off_f_red.shape[0]/4)))
     plt.figure()
     plt.scatter(x[inds],y[inds])
+    
 ## Plot all trajectories to see tastewise effect
 ################################################
 x, y = off_f_red[:,0],off_f_red[:,1]
-all_trajs = [np.concatenate(x[(i*firing_len):(i+1)*firing_len]) for i in ]
+all_trajs = [[x[(i*firing_len):(i+1)*firing_len], y[(i*firing_len):(i+1)*firing_len]] for i in range(int(x.size/firing_len))]
+for traj in all_trajs:
+    plt.figure()
+    plt.scatter(traj[0],traj[1],c = np.linspace(0,1,traj[0].size))
+
+rows = 4
+cols = 15
+count = 1
+fig, axes = plt.subplots(rows,cols,sharex = 'all',sharey='all')
+for i in range(rows):
+    for j in range(cols):
+        axes[i,j].scatter(all_trajs[count][0],all_trajs[count][1],c = np.linspace(0,1,all_trajs[0][0].size),s=1)
+        #y = pdf_plot(x,params)
+        #axes[i,j].plot(x,y,colors[int(params[2])])
+        count +=1
+        print(count)
+   
+fig.tight_layout()
