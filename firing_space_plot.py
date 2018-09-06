@@ -77,7 +77,7 @@ on_spikes = [spikes[i][on_trials[i],:,:] for i in range(len(dig_in))] #Index tri
 
 ################### Convert spikes to firing rates ##################
 step_size = 25
-window_size = 500
+window_size = 250
 tot_time = 7000
 firing_len = int((tot_time-window_size)/step_size)-1
 off_firing = []
@@ -109,13 +109,24 @@ for l in range(len(off_spikes)): # How TF do you get nan's from means?
 # =============================================================================
     
     
-# Normalize firing
-for l in range(len(off_firing)):
-    for m in range(off_firing[0].shape[0]):
-        for n in range(off_firing[0].shape[1]):
-            min_val = np.min(off_firing[l][m,n,:])
-            max_val = np.max(off_firing[l][m,n,:])
-            off_firing[l][m,n,:] = (off_firing[l][m,n,:] - min_val)/(max_val-min_val)
+    # Normalize firing (over every trial of every neuron)
+# =============================================================================
+#     for l in range(len(off_firing)):
+#         for m in range(off_firing[0].shape[0]):
+#             for n in range(off_firing[0].shape[1]):
+#                 min_val = np.min(off_firing[l][m,n,:])
+#                 max_val = np.max(off_firing[l][m,n,:])
+#                 off_firing[l][m,n,:] = (off_firing[l][m,n,:] - min_val)/(max_val-min_val)
+#     
+# =============================================================================
+    # Normalized firing of every neuron over entire dataset
+    off_firing_array = np.asarray(off_firing) #(taste x nrn x trial x time)
+    for m in range(off_firing_array.shape[1]): # nrn
+        min_val = np.min(off_firing_array[:,m,:,:])
+        max_val = np.max(off_firing_array[:,m,:,:])
+        for l in range(len(off_firing)): #taste
+            for n in range(off_firing[0].shape[1]): # trial
+                off_firing[l][m,n,:] = (off_firing[l][m,n,:] - min_val)/(max_val-min_val)
 
 
 all_off_f_temp = np.asarray(off_firing)
