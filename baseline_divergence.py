@@ -1,3 +1,43 @@
+def stim_corr_shuffle(pre_stim_dist, sum_stim_dists, baseline_end, baseline_start, step_size, taste):
+    temp_corr_sh = pearsonr(pre_stim_dist[pre_stim_dist.nonzero()].flatten(),
+                                          np.random.permutation(sum_stim_dists[sum_stim_dists.nonzero()].flatten()))
+    temp_corr_sh_dat = pd.DataFrame(dict(file = file, taste = taste, 
+            baseline_end = baseline_end*step_size, rho = temp_corr_sh[0],p = temp_corr_sh[1],
+            index = [corr_dat.shape[0]], shuffle = True, pre_stim_window_size = (baseline_end - baseline_start)*step_size))
+    return temp_corr_sh_dat
+
+def baseline_stimulus_correlation(off_firing, baseline_window, stimulus_time,
+                                  stimulus_window_size, step_size, shuffle_repeats):
+    corr_dat = pd.DataFrame() 
+    for taste in range(4):
+        data = off_firing[taste]
+        
+        baseline_start = int(baseline_window[0]/step_size)
+        baseline_end = int(baseline_window[1]/step_size)
+        stim_start = int(stimulus_time/step_size)
+        stim_end = int((stimulus_time + stimulus_window_size)/step_size)
+        
+        mean_pre_stim = np.mean(data[:,:,baseline_start:baseline_end],axis = 2).T #(neurons x trials)
+        pre_stim_dist = np.tril(dist_mat(mean_pre_stim,mean_pre_stim)) # Take out upper diagonal to prevent double counting
+        
+        stim_dat = data[:,:,stim_start:stim_end]
+        stim_dists = np.zeros((stim_dat.shape[1],stim_dat.shape[1],stim_dat.shape[2]))
+        for time_bin in range(stim_dists.shape[2]):
+            stim_dists[:,:,time_bin] = dist_mat(stim_dat[:,:,time_bin].T,stim_dat[:,:,time_bin].T)
+        sum_stim_dists = np.tril(np.sum(stim_dists,axis = 2))
+        
+        temp_corr = pearsonr(pre_stim_dist[pre_stim_dist.nonzero()].flatten(),sum_stim_dists[sum_stim_dists.nonzero()].flatten())
+        temp_corr_dat = pd.DataFrame(dict(file = file, taste = taste, 
+                baseline_end = baseline_end*step_size, rho = temp_corr[0],p = temp_corr[1],
+                index = [corr_dat.shape[0]], shuffle = False, pre_stim_window_size = (baseline_end - baseline_start)*step_size))
+        corr_dat = pd.concat([corr_dat, temp_corr_dat])
+        
+        for repeat in range(shuffle_repeats):
+            output = stim_corr_shuffle(pre_stim_dist, sum_stim_dists,baseline_end, baseline_start, step_size, taste)
+            corr_dat = pd.concat([corr_dat,output])
+        
+    return corr_dat
+
 #  ____                 _ _              _____  _       
 # |  _ \               | (_)            |  __ \(_)      
 # | |_) | __ _ ___  ___| |_ _ __   ___  | |  | |___   __
@@ -25,6 +65,7 @@ import seaborn as sns
 
 from sklearn.preprocessing import scale
 
+import multiprocessing as mp
 #   _____      _     _____        _        
 #  / ____|    | |   |  __ \      | |       
 # | |  __  ___| |_  | |  | | __ _| |_ __ _ 
@@ -133,6 +174,16 @@ for file in range(1,7):
         for l in range(len(off_firing)): #taste
             for n in range(off_firing[0].shape[1]): # trial
                 off_firing[l][m,n,:] = (off_firing[l][m,n,:] - min_val)/(max_val-min_val)
+# =============================================================================
+#     # Avg subtracted normalization
+#     off_firing_array = np.asarray(off_firing) #(taste x nrn x trial x time)
+#     for m in range(off_firing_array.shape[1]): # nrn
+#         mean_val = np.mean(off_firing_array[:,m,:,:])
+#         var_val = np.var(off_firing_array[:,m,:,:])
+#         for l in range(len(off_firing)): #taste
+#             for n in range(off_firing[0].shape[1]): # trial
+#                 off_firing[l][m,n,:] = (off_firing[l][m,n,:] - mean_val)/var_val
+# =============================================================================
 
 
 #   _____                    _       _   _             
@@ -144,76 +195,75 @@ for file in range(1,7):
 #                                                      
   
     ##############################
-    all_pre_stim_window = np.arange(100,1000,100) # How much behind start time to take for baseline
-    post_stim_t = 2000 # How much after start time to take for activity
-    stim_t = 2000 # When stimulus was given
+    baseline_window_sizes = np.arange(100,1000,100)
+    baseline_window_end = 2000
+    baseline_window_start = 200
+    all_baseline_windows = []
+    for i in range(len(baseline_window_sizes)):
+        #temp_baseline_windows = np.arange(baseline_window_end,baseline_window_start-baseline_window_sizes[i],-baseline_window_sizes[i])
+        temp_baseline_windows = np.arange(baseline_window_end, baseline_window_start, -100)
+        temp_baseline_windows = temp_baseline_windows[(temp_baseline_windows - baseline_window_sizes[i]) >0]
+        for j in range(0,len(temp_baseline_windows)):
+            all_baseline_windows.append((temp_baseline_windows[j]- baseline_window_sizes[i],temp_baseline_windows[j]))
     
-    all_vars = []
+    stimulus_time = 2000
+    stimulus_window_size = 2000
+    step_size = 25
     
-    for j in range(len(all_pre_stim_window)):
-        pre_stim_window = all_pre_stim_window[j]
-        all_pre_stim_t = np.arange(2000,200,-pre_stim_window) # Where to start
-        for i in range(len(all_pre_stim_t)):
-            pre_stim_t = all_pre_stim_t[i]
-            corrs = []
-            stim_vars = []
-            #fig = plt.figure()
-            for taste in range(4):
-                data = off_firing[taste]
-                
-                mean_pre_stim = np.mean(data[:,:,int((pre_stim_t - pre_stim_window)/step_size):int(pre_stim_t/step_size)],axis = 2).T #(neurons x trials)
-                pre_stim_dist = np.tril(dist_mat(mean_pre_stim,mean_pre_stim)) # Take out upper diagonal to prevent double counting
-                
-                stim_dat = data[:,:,int(stim_t/step_size):int((stim_t+post_stim_t)/step_size)]
-                stim_dists = np.zeros((stim_dat.shape[1],stim_dat.shape[1],stim_dat.shape[2]))
-                stim_dist_var = np.zeros(stim_dat.shape[2])
-                for time in range(stim_dists.shape[2]):
-                    stim_dists[:,:,time] = dist_mat(stim_dat[:,:,time].T,stim_dat[:,:,time].T)
-                    stim_dist_var_temp = np.tril(stim_dists[:,:,time])
-                    stim_dist_var[time] = np.var(stim_dist_var_temp[stim_dist_var_temp.nonzero()].flatten())
-                sum_stim_dists = np.tril(np.sum(stim_dists,axis = 2))
-                
-                temp_corr = pearsonr(pre_stim_dist[pre_stim_dist.nonzero()].flatten(),sum_stim_dists[sum_stim_dists.nonzero()].flatten())
-                temp_corr_dat = pd.DataFrame(dict(file = file, taste = taste, 
-                        baseline_end = pre_stim_t, rho = temp_corr[0],p = temp_corr[1],
-                        index = [corr_dat.shape[0]], shuffle = False, pre_stim_window_size = pre_stim_window))
-                
-                for repeats in range(200): # Shuffle trials
-                    temp_corr_sh = pearsonr(pre_stim_dist[pre_stim_dist.nonzero()].flatten(),
-                                                          np.random.permutation(sum_stim_dists[sum_stim_dists.nonzero()].flatten()))
-                    temp_corr_sh_dat = pd.DataFrame(dict(file = file, taste = taste, 
-                            baseline_end = pre_stim_t, rho = temp_corr_sh[0],p = temp_corr_sh[1],
-                            index = [corr_dat.shape[0]], shuffle = True, pre_stim_window_size = pre_stim_window))
-                    corr_dat = pd.concat([corr_dat,temp_corr_sh_dat])
-                
-                corr_dat = pd.concat([corr_dat,temp_corr_dat])
-            print('file %i end_at %i window %i' % (file, pre_stim_t,pre_stim_window))
-            
+    shuffle_repeats = 100
+    
+    pool = mp.Pool(processes = mp.cpu_count())
+    results = [pool.apply_async(baseline_stimulus_correlation, args = (off_firing, all_baseline_windows[i], stimulus_time,
+                                      stimulus_window_size, step_size, shuffle_repeats)) for i in range(len(all_baseline_windows))]
+    output = [p.get() for p in results]
+    pool.close()
+    pool.join()
+    
+    for i in range(len(output)):
+        corr_dat = pd.concat([corr_dat,output[i]])
+        
+    print('file %i' % file)
+
+#############################
+for file in range(1,7):
+    g = sns.FacetGrid(corr_dat.query('file==%i' % file),col = 'taste', 
+                      row = 'pre_stim_window_size', hue = 'shuffle', sharey = 'all')
+    #g.set(ylim=(0,None)
+    g.map(sns.regplot,'baseline_end','rho', 
+          x_estimator=np.mean, x_ci = 'sd').add_legend()
+    g.fig.suptitle('FILE %i' % file)
+    g.savefig('file%i_windows.png' % file)
+
+######################################################
+# Dimensionality reduction test
+# Since the system changes dramatically around stimulus delivery
+# If baseline and some time after stim delivery is dimension reduced
+    # we should be able to see a jump in the trajectory
+plt.imshow(np.mean(off_firing[0],axis=1), interpolation='nearest', aspect='auto')
+
+f, axs = plt.subplots(8,1,figsize=(9,6))
+for ax in range(len(axs)):
+    axs[ax].imshow(off_firing[0][:,ax,:], interpolation='nearest', aspect='auto')
+
+from sklearn.manifold import LocallyLinearEmbedding as LLE
+from mpl_toolkits.mplot3d import Axes3D
+
+for trial in range(8):
+    off_f_red = LLE(n_neighbors = 50,n_components=3).fit_transform(np.transpose(off_firing[0][:,trial,:160]))
 # =============================================================================
-#             corrs.append(temp_corr)
-#             stim_vars.append(stim_dist_var)
-#             
-#             exec('plt.subplot(22%i)' % (taste+1))
-#             plt.scatter(pre_stim_dist[pre_stim_dist.nonzero()].flatten(),sum_stim_dists[sum_stim_dists.nonzero()].flatten())
-#             #sb.regplot(pre_stim_dist[pre_stim_dist.nonzero()].flatten(),sum_stim_dists[sum_stim_dists.nonzero()].flatten())
-#             plt.title('%i, rho = %.2f, p = %.2f' % (taste, temp_corr[0], temp_corr[1]))
-#             plt.suptitle('%i' % pre_stim_t)
-#         
-#         for i in fig.axes:
-#             i.get_xaxis().set_visible(False)
-#             i.get_yaxis().set_visible(False)
-#             
-#         all_corrs.append(corrs)
-#         all_vars.append(stim_vars)
+#     plt.figure()
+#     plt.scatter(off_f_red[:,0],off_f_red[:,1],c =np.linspace(1,255,len(off_f_red[:,0])))
+#     
 # =============================================================================
-
-g = sns.FacetGrid(corr_dat,col = 'taste', row = 'file', hue = 'shuffle',sharey = 'row')
-#g.set(ylim=(0,None))
-g.map(sns.regplot,'baseline_end','rho', 
-      x_estimator=np.mean, x_ci = 'sd').add_legend()
-
-
-
+    
+    fig = plt.figure()
+    ax = Axes3D(fig)
+    p = ax.scatter(off_f_red[:,0],off_f_red[:,1],off_f_red[:,2],c =range(len(off_f_red[:,0])))
+    ax.scatter(off_f_red[0,0],off_f_red[0,1],off_f_red[0,2],c = 'red')
+    ax.scatter(off_f_red[-1,0],off_f_red[-1,1],off_f_red[-1,2],c = 'red')
+    ax.plot(off_f_red[:,0],off_f_red[:,1],off_f_red[:,2],linewidth=0.5)
+    plt.colorbar(p)
+######################################################
 # Variation in trajectories
 all_vars_array = np.asarray(all_vars)
 for animal in range(all_vars_array.shape[0]):
@@ -229,4 +279,3 @@ for trial in range(auto_corr.shape[1]):
     auto_corr[:,trial,:] = signal.correlate2d(pre_stim[:,trial,:], pre_stim[:,trial,:], boundary='symm', mode='same')
 auto_corr_1d = scale(auto_corr[np.argmax(np.sum(auto_corr[:,0,:],axis=1)),:,:],axis=1)
 plt.errorbar(x = range(auto_corr_1d.shape[1]),y = np.mean(auto_corr_1d,axis=0),yerr = np.std(auto_corr_1d,axis=0))
-
