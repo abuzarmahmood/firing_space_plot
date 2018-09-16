@@ -9,7 +9,7 @@ def stim_corr_shuffle(pre_stim_dist, sum_stim_dists, baseline_end, baseline_star
 def baseline_stimulus_correlation(off_firing, baseline_window, stimulus_time,
                                   stimulus_window_size, step_size, shuffle_repeats):
     corr_dat = pd.DataFrame() 
-    for taste in range(4):
+    for taste in range(len(off_firing)):
         data = off_firing[taste]
         
         baseline_start = int(baseline_window[0]/step_size)
@@ -36,7 +36,7 @@ def baseline_stimulus_correlation(off_firing, baseline_window, stimulus_time,
             output = stim_corr_shuffle(pre_stim_dist, sum_stim_dists,baseline_end, baseline_start, step_size, taste)
             corr_dat = pd.concat([corr_dat,output])
         
-    return corr_dat
+    return corr_dat, pre_stim_dist, sum_stim_dists
 
 #  ____                 _ _              _____  _       
 # |  _ \               | (_)            |  __ \(_)      
@@ -239,30 +239,66 @@ for file in range(1,7):
 # Since the system changes dramatically around stimulus delivery
 # If baseline and some time after stim delivery is dimension reduced
     # we should be able to see a jump in the trajectory
+    
+# Trials reduced individually
 plt.imshow(np.mean(off_firing[0],axis=1), interpolation='nearest', aspect='auto')
 
 f, axs = plt.subplots(8,1,figsize=(9,6))
 for ax in range(len(axs)):
     axs[ax].imshow(off_firing[0][:,ax,:], interpolation='nearest', aspect='auto')
 
+#############
 from sklearn.manifold import LocallyLinearEmbedding as LLE
+from sklearn.decomposition import PCA
 from mpl_toolkits.mplot3d import Axes3D
 
 for trial in range(8):
-    off_f_red = LLE(n_neighbors = 50,n_components=3).fit_transform(np.transpose(off_firing[0][:,trial,:160]))
+    #off_f_red = LLE(n_neighbors = 50,n_components=3).fit_transform(np.transpose(off_firing[0][:,trial,:160]))
+    off_f_red = PCA(n_components=3).fit_transform(np.transpose(off_firing[0][:,trial,:160]))
+    
+    fig = plt.figure()
+    ax = Axes3D(fig)
+    colors  = np.concatenate((np.arange(80),np.arange(len(off_f_red[:,0]),len(off_f_red[:,0])+len(off_f_red[:,0])-80)))
+    sizes = np.ones(len(off_f_red[:,0]))*10
+    sizes[0], sizes[-1] = 80,80
+    p = ax.scatter(off_f_red[:,0],off_f_red[:,1],off_f_red[:,2],c = colors, s = sizes)
+    #ax.scatter(off_f_red[0,0],off_f_red[0,1],off_f_red[0,2],c = 'red')
+    #ax.scatter(off_f_red[-1,0],off_f_red[-1,1],off_f_red[-1,2],c = 'red')
+    ax.plot(off_f_red[:,0],off_f_red[:,1],off_f_red[:,2],linewidth=0.5)
+    plt.colorbar(p)
+    
+# Trials reduced collectively
+orig_data = off_firing[0][:,:,:160]
+reshaped_data = np.empty((orig_data.shape[0],orig_data.shape[1]*orig_data.shape[2]))
+unit_len = orig_data.shape[2]
+for i in range(orig_data.shape[1]):
+    reshaped_data[:,(i*unit_len):(i+1)*unit_len] = orig_data[:,i,:]
+    
+off_f_red = PCA(n_components=3).fit_transform(np.transpose(reshaped_data))
+off_f_red_array = np.empty((3,orig_data.shape[1],orig_data.shape[2]))
+for i in range(orig_data.shape[1]):
+    off_f_red_array[:,i,:] = off_f_red[(i*unit_len):(i+1)*unit_len,:].T
+
+fig = plt.figure()
+for trial in range(8):
+    #fig = plt.subplot(4,2,trial+1)
+    #ax = Axes3D(fig)
+    ax = fig.add_subplot(4,2,trial+1,projection='3d', aspect='auto')
+    colors  = np.concatenate((np.arange(80),np.arange(off_f_red_array.shape[2],(off_f_red_array.shape[2]*2)-80)))
+    sizes = np.ones(off_f_red_array.shape[2])*10
+    sizes[0], sizes[-1] = 80,80
+    p = ax.scatter(off_f_red_array[0,trial,:],off_f_red_array[1,trial,:],off_f_red_array[2,trial,:],c = colors, s = sizes)
+    #ax.scatter(off_f_red[0,0],off_f_red[0,1],off_f_red[0,2],c = 'red')
+    #ax.scatter(off_f_red[-1,0],off_f_red[-1,1],off_f_red[-1,2],c = 'red')
+    ax.plot(off_f_red_array[0,trial,:],off_f_red_array[1,trial,:],off_f_red_array[2,trial,:],linewidth=0.5)
+    plt.colorbar(p)
+    plt.title('Trial %i' % trial)
+plt.tight_layout()
 # =============================================================================
 #     plt.figure()
 #     plt.scatter(off_f_red[:,0],off_f_red[:,1],c =np.linspace(1,255,len(off_f_red[:,0])))
 #     
 # =============================================================================
-    
-    fig = plt.figure()
-    ax = Axes3D(fig)
-    p = ax.scatter(off_f_red[:,0],off_f_red[:,1],off_f_red[:,2],c =range(len(off_f_red[:,0])))
-    ax.scatter(off_f_red[0,0],off_f_red[0,1],off_f_red[0,2],c = 'red')
-    ax.scatter(off_f_red[-1,0],off_f_red[-1,1],off_f_red[-1,2],c = 'red')
-    ax.plot(off_f_red[:,0],off_f_red[:,1],off_f_red[:,2],linewidth=0.5)
-    plt.colorbar(p)
 ######################################################
 # Variation in trajectories
 all_vars_array = np.asarray(all_vars)
