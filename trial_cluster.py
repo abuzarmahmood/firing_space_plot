@@ -20,6 +20,9 @@ from sklearn.decomposition import PCA as pca
 
 from skimage import exposure
 
+import glob
+import math
+
 
 #   _____      _     _____        _        
 #  / ____|    | |   |  __ \      | |       
@@ -28,6 +31,7 @@ from skimage import exposure
 # | |__| |  __/ |_  | |__| | (_| | || (_| |
 #  \_____|\___|\__| |_____/ \__,_|\__\__,_|
 #
+
 dir_list = ['/media/bigdata/jian_you_data/des_ic/file_%i/' % file for file in range(1,7)] + \
     ['/media/bigdata/NM_2500/file_%i/' % file for file in range(1,6)]
 #corr_dat = pd.DataFrame()
@@ -142,3 +146,115 @@ plt.errorbar(x = range(80), y = np.mean(all_diff_array,axis=0),yerr = np.std(all
 
 plt.imshow(all_diff_array[np.argsort(np.argmax(all_diff_array,axis=1)),:],
                           interpolation='nearest',aspect='auto')
+
+# =============================================================================
+# =============================================================================
+"""
+See if trials from baseline and post-stimulus firing are enriched in the same clusters
+"""
+
+#dir_list = ['/media/bigdata/jian_you_data/des_ic']
+dir_list = ['/media/bigdata/jian_you_data/des_ic', '/media/bigdata/NM_2500']
+file_list = []
+for x in dir_list:
+    file_list = file_list + glob.glob(x + '/**/' + '*.h5',recursive=True)
+
+baseline_inds = range(80)
+stimulus_inds = range(80,160)
+
+same_clust = []
+same_clust_sh = []
+
+n_components = 3
+shuffle_num = 100
+
+clusts = list(range(n_components))
+
+# Make permutations of clusters so items from all clusters can be compared
+all_perms = []
+for x in range(len(clusts)*100):
+    this_perm = list(np.random.permutation(clusts))
+    if this_perm not in all_perms:
+        all_perms.append(this_perm)
+
+for file in range(len(file_list)):
+    data_dir = os.path.dirname(file_list[file])
+    data = ephys_data(data_dir = data_dir ,file_id = file, use_chosen_units = False)
+    data.firing_rate_params = dict(zip(['step_size','window_size','total_time'],
+                                   [25,250,7000]))
+    data.get_data()
+    data.get_firing_rates()
+    
+    
+    for taste in range(4):
+        
+        base_dat = data.normal_off_firing[taste][:,:,baseline_inds]
+        stim_dat = data.normal_off_firing[taste][:,:,stimulus_inds]
+        
+        # Reduce data to PCAs
+        
+        base_long = base_dat[0,:,:]
+        for nrn in range(1,base_dat.shape[0]):
+            base_long = np.concatenate((base_long,base_dat[int(nrn),:,:]),axis=1)
+            
+        stim_long = stim_dat[0,:,:]
+        for nrn in range(1,stim_dat.shape[0]):
+            stim_long = np.concatenate((stim_long,stim_dat[int(nrn),:,:]),axis=1)
+            
+        base_pca = pca(n_components = 15).fit(base_long)
+        stim_pca = pca(n_components = 15).fit(stim_long)
+        
+        reduced_base = base_pca.transform(base_long)
+        reduced_stim = stim_pca.transform(stim_long)
+        
+        base_gmm = GaussianMixture(n_components=n_components, covariance_type='full',
+                              n_init = 100).fit(reduced_base)
+        stim_gmm = GaussianMixture(n_components=n_components, covariance_type='full',
+                              n_init = 100).fit(reduced_stim)
+        
+        base_groups = base_gmm.predict(reduced_base)
+        stim_groups = base_gmm.predict(reduced_stim)
+        
+        
+        temp_same_clust = []
+        for comparison in range(len(all_perms)):
+            
+            this_order = all_perms[comparison]
+            temp_base_groups = np.zeros(base_groups.shape).astype(int)
+            
+            for group in range(len(this_order)):
+                temp_base_groups[base_groups == clusts[group]] = this_order[group]
+            
+            temp_same_clust.append(sum(temp_base_groups == stim_groups))
+        
+        same_clust.append(np.max(temp_same_clust))
+        
+        
+        for i in range(shuffle_num):
+            
+            base_groups_sh = np.random.permutation(base_groups)
+            
+            for comparison in range(len(all_perms)):
+                
+                this_order = all_perms[comparison]
+                temp_base_groups_sh = np.zeros(base_groups.shape).astype(int)
+                
+                for group in range(len(this_order)):
+                    temp_base_groups_sh[base_groups_sh == clusts[group]] = this_order[group]
+            
+                same_clust_sh.append(sum(temp_base_groups_sh == stim_groups))
+    
+# =============================================================================
+#     plt.figure()
+#     plt.title(os.path.basename(file_list[file]))
+#     plt.hist(same_clust)
+# =============================================================================
+        
+    print(file)
+
+fig, ax = plt.subplots(1,1)
+ax.set_xticks([1,2])
+ax.set_xticklabels(['Data','Shuffle'])
+ax.violinplot([same_clust,same_clust_sh])
+ax.set_ylabel('Number of trials in same group')
+ax.set_xlabel('Group')
