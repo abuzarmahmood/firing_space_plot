@@ -6,6 +6,7 @@ import pandas as pd
 from scipy.spatial import distance_matrix as dist_mat
 from scipy.stats import pearsonr
 import multiprocessing as mp
+import pylab as plt
 #  ______       _                      _____        _         
 # |  ____|     | |                    |  __ \      | |        
 # | |__   _ __ | |__  _   _ ___ ______| |  | | __ _| |_ __ _  
@@ -23,20 +24,24 @@ E.g. whether to take single units, fast spiking etc (as this data is already in 
 """
 
 class ephys_data():
-    def __init__(self, data_dir, file_id = None, unit_type = None):
+    def __init__(self, data_dir, use_chosen_units, file_id = None, unit_type = None):
         """
         data_dirs : where to look for hdf5 file
             : get_data() loads data from this directory
         """
         self.data_dir =         data_dir
-        self.unit_descriptors = None
+        self.units_descriptors = None
         self.chosen_units =     None
+        self.use_chosen_units = use_chosen_units
         self.file_id =          file_id
+        self.data_frame = pd.DataFrame()
+        self.palatability_ranks = None
         
         self.firing_rate_params = {
             'step_size' :   None,
             'window_size' : None,
             'total_time' :  None
+            #'calc_type' : None      # Either 'step' or 'conv'
                 }
         
         self.correlation_params = {
@@ -59,66 +64,89 @@ class ephys_data():
     
         
     def get_data(self):
+        """
+        Extract spike arrays from specified HD5 files
+        """
+        # Find file and open it
         file_list = os.listdir(self.data_dir)
         hdf5_name = ''
         for files in file_list:
             if files[-2:] == 'h5':
                 hdf5_name = files
                 
-        hf5 = tables.open_file(self.data_dir + hdf5_name, 'r+')
+        hf5 = tables.open_file(self.data_dir + '/' + hdf5_name, 'r+')
         
-        self.units_descriptors = hf5.root.unit_descriptor[:]
-        chosen_units = np.zeros(self.units_descriptors.size)
-        for i in range(self.units_descriptors.size):
-            if self.units_descriptors[i][3] == 1:
-                chosen_units[i] = 1
-        self.chosen_units = np.nonzero(chosen_units)[0]
-# =============================================================================
-#         chosen_units_log = np.zeros((self.unit_type.size,self.units_descriptors.size))
-#         for condition in range(self.unit_type.size):
-#             for unit in range(self.units_descriptors.size):
-#                 if self.units_descriptors[unit][condition+1] == 1:
-#                     chosen_units_log[i] = 1
-#             self.chosen_units = np.nonzero(chosen_units)[0]
-# =============================================================================
+        # Lists for spikes and trials from different tastes
         self.spikes = []
+        self.dig_in_order = []
         self.off_spikes = []
         self.on_spikes = []
         self.all_off_trials = []
         self.all_on_trials = []
         
-        all_off_trials = []
-        all_on_trials = []
+        # If use_chosen_units == True, pick out single units
+        if self.use_chosen_units:
+            self.units_descriptors = hf5.root.unit_descriptor[:]
+            chosen_units = np.zeros(self.units_descriptors.size)
+            for i in range(self.units_descriptors.size):
+                if self.units_descriptors[i][3] == 1:
+                    chosen_units[i] = 1
+            self.chosen_units = np.nonzero(chosen_units)[0]
         
+        # Iterate through tastes and extract spikes from laser on and off conditions
+        # If no array for laser durations, put everything in laser off
+        dig_in_gen = hf5.root.spike_trains._f_iter_nodes()
+        for taste in range(len(hf5.root.spike_trains._f_list_nodes())):
+            
+            this_dig_in = next(dig_in_gen)
+            if 'dig_in' in this_dig_in.__str__():
+                self.dig_in_order.append(this_dig_in.__str__())
+                self.spikes.append(this_dig_in.spike_array[:])
+                
+                # Swap axes to make it (neurons x trials x time)
+                self.spikes[taste] = np.swapaxes(self.spikes[taste], 0, 1)
+                
+                # If use_chosen_spikes specified
+                # Slice out the required portion of the spike array
+                if self.use_chosen_units:
+                    self.spikes[taste] = self.spikes[taste][self.chosen_units, :, :]
+                
+                if this_dig_in.__contains__('laser_durations'):
+                    on_trials = np.where(this_dig_in.laser_durations[:] > 0.0)[0]
+                    off_trials = np.where(this_dig_in.laser_durations[:] == 0.0)[0]
+                
+                    self.all_off_trials.append(off_trials + (taste * len(off_trials) * 2))
+                    self.all_on_trials.append(on_trials + (taste * len(on_trials) * 2))
+                
+                    self.off_spikes.append(self.spikes[taste][:, off_trials, :])
+                    self.on_spikes.append(self.spikes[taste][:, on_trials, :])
+                    
+                else:
+                    off_trials = np.arange(0,self.spikes[taste].shape[1])
+                    self.all_off_trials.append(off_trials + (taste * len(off_trials)))
+                    self.off_spikes.append(self.spikes[taste][:, off_trials, :])
+                    self.on_spikes.append(None)
+                
+        if len(self.all_off_trials) > 0: self.all_off_trials = np.concatenate(np.asarray(self.all_off_trials))
+        if len(self.all_on_trials) > 0: 
+            self.all_on_trials = np.concatenate(np.asarray(self.all_on_trials))
+            self.laser_exists = True
+        else: 
+            self.laser_exists = False
         
-        for taste in range(4):
-            exec('self.spikes.append(hf5.root.spike_trains.dig_in_%i.spike_array[:])' % taste)
+        hf5.close()
         
-            # Slice out the required portion of the spike array, and bin it
-            self.spikes[taste] = self.spikes[taste][:, self.chosen_units, :]
-            self.spikes[taste] = np.swapaxes(self.spikes[taste], 0, 1)
-        
-            dig_in = hf5.get_node('/spike_trains/dig_in_%i/' % taste)
-            on_trials = np.where(dig_in.laser_durations[:] > 0.0)[0]
-            off_trials = np.where(dig_in.laser_durations[:] == 0.0)[0]
-        
-            all_off_trials.append(off_trials + (taste * len(off_trials) * 2))
-            all_on_trials.append(on_trials + (taste * len(on_trials) * 2))
-        
-            self.off_spikes.append(self.spikes[taste][:, off_trials, :])
-            self.on_spikes.append(self.spikes[taste][:, on_trials, :])
-        
-        
-        self.all_off_trials = np.concatenate(np.asarray(all_off_trials))
-        self.all_on_trials = np.concatenate(np.asarray(all_on_trials))
-        
-
-
     def get_firing_rates(self):
-        #[assert(self.firing_rate_params.values()[i] is not []) for i in self.firing_rate_params.values()]
+        """
+        Converts spikes to firing rates
+        Raw and Normalized firing rates are stored separately
+        """
+        ### OFF Firing ###
+        
         step_size = self.firing_rate_params['step_size']
         window_size = self.firing_rate_params['window_size']
         tot_time = self.firing_rate_params['total_time']
+        #calc_type = self.firing_rate_params['calc_type']
         firing_len = int((tot_time-window_size)/step_size)-1 # How many time-steps after binning
         off_spikes = self.off_spikes # list contraining arrays of dims [nrns, trials, time]
         on_spikes = self.on_spikes # list contraining arrays of dims [nrns, trials, time]
@@ -127,7 +155,8 @@ class ephys_data():
         normal_off_firing = []
         normal_on_firing = []
         
-        ## Moving window calculation of firing rates
+        #if 'step' in calc_type:
+        ## Step-wise moving window calculation of firing rates
         for l in range(len(off_spikes)): # taste
             this_off_firing = np.zeros((off_spikes[0].shape[0],off_spikes[0].shape[1],firing_len))
             for i in range(this_off_firing.shape[0]): # nrns
@@ -138,23 +167,24 @@ class ephys_data():
                             print('found nan')
                             break
             off_firing.append(this_off_firing)
-        
-        for l in range(len(on_spikes)):
-            this_on_firing = np.zeros((on_spikes[0].shape[0],on_spikes[0].shape[1],firing_len))
-            for i in range(this_on_firing.shape[0]):
-                for j in range(this_on_firing.shape[1]):
-                    for k in range(this_on_firing.shape[2]):
-                        this_on_firing[i, j, k] = np.mean(on_spikes[l][i, j, step_size*k:step_size*k + window_size])
-                        if np.isnan(this_on_firing[i, j, k]):
-                            print('found nan')
-                            break
-            on_firing.append(this_on_firing)
+                
+# =============================================================================
+#         elif 'conv' in calc_type:
+#             # Convolutional window calculation
+#             conv_window = np.ones((1,window_size))
+#             for l in range(len(off_spikes)): # taste
+#                 this_off_firing = np.zeros(off_spikes.shape)
+#                 for i in range(this_off_firing.shape[0]): # nrns
+#                     for j in range(this_off_firing.shape[1]): # trials
+#                             this_off_firing[i, j, :] = np.convolve(off_spikes[l][i, j, :], conv_window, mode = 'same')
+#                             if np.isnan(this_off_firing[i, j, k]):
+#                                 print('found nan')
+#                                 break
+#                 off_firing.append(this_off_firing)
+# =============================================================================
         
         self.off_firing = off_firing
-        self.on_firing = on_firing
-        
         normal_off_firing = copy.deepcopy(off_firing)
-        normal_on_firing = copy.deepcopy(on_firing)
         
         # Normalized firing of every neuron over entire dataset
         off_firing_array = np.asarray(normal_off_firing) #(taste x nrn x trial x time)
@@ -164,32 +194,53 @@ class ephys_data():
             for l in range(len(normal_off_firing)): #taste
                 for n in range(normal_off_firing[0].shape[1]): # trial
                     normal_off_firing[l][m,n,:] = (normal_off_firing[l][m,n,:] - min_val)/(max_val-min_val)
-    
-        on_firing_array = np.asarray(normal_on_firing) #(taste x nrn x trial x time)
-        for m in range(on_firing_array.shape[1]): # nrn
-            min_val = np.min(on_firing_array[:,m,:,:])
-            max_val = np.max(on_firing_array[:,m,:,:])
-            for l in range(len(normal_on_firing)): #taste
-                for n in range(normal_on_firing[0].shape[1]): # trial
-                    normal_on_firing[l][m,n,:] = (normal_on_firing[l][m,n,:] - min_val)/(max_val-min_val)
-            
+                    
         self.normal_off_firing = normal_off_firing
-        self.normal_on_firing = normal_on_firing
-        
         all_off_firing_array = np.asarray(self.normal_off_firing)
-        all_on_firing_array = np.asarray(self.normal_on_firing)
         new_shape = (all_off_firing_array.shape[1],
                      all_off_firing_array.shape[2]*all_off_firing_array.shape[0],
                      all_off_firing_array.shape[3])
-        new_all_off_firing_array = np.empty(new_shape)
-        new_all_on_firing_array = np.empty(new_shape)
         
-        for taste in range(all_off_firing_array.shape[0]):
-            new_all_off_firing_array[:, taste*all_off_firing_array.shape[2]:(taste+1)*all_off_firing_array.shape[2],:] = all_off_firing_array[taste,:,:,:]                                  
-            new_all_on_firing_array[:, taste*all_on_firing_array.shape[2]:(taste+1)*all_on_firing_array.shape[2],:] = all_on_firing_array[taste,:,:,:]
-                                     
-        self.all_off_firing = new_all_off_firing_array
-        self.all_on_firing = new_all_on_firing_array
+        new_all_off_firing_array = np.empty(new_shape)
+        self.all_normal_off_firing = new_all_off_firing_array
+        
+        ### ON FIRING ###
+        
+        # If on_firing exists, then calculate on firing
+        if self.laser_exists:
+            
+            for l in range(len(on_spikes)):
+                this_on_firing = np.zeros((on_spikes[0].shape[0],on_spikes[0].shape[1],firing_len))
+                for i in range(this_on_firing.shape[0]):
+                    for j in range(this_on_firing.shape[1]):
+                        for k in range(this_on_firing.shape[2]):
+                            this_on_firing[i, j, k] = np.mean(on_spikes[l][i, j, step_size*k:step_size*k + window_size])
+                            if np.isnan(this_on_firing[i, j, k]):
+                                print('found nan')
+                                break
+                on_firing.append(this_on_firing)
+            
+            self.on_firing = on_firing
+            
+            normal_on_firing = copy.deepcopy(on_firing)
+            
+            on_firing_array = np.asarray(normal_on_firing) #(taste x nrn x trial x time)
+            for m in range(on_firing_array.shape[1]): # nrn
+                min_val = np.min(on_firing_array[:,m,:,:])
+                max_val = np.max(on_firing_array[:,m,:,:])
+                for l in range(len(normal_on_firing)): #taste
+                    for n in range(normal_on_firing[0].shape[1]): # trial
+                        normal_on_firing[l][m,n,:] = (normal_on_firing[l][m,n,:] - min_val)/(max_val-min_val)
+             
+            self.normal_on_firing = normal_on_firing
+            all_on_firing_array = np.asarray(self.normal_on_firing)
+            new_all_on_firing_array = np.empty(new_shape)
+    
+            for taste in range(all_off_firing_array.shape[0]):
+                new_all_off_firing_array[:, taste*all_off_firing_array.shape[2]:(taste+1)*all_off_firing_array.shape[2],:] = all_off_firing_array[taste,:,:,:]                                  
+                new_all_on_firing_array[:, taste*all_on_firing_array.shape[2]:(taste+1)*all_on_firing_array.shape[2],:] = all_on_firing_array[taste,:,:,:]
+                            
+            self.all_normal_on_firing = new_all_on_firing_array
         
 # =============================================================================
 #     # WILL PROBABLY GET DEPRECATED    
@@ -207,7 +258,14 @@ class ephys_data():
 #         self.all_baseline_windows = all_baseline_windows
 # =============================================================================
         
-
+# =============================================================================
+#     def get_palatability_correlations(self):
+#         """
+#         Calculate palatability correlations between neurons in the on and off 
+#         conditions
+#         """
+# =============================================================================
+        
     def firing_correlation(self, 
                            firing_array, 
                            baseline_window, 
@@ -275,7 +333,7 @@ class ephys_data():
         rho_sh_vec = np.empty(shuffle_repeats)
         p_sh_vec = np.empty(shuffle_repeats)
         for repeat in range(shuffle_repeats):
-            rho_sh_vec[repeat], p_sh_vec[repeat] = pearsonr(np.random.permutation(pre_mat), stim_mat)
+            rho_sh_vec[repeat], p_sh_vec[repeat] = pearsonr(np.random.permutation(pre_mat[indices]), stim_mat[indices])
         
         return rho, p, rho_sh_vec, p_sh_vec, pre_mat, stim_mat
     
@@ -356,7 +414,92 @@ class ephys_data():
             'pre_dists' :   on_outputs[4],
             'stim_dists' :  on_outputs[5],
                 }
+    
+    def imshow(self,x):
+        """
+        Decorator function for more viewable firing rate heatmaps
+        """
+        plt.imshow(x,interpolation='nearest',aspect='auto')
         
+# =============================================================================
+#     def get_hmm_probs(self):
+#         """
+#         Extract spike arrays from specified HD5 files
+#         **Chosen units currently only selects single units
+#         """
+#         
+#         file_list = os.listdir(self.data_dir)
+#         hdf5_name = ''
+#         for files in file_list:
+#             if files[-2:] == 'h5':
+#                 hdf5_name = files
+#                 
+#         hf5 = tables.open_file(self.data_dir + hdf5_name, 'r+')
+#         
+#         self.off_var_probs
+#         self.on_var_probs
+#         self.off_maps_probs
+#         self.on_map_probs
+#         
+# =============================================================================
+
+    def get_dataframe(self):
+        
+        for taste in range(4):
+            off_corr_dat = pd.DataFrame(dict(
+                    file = self.file_id, 
+                    taste = taste, 
+                    baseline_end = self.correlation_params['baseline_end_time'], 
+                    rho = self.off_corr['rho'][taste],
+                    p = self.off_corr['p'][taste],
+                    index = [0], 
+                    shuffle = False, 
+                    baseline_window_size = self.correlation_params['baseline_end_time'] - self.correlation_params['baseline_start_time'],
+                    stimulus_end = self.correlation_params['stimulus_end_time'],
+                    stim_window_size = self.correlation_params['stimulus_end_time'] - self.correlation_params['stimulus_start_time'],
+                    laser = False))
+            
+            off_corr_sh_dat = pd.DataFrame(dict(
+                    file = self.file_id, 
+                    taste = taste, 
+                    baseline_end = self.correlation_params['baseline_end_time'], 
+                    rho = self.off_corr['rho_shuffle'][taste],
+                    p = self.off_corr['p_shuffle'][taste],
+                    index = range(self.off_corr['p_shuffle'][taste].size), 
+                    shuffle = True, 
+                    baseline_window_size = self.correlation_params['baseline_end_time'] - self.correlation_params['baseline_start_time'],
+                    stimulus_end = self.correlation_params['stimulus_end_time'],
+                    stim_window_size = self.correlation_params['stimulus_end_time'] - self.correlation_params['stimulus_start_time'],
+                    laser = False))            
+            
+            on_corr_dat = pd.DataFrame(dict(
+                    file = self.file_id, 
+                    taste = taste, 
+                    baseline_end = self.correlation_params['baseline_end_time'], 
+                    rho = self.on_corr['rho'][taste],
+                    p = self.on_corr['p'][taste],
+                    index = [0], 
+                    shuffle = False, 
+                    baseline_window_size = self.correlation_params['baseline_end_time'] - self.correlation_params['baseline_start_time'],
+                    stimulus_end = self.correlation_params['stimulus_end_time'],
+                    stim_window_size = self.correlation_params['stimulus_end_time'] - self.correlation_params['stimulus_start_time'],
+                    laser = True))
+            
+            on_corr_sh_dat = pd.DataFrame(dict(
+                    file = self.file_id, 
+                    taste = taste, 
+                    baseline_end = self.correlation_params['baseline_end_time'], 
+                    rho = self.on_corr['rho_shuffle'][taste],
+                    p = self.on_corr['p_shuffle'][taste],
+                    index = range(self.on_corr['p_shuffle'][taste].size),
+                    shuffle = True, 
+                    baseline_window_size = self.correlation_params['baseline_end_time'] - self.correlation_params['baseline_start_time'],
+                    stimulus_end = self.correlation_params['stimulus_end_time'],
+                    stim_window_size = self.correlation_params['stimulus_end_time'] - self.correlation_params['stimulus_start_time'],
+                    laser = True))   
+            
+            self.data_frame = pd.concat([self.data_frame, off_corr_dat, on_corr_dat, off_corr_sh_dat, on_corr_sh_dat])
+        self.data_frame = self.data_frame.drop_duplicates()
 # =============================================================================
 #   # WILL PROBABLY GET DEPRECATED
 #     def get_correlations(self):

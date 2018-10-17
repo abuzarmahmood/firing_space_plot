@@ -391,8 +391,7 @@ from sklearn import mixture
 
 for trial in range(8):
     #off_f_red = LLE(n_neighbors = 50,n_components=3).fit_transform(np.transpose(off_firing[0][:,trial,:160]))
-    off_f_red = PCA(n_components=2).fit_transform(np.transpose(off_firing[0][:,trial,:160]))
-    
+    off_f_red = PCA(n_components=3).fit_transform(np.transpose(off_firing[0][:,trial,80:160]))
     fig = plt.figure()
     ax = Axes3D(fig)
     colors  = np.concatenate((np.arange(80),np.arange(len(off_f_red[:,0]),len(off_f_red[:,0])+len(off_f_red[:,0])-80)))

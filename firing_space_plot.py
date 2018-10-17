@@ -31,7 +31,7 @@ import scipy.signal as sig
 from sklearn.manifold import TSNE
 from sklearn.manifold import LocallyLinearEmbedding as LLE
 from sklearn.decomposition import PCA
-#from mpl_toolkits.mplot3d import Axes3D
+from mpl_toolkits.mplot3d import Axes3D
 import time
 
 #   _____      _     _____        _        
@@ -176,10 +176,11 @@ plt.show()
 # Observation: Trials for different tastes show different structure
 taste = 0
 #dist_array = np.empty((firing_len,firing_len,np.int(off_firing[0].shape[1]/firing_len)))
-dist_array = np.empty((firing_len,firing_len,off_firing[0].shape[0]))
+#dist_array = np.empty((firing_len,firing_len,off_firing[0].shape[0]))
+dist_array = np.empty((80,80,off_firing[0].shape[0]))
 for trial in range(dist_array.shape[2]):
     #dat = np.transpose(off_firing[taste][:,firing_len*trial:firing_len*(trial+1)])
-    dat = np.transpose(off_firing[taste][trial,:,:])
+    dat = np.transpose(off_firing[taste][trial,:,0:80])
     dist_array[:,:,trial] = dist_mat(dat,dat)
 
 fig=plt.figure(figsize=(21, 6))
@@ -188,11 +189,13 @@ rows = 2
 count = 0
 for i in range(1, columns*rows +1):
     fig.add_subplot(rows, columns, i)
-    plt.imshow(stats.zscore(dist_array[:,:,count]))
+    #plt.imshow(stats.zscore(dist_array[:,:,count]))
+    plt.imshow(dist_array[:,:,count])
     count +=1
 plt.show()
+plt.tight_layout()
 #fig.savefig('taste%i.png' % taste)
-
+plt.imshow(np.mean(dist_array,axis=2))
 
 
 for i in range(15):
@@ -270,21 +273,21 @@ plt.plot(lin_interp(rate,len(spikes)))
 #
 
 ################### Reduce dimensions ########################
-off_f_red = LLE(n_neighbors = 50,n_components=2).fit_transform(np.transpose(all_off_f))
+off_f_red = LLE(n_neighbors = 50,n_components=3).fit_transform(np.transpose(all_off_f))
 #off_f_red = LLE(n_neighbors = 50,n_components=3).fit_transform(np.transpose(off_firing[0]))
 #off_f_red = TSNE(n_components=3).fit_transform(np.transpose(all_off_f))
 
 ## 3D Plot for single trajectory
-fig = plt.figure()
-ax = Axes3D(fig)
-i = 3
-trial_len = int((tot_time-window_size)/step_size)-1
-ran_inds = np.arange((trial_len*i),(trial_len*(i+1)))
-this_cmap = Colormap('hsv')
-p = ax.scatter(off_f_red[ran_inds,0],off_f_red[ran_inds,1],off_f_red[ran_inds,2],
-               c =np.linspace(1,255,len(ran_inds)),cmap='hsv')
-ax.plot(off_f_red[ran_inds,0],off_f_red[ran_inds,1],off_f_red[ran_inds,2])
-fig.colorbar(p)
+for i in range(4):
+    fig = plt.figure()
+    ax = Axes3D(fig)
+    trial_len = int((tot_time-window_size)/step_size)-1
+    ran_inds = np.arange((trial_len*i),(trial_len*(i+1)))
+    this_cmap = Colormap('hsv')
+    p = ax.scatter(off_f_red[ran_inds,0],off_f_red[ran_inds,1],off_f_red[ran_inds,2],
+                   c =np.linspace(1,255,len(ran_inds)),cmap='hsv')
+    ax.plot(off_f_red[ran_inds,0],off_f_red[ran_inds,1],off_f_red[ran_inds,2])
+    fig.colorbar(p)
 
 ## 2D animated scatter plot
 ###########################
