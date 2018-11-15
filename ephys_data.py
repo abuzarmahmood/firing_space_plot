@@ -92,9 +92,13 @@ class ephys_data():
                 if self.units_descriptors[i][3] == 1:
                     chosen_units[i] = 1
             self.chosen_units = np.nonzero(chosen_units)[0]
+        else:
+            self.units_descriptors = hf5.root.unit_descriptor[:]
+            self.chosen_units = np.ones(self.units_descriptors.size)
         
         # Iterate through tastes and extract spikes from laser on and off conditions
         # If no array for laser durations, put everything in laser off
+        
         dig_in_gen = hf5.root.spike_trains._f_iter_nodes()
         for taste in range(len(hf5.root.spike_trains._f_list_nodes())):
             
@@ -148,8 +152,14 @@ class ephys_data():
         tot_time = self.firing_rate_params['total_time']
         #calc_type = self.firing_rate_params['calc_type']
         firing_len = int((tot_time-window_size)/step_size)-1 # How many time-steps after binning
-        off_spikes = self.off_spikes # list contraining arrays of dims [nrns, trials, time]
-        on_spikes = self.on_spikes # list contraining arrays of dims [nrns, trials, time]
+        
+        #off_spikes = self.off_spikes # list contraining arrays of dims [nrns, trials, time]
+        #on_spikes = self.on_spikes # list contraining arrays of dims [nrns, trials, time]
+        # Add some noise to spikes so that neurons that don't fire will not have a 
+        # divide by zero during normalization
+        off_spikes = [x + np.random.random(x.shape)*1e-6 for x in self.off_spikes]
+        if self.laser_exists:
+            on_spikes = [x + np.random.random(x.shape)*1e-6 for x in self.on_spikes]
         off_firing = []
         on_firing = []
         normal_off_firing = []
@@ -184,29 +194,7 @@ class ephys_data():
 # =============================================================================
         
         self.off_firing = off_firing
-        normal_off_firing = copy.deepcopy(off_firing)
         
-        # Normalized firing of every neuron over entire dataset
-        off_firing_array = np.asarray(normal_off_firing) #(taste x nrn x trial x time)
-        for m in range(off_firing_array.shape[1]): # nrn
-            min_val = np.min(off_firing_array[:,m,:,:]) # Find min and max vals in entire dataset
-            max_val = np.max(off_firing_array[:,m,:,:])
-            for l in range(len(normal_off_firing)): #taste
-                for n in range(normal_off_firing[0].shape[1]): # trial
-                    normal_off_firing[l][m,n,:] = (normal_off_firing[l][m,n,:] - min_val)/(max_val-min_val)
-                    
-        self.normal_off_firing = normal_off_firing
-        all_off_firing_array = np.asarray(self.normal_off_firing)
-        new_shape = (all_off_firing_array.shape[1],
-                     all_off_firing_array.shape[2]*all_off_firing_array.shape[0],
-                     all_off_firing_array.shape[3])
-        
-        new_all_off_firing_array = np.empty(new_shape)
-        self.all_normal_off_firing = new_all_off_firing_array
-        
-        ### ON FIRING ###
-        
-        # If on_firing exists, then calculate on firing
         if self.laser_exists:
             
             for l in range(len(on_spikes)):
@@ -221,13 +209,62 @@ class ephys_data():
                 on_firing.append(this_on_firing)
             
             self.on_firing = on_firing
+        
+        #(taste x nrn x trial x time)
+        if self.laser_exists:
+            all_firing_array = np.concatenate((np.asarray(off_firing),np.asarray(on_firing)), axis = 2)
+        else:
+            all_firing_array = np.asarray(off_firing)
+        self.all_firing_array = all_firing_array
+        
+        normal_off_firing = copy.deepcopy(off_firing)
+        
+        # Normalized firing of every neuron over entire dataset
+        for m in range(all_firing_array.shape[1]): # nrn
+            min_val = np.min(all_firing_array[:,m,:,:]) # Find min and max vals in entire dataset
+            max_val = np.max(all_firing_array[:,m,:,:])
+            for l in range(len(normal_off_firing)): #taste
+                for n in range(normal_off_firing[0].shape[1]): # trial
+                    normal_off_firing[l][m,n,:] = (normal_off_firing[l][m,n,:] - min_val)/(max_val-min_val)
+                    
+        self.normal_off_firing = normal_off_firing
+        all_off_firing_array = np.asarray(self.normal_off_firing)
+        new_shape = (all_off_firing_array.shape[1],
+                     all_off_firing_array.shape[2]*all_off_firing_array.shape[0],
+                     all_off_firing_array.shape[3])
+        
+        new_all_off_firing_array = np.empty(new_shape)
+        
+        for taste in range(all_off_firing_array.shape[0]):
+                new_all_off_firing_array[:, taste*all_off_firing_array.shape[2]:(taste+1)*all_off_firing_array.shape[2],:] = all_off_firing_array[taste,:,:,:] 
+        
+        self.all_normal_off_firing = new_all_off_firing_array
+        
+        ### ON FIRING ###
+        
+        # If on_firing exists, then calculate on firing
+        if self.laser_exists:
+            
+# =============================================================================
+#             for l in range(len(on_spikes)):
+#                 this_on_firing = np.zeros((on_spikes[0].shape[0],on_spikes[0].shape[1],firing_len))
+#                 for i in range(this_on_firing.shape[0]):
+#                     for j in range(this_on_firing.shape[1]):
+#                         for k in range(this_on_firing.shape[2]):
+#                             this_on_firing[i, j, k] = np.mean(on_spikes[l][i, j, step_size*k:step_size*k + window_size])
+#                             if np.isnan(this_on_firing[i, j, k]):
+#                                 print('found nan')
+#                                 break
+#                 on_firing.append(this_on_firing)
+#             
+#             self.on_firing = on_firing
+# =============================================================================
             
             normal_on_firing = copy.deepcopy(on_firing)
             
-            on_firing_array = np.asarray(normal_on_firing) #(taste x nrn x trial x time)
-            for m in range(on_firing_array.shape[1]): # nrn
-                min_val = np.min(on_firing_array[:,m,:,:])
-                max_val = np.max(on_firing_array[:,m,:,:])
+            for m in range(all_firing_array.shape[1]): # nrn
+                min_val = np.min(all_firing_array[:,m,:,:])
+                max_val = np.max(all_firing_array[:,m,:,:])
                 for l in range(len(normal_on_firing)): #taste
                     for n in range(normal_on_firing[0].shape[1]): # trial
                         normal_on_firing[l][m,n,:] = (normal_on_firing[l][m,n,:] - min_val)/(max_val-min_val)
@@ -237,7 +274,6 @@ class ephys_data():
             new_all_on_firing_array = np.empty(new_shape)
     
             for taste in range(all_off_firing_array.shape[0]):
-                new_all_off_firing_array[:, taste*all_off_firing_array.shape[2]:(taste+1)*all_off_firing_array.shape[2],:] = all_off_firing_array[taste,:,:,:]                                  
                 new_all_on_firing_array[:, taste*all_on_firing_array.shape[2]:(taste+1)*all_on_firing_array.shape[2],:] = all_on_firing_array[taste,:,:,:]
                             
             self.all_normal_on_firing = new_all_on_firing_array

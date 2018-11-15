@@ -35,6 +35,9 @@ from ephys_data import ephys_data
 from baseline_divergence_funcs import *
 import multiprocessing as mp
 
+from sklearn.decomposition import PCA as pca
+from sklearn.discriminant_analysis import LinearDiscriminantAnalysis as lda
+
 from scipy.stats import f_oneway
 from scipy.stats import mannwhitneyu
 import scipy
@@ -128,10 +131,14 @@ print(aov_table)
 
 sns.swarmplot(x='taste',y='rho', data=taste_comp, dodge=True)
 
+# =============================================================================
+# =============================================================================
 ### Differences in baseline across tastes
 # Show that there are significant differences in distances of post-stimulus firing 
-# but not baseline firing
-dir_list = ['/media/bigdata/jian_you_data/des_ic', '/media/bigdata/NM_2500']
+# but not baseline firing'
+
+#dir_list = ['/media/bigdata/jian_you_data/des_ic', '/media/bigdata/NM_2500']
+dir_list = ['/media/bigdata/jian_you_data/des_ic']
 file_list = []
 for x in dir_list:
     file_list = file_list + glob.glob(x + '/**/' + '*.h5',recursive=True)
@@ -147,14 +154,58 @@ for file in range(len(file_list)):
     data.get_data()
     data.get_firing_rates()
     
-    base_stim = np.concatenate((data.all_normal_off_firing[:,:,baseline_inds],
-                               data.all_normal_off_firing[:,:,stimulus_inds]),
-                               axis = 1)
-    base_stim_mean = np.mean(base_stim,axis=2)
-    base_stim_dists = dist_mat(base_stim_mean.T,base_stim_mean.T)
-    base_dists = base_stim_dists[range(60),0]
-    stim_dists = base_stim_dists[range(60,120),0]
-
+    base_dat = data.all_normal_off_firing[:,:,baseline_inds]
+    stim_dat = data.all_normal_off_firing[:,:,stimulus_inds]
+    groups = np.sort([0,1,2,3]*15)
+    
+    # Use LDA to quantify discriminability of baseline and stimulus firing into tastes
+    # Train on 75% of data and test on 25%
+    
+    base_long = base_dat[0,:,:]
+    for nrn in range(1,base_dat.shape[0]):
+        base_long = np.concatenate((base_long,base_dat[int(nrn),:,:]),axis=1)
+        
+    stim_long = stim_dat[0,:,:]
+    for nrn in range(1,stim_dat.shape[0]):
+        stim_long = np.concatenate((stim_long,stim_dat[int(nrn),:,:]),axis=1)
+        
+    base_pca = pca(n_components = 3).fit(base_long)
+    stim_pca = pca(n_components = 3).fit(stim_long)
+    
+    explained_var_base = sum(base_pca.explained_variance_ratio_)
+    explained_var_stim = sum(stim_pca.explained_variance_ratio_)
+    
+    reduced_base = base_pca.transform(base_long)
+    reduced_stim = stim_pca.transform(stim_long)
+    
+    repeats = 500
+    
+    base_acc = []
+    stim_acc = []
+    
+    for i in range(repeats):
+        # These subsets are not non-overlapping!!
+        train_base = np.random.choice(np.arange(60),size=45,replace=False)
+        test_base = np.random.choice(np.arange(60),size=15,replace=False)
+        train_stim = np.random.choice(np.arange(60),size=45,replace=False)
+        test_stim = np.random.choice(np.arange(60),size=15,replace=False)
+            
+        base_lda = lda()
+        base_lda.fit(reduced_base[train_base,:], groups[train_base])
+        base_acc.append(sum(base_lda.predict(reduced_base[test_base,:]) == groups[test_base]) / len(groups[test_base]))
+        #print('explained_var = %.3f, accuracy = %.3f' % (explained_var_base,accuracy))
+        
+        stim_lda = lda()
+        stim_lda.fit(reduced_stim[train_stim,:], groups[train_stim])
+        stim_acc.append(sum(stim_lda.predict(reduced_stim[test_stim,:]) == groups[test_stim]) / len(groups[test_stim]))
+        #print('explained_var = %.3f, accuracy = %.3f' % (explained_var_stim,accuracy))
+    
+    plt.figure()
+    plt.title(os.path.basename(file_list[file]))
+    plt.show(plt.hist(base_acc))
+    plt.show(plt.hist(stim_acc))
+# =============================================================================
+# =============================================================================
 ###
 r_sq = []
 r_sq_sh = []
