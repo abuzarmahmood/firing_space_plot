@@ -1,7 +1,5 @@
 """
 Conglomerate of analysis to explore variability in firing properties
-and taste responses of GC neurons
-
 Repeat analyses with non-parametric tests
 """
 
@@ -22,26 +20,19 @@ import matplotlib.pyplot as plt
 import sys 
 from tqdm import trange
 import pandas as pd
-import statsmodels.api as sm
-from statsmodels.formula.api import ols
-import statsmodels.stats.multicomp
-from statsmodels.stats.anova import AnovaRM
 import pingouin as pg
 import seaborn as sns
 from joblib import Parallel, delayed
 import multiprocessing as mp
+from itertools import groupby
 
 sys.path.append('/media/bigdata/firing_space_plot/_old')
 from ephys_data import ephys_data
-
-from sklearn.decomposition import PCA as pca
-from scipy.spatial import distance_matrix as dist_mat
 
 import glob
 from tqdm import tqdm
 from mpl_toolkits.mplot3d import Axes3D
 
-from sklearn.discriminant_analysis import LinearDiscriminantAnalysis as LDA
 
 # _                    _   ____        _        
 #| |    ___   __ _  __| | |  _ \  __ _| |_ __ _ 
@@ -81,13 +72,38 @@ for file in trange(len(file_list)):
 stim_delivery_ind = int(2000/25)
 end_ind = int(4500/25)
 # Get 2000 ms post-stim firing
-all_poststim_data = [np.swapaxes(file[:,:,:,stim_delivery_ind:end_ind],0,1) \
+all_poststim_data = [np.swapaxes(file,0,1) \
         for file in all_off_data]
 
 # Sort to have top list be neurons
 neuron_list = [file[nrn,:,:,:] for file in all_poststim_data \
         for nrn in range(file.shape[0])]
 neuron_array = np.asarray(neuron_list)
+
+# Remove neurons which don't spike in more that 
+# a number trial (likely recording cutoffs)
+def count_occurrences(iterable):
+    """return a dictionary with items and numbers of occurrences
+    in iterable"""
+    return dict((item, len(list(group)))
+        for item, group
+        in groupby(sorted(iterable)))
+
+# Extract post-stimulis firing
+# Done before bad-neuron selection so we have good post-stimulus firing
+neuron_array = neuron_array[:,:,:,stim_delivery_ind:end_ind]
+
+bad_neurons_dict = count_occurrences(np.where(np.sum(neuron_array,axis=-1) == 0)[0])
+# Cutoff = 5 trials
+bad_neurons = [key for key,val in bad_neurons_dict.items() if val > 5]
+
+
+# Pull out good neurons
+neuron_array = neuron_array[\
+        [nrn for nrn in range(neuron_array.shape[0]) if nrn not in bad_neurons] ,:,:,:]
+
+# Add infinitesimal noise to firing rate to avoid 0-related errors
+neuron_array += np.random.random(neuron_array.shape)* 1e-9
 
 # Unroll array along taste for plotting
 neuron_array_long = np.reshape(neuron_array,\
@@ -119,9 +135,6 @@ neuron_frame = pd.DataFrame(\
                 'time' : idx[3].flatten(),
                 'firing_rate' : neuron_array.flatten() })
 
-# Add infinitesimal noise to firing rate to avoid 0-related errors
-neuron_frame['firing_rate'] += \
-        np.random.rand(neuron_frame['firing_rate'].shape[0])* 1e-9
 
 # Convert time into discrete 500ms bins
 time_bin_frame = neuron_frame.copy()
@@ -218,7 +231,6 @@ trial_bin_frame['trial_bin'] = pd.cut(trial_bin_frame.trial,
 #    (trial_bin_frame.loc[trial_bin_frame.neuron == nrn,:])\
 #            for nrn in tqdm(trial_bin_frame.neuron.unique()))
 
-
 # ANOVA for each taste for every neuron
 
 def trial_bin_anova(dframe):
@@ -241,9 +253,19 @@ trial_plist = [[taste['p-unc'][0] \
 # Mark neurons with any change in responsesi
 # For 4 tastes, correcting alpha to be < 0.01
 changed_tastes = np.sum(np.asarray(trial_plist) < 0.01,axis=1)
+sns.distplot((changed_tastes>0)*1, bins = np.arange(3),kde=False)\
+        .set_title('Distribution of changed units');plt.show()
 
-#sns.distplot(changed_tastes[changed_tastes>0],\
-#        bins = np.arange(1,6),kde=False);plt.show()
+sns.distplot(changed_tastes[changed_tastes>0],\
+        bins = np.arange(1,6),kde=False)\
+        .set_title('Distribution of changed tastes')
+plt.show()
+
+sns.heatmap(neuron_array_long[np.where(changed_tastes==4)[0][0],:,:],\
+        cmap='viridis');plt.show()
+
+sns.heatmap(neuron_array_long[120,:,:],\
+        cmap='viridis');plt.show()
 
 #nrn = [125,125] 
 #this_frame = trial_bin_frame.query('neuron >= @nrn[0] and  neuron <= @nrn[1]')
@@ -258,13 +280,138 @@ plt.show()
 
 # Mark how many taste discriminatory vs non-discriminatory units
 # showed drift in responses
-discrimatory_drift = sum((changed_tastes > 0) * (taste_responsive == 1))
-nondiscrimintory_drift = sum((changed_tastes > 0) * (taste_responsive == 0))
+
+# How many neurons that CHANGED rates were ON AVERAGE DISCRIMINATIVE
+discriminatory_drift = sum((changed_tastes > 0) * (taste_responsive == 1))
+# How many neuron that CHANGED rats were ON AVERAGE NON-DISCRIMINATIVE
+nondiscriminatory_drift = sum((changed_tastes > 0) * (taste_responsive == 0))
+
+# How many STABLE neurons were ON AVERAGE DISCRIMINATIVE
+discriminatory_stable = sum((changed_tastes ==  0) * (taste_responsive == 1))
+# How many STABLE neuron were ON AVERAGE NONDISCRIMINATIVE
+nondiscriminatory_stable = \
+        sum((changed_tastes ==  0) * (taste_responsive == 0))
 
 # How many discriminatory units became non after splitting and
 # vice versa
 # Neurons becoming taste discriminative after splitting would mean
 # that they are instantaneously taste responsive (and not canonically)
 
+def group_taste_anova(dframe):
+    return [pg.rm_anova(
+            data = dframe.query('trial_bin == @trial_bin'), 
+            dv = 'firing_rate',
+            within = ['time_bin','taste'], subject = 'trial') \
+            for trial_bin in dframe.trial_bin.unique()] 
+
+group_taste_list = Parallel(n_jobs = mp.cpu_count())\
+    (delayed(group_taste_anova)\
+    (trial_bin_frame.loc[trial_bin_frame.neuron == nrn,:])\
+            for nrn in tqdm(trial_bin_frame.neuron.unique()))
+
+# Extract p-values
+group_taste_parray = np.asarray([[group['p-unc'][1] \
+        for group in anova_result] \
+        for anova_result in group_taste_list])
+
+group_taste_discrim = np.sum(group_taste_parray < 0.05,axis=1)
+
+## UNITS THAT CHANGED ##
+# Discriminatory -> Not
+change_y2n = \
+        sum((taste_responsive * (group_taste_discrim==0))[changed_tastes>0])
+# Not -> Discriminatory 
+change_n2y = \
+        sum((~taste_responsive * (group_taste_discrim>0))[changed_tastes>0])
+
+## UNITS THAT WERE STABLE ##
+# Discriminatory -> Not
+stable_y2n= \
+        sum((taste_responsive * (group_taste_discrim==0))[changed_tastes==0])
+# Not -> Discriminatory 
+stable_n2y = \
+        sum((~taste_responsive * (group_taste_discrim>0))[changed_tastes==0])
+
+
+#sns.distplot(group_taste_discrim[~taste_responsive],
+#        bins=np.arange(3), kde = False);plt.show()
+
+# As a control comparison, did units that didn't change switch
+# their responsiveness
+
+
 # How many significantly different time bins were increased
 # in all by splitting
+
+# ____           ____  _   _              ____ _                            
+#|  _ \ _ __ ___/ ___|| |_(_)_ __ ___    / ___| |__   __ _ _ __   __ _  ___ 
+#| |_) | '__/ _ \___ \| __| | '_ ` _ \  | |   | '_ \ / _` | '_ \ / _` |/ _ \
+#|  __/| | |  __/___) | |_| | | | | | | | |___| | | | (_| | | | | (_| |  __/
+#|_|   |_|  \___|____/ \__|_|_| |_| |_|  \____|_| |_|\__,_|_| |_|\__, |\___|
+#                                                                |___/      
+
+# Perform a trial_bin anova on pre-stim firing in the same way as post-stim
+prestim_ind = int(1000/25)
+prestim_array = np.asarray(neuron_list)[:,:,:,prestim_ind:stim_delivery_ind]
+
+# Pull out good neurons
+prestim_array = prestim_array[\
+        [nrn for nrn in range(prestim_array.shape[0]) if nrn not in bad_neurons] ,:,:,:]
+
+# Add infinitesimal noise to firing rate to avoid 0-related errors
+prestim_array += np.random.random(prestim_array.shape)* 1e-9
+ 
+# Unroll array along taste for plotting
+prestim_array_long = np.reshape(prestim_array,\
+        (prestim_array.shape[0],prestim_array.shape[1]*prestim_array.shape[2],
+            prestim_array.shape[3]))
+
+# Convert array to dataframe
+idx = make_array_identifiers(prestim_array)
+prestim_frame = pd.DataFrame(\
+        data = { 'neuron' : idx[0].flatten(),
+                'taste' : idx[1].flatten(),
+                'trial' : idx[2].flatten(),
+                'time' : idx[3].flatten(),
+                'firing_rate' : prestim_array.flatten() })
+
+# Convert time into discrete 500ms bins
+time_bin_frame = prestim_frame.copy()
+time_bin_frame['time_bin'] = pd.cut(time_bin_frame.time,
+        bins =2 ,include_lowest = True, labels = np.arange(2))
+
+time_bin_frame.drop('time',inplace=True,axis=1)
+time_bin_frame =\
+time_bin_frame.groupby(['neuron','taste','trial','time_bin'])\
+                .sum().reset_index()
+
+# Bin trials into 2 groups
+trial_bin_frame = time_bin_frame.copy()
+trial_bin_frame['trial_bin'] = pd.cut(trial_bin_frame.trial,
+        bins =2 ,include_lowest = True, labels = range(2))
+
+# Perform anova on trial groups
+
+prestim_trial_anova_list = Parallel(n_jobs = mp.cpu_count())\
+    (delayed(trial_bin_anova)\
+    (trial_bin_frame.loc[trial_bin_frame.neuron == nrn,:])\
+            for nrn in tqdm(trial_bin_frame.neuron.unique()))
+
+# Extract p-value from anova list
+prestim_trial_plist = [[taste['p-unc'][0] \
+        for taste in neuron] \
+        for neuron in prestim_trial_anova_list]
+
+# Convert to np array
+prestim_trial_parray = np.asarray(prestim_trial_plist)
+
+# Check how many group differences are shared between pre-stim and post-stim
+# firing
+
+pre_change = prestim_trial_parray < 0.01
+post_change = np.asarray(trial_plist) < 0.01
+
+pre_post = np.sum(pre_change*post_change)
+pre_npost = np.sum(pre_change*(1-post_change))
+npre_post = np.sum((1-pre_change)*post_change)
+npre_npost = np.sum((1-pre_change)*(1-post_change))
