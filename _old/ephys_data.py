@@ -7,6 +7,14 @@ from scipy.spatial import distance_matrix as dist_mat
 from scipy.stats import pearsonr
 import multiprocessing as mp
 import pylab as plt
+from scipy.special import gamma
+from numba import jit
+
+from BAKS import BAKS
+
+this_dir = os.getcwd()
+os.chdir(this_dir)
+
 #  ______       _                      _____        _         
 # |  ____|     | |                    |  __ \      | |        
 # | |__   _ __ | |__  _   _ ___ ______| |  | | __ _| |_ __ _  
@@ -25,6 +33,7 @@ E.g. whether to take single units, fast spiking etc (as this data is already in 
 
 class ephys_data():
     def __init__(self, data_dir, use_chosen_units, file_id = None, unit_type = None):
+        
         """
         data_dirs : where to look for hdf5 file
             : get_data() loads data from this directory
@@ -40,8 +49,9 @@ class ephys_data():
         self.firing_rate_params = {
             'step_size' :   None,
             'window_size' : None,
-            'total_time' :  None
-            #'calc_type' : None      # Either 'step' or 'conv'
+            'total_time' :  None,
+            'calc_type' : None,      # Either 'baks' or 'conv'
+            'baks_len' : None
                 }
         
         self.correlation_params = {
@@ -139,94 +149,159 @@ class ephys_data():
             self.laser_exists = False
         
         hf5.close()
-        
+    
+    
+    @staticmethod
+    def _calc_firing_rates(step_size, window_size, total_time, spike_array):
+        """
+        spike_array :: params :: 4D array with time as last dimension
+        """
+        bin_inds = (0,window_size)
+        total_bins = int((total_time - window_size + 1) / step_size) + 1
+        bin_list = [(trial,neuron,\
+                (bin_inds[0]+step,bin_inds[1]+step)) \
+                for trial in range(spike_array.shape[0]) \
+                for neuron in range(spike_array.shape[1])
+                for step in np.arange(total_bins)*step_size ]
+
+        firing_rate = np.empty((spike_array.shape[0],spike_array.shape[1],total_bins))
+        for bin_inds in bin_list:
+            firing_rate[bin_inds[0],bin_inds[1],bin_inds[2][0]//step_size] = \
+                np.sum(spike_array[bin_inds[0],bin_inds[1],bin_inds[2][0]:bin_inds[2][1]])
+
+        return firing_rate
+
     def get_firing_rates(self):
         """
         Converts spikes to firing rates
-        Raw and Normalized firing rates are stored separately
         """
-        ### OFF Firing ###
         
-        step_size = self.firing_rate_params['step_size']
-        window_size = self.firing_rate_params['window_size']
-        tot_time = self.firing_rate_params['total_time']
-        #calc_type = self.firing_rate_params['calc_type']
-        firing_len = int((tot_time-window_size)/step_size)-1 # How many time-steps after binning
-        
-        #off_spikes = self.off_spikes # list contraining arrays of dims [nrns, trials, time]
-        #on_spikes = self.on_spikes # list contraining arrays of dims [nrns, trials, time]
-        # Add some noise to spikes so that neurons that don't fire will not have a 
-        # divide by zero during normalization
-        off_spikes = [x + np.random.random(x.shape)*1e-6 for x in self.off_spikes]
+        off_spikes = self.off_spikes
         if self.laser_exists:
-            on_spikes = [x + np.random.random(x.shape)*1e-6 for x in self.on_spikes]
+            on_spikes = self.on_spikes
         off_firing = []
         on_firing = []
         normal_off_firing = []
         normal_on_firing = []
         
-        #if 'step' in calc_type:
-        ## Step-wise moving window calculation of firing rates
-        for l in range(len(off_spikes)): # taste
-            this_off_firing = np.zeros((off_spikes[0].shape[0],off_spikes[0].shape[1],firing_len))
-            for i in range(this_off_firing.shape[0]): # nrns
-                for j in range(this_off_firing.shape[1]): # trials
-                    for k in range(this_off_firing.shape[2]): # time
-                        this_off_firing[i, j, k] = np.mean(off_spikes[l][i, j, step_size*k:step_size*k + window_size])
-                        if np.isnan(this_off_firing[i, j, k]):
-                            print('found nan')
-                            break
-            off_firing.append(this_off_firing)
-                
-# =============================================================================
-#         elif 'conv' in calc_type:
-#             # Convolutional window calculation
-#             conv_window = np.ones((1,window_size))
-#             for l in range(len(off_spikes)): # taste
-#                 this_off_firing = np.zeros(off_spikes.shape)
-#                 for i in range(this_off_firing.shape[0]): # nrns
-#                     for j in range(this_off_firing.shape[1]): # trials
-#                             this_off_firing[i, j, :] = np.convolve(off_spikes[l][i, j, :], conv_window, mode = 'same')
-#                             if np.isnan(this_off_firing[i, j, k]):
-#                                 print('found nan')
-#                                 break
-#                 off_firing.append(this_off_firing)
-# =============================================================================
-        
-        self.off_firing = off_firing
-        
-        if self.laser_exists:
+        ### OFF Firing ###
+        if self.firing_rate_params['calc_type'] == 'conv':
             
-            for l in range(len(on_spikes)):
-                this_on_firing = np.zeros((on_spikes[0].shape[0],on_spikes[0].shape[1],firing_len))
-                for i in range(this_on_firing.shape[0]):
-                    for j in range(this_on_firing.shape[1]):
-                        for k in range(this_on_firing.shape[2]):
-                            this_on_firing[i, j, k] = np.mean(on_spikes[l][i, j, step_size*k:step_size*k + window_size])
-                            if np.isnan(this_on_firing[i, j, k]):
+            step_size = self.firing_rate_params['step_size']
+            window_size = self.firing_rate_params['window_size']
+            tot_time = self.firing_rate_params['total_time']
+            firing_len = int((tot_time-window_size)/step_size)-1
+
+            self.off_firing = [self._calc_firing_rates(step_size = step_size,
+                                                window_size = window_size,
+                                                total_time = tot_time,
+                                                spike_array = spikes)
+                                for spikes in self.off_spikes ]
+
+            # How many time-steps after binning
+            
+            
+            #if 'step' in calc_type:
+            ## Step-wise moving window calculation of firing rates
+#            for l in range(len(off_spikes)): # taste
+#                this_off_firing = np.zeros((off_spikes[0].shape[0],off_spikes[0].shape[1],firing_len))
+#                for i in range(this_off_firing.shape[0]): # nrns
+#                    for j in range(this_off_firing.shape[1]): # trials
+#                        for k in range(this_off_firing.shape[2]): # time
+#                            this_off_firing[i, j, k] = np.mean(off_spikes[l][i, j, step_size*k:step_size*k + window_size])
+#                            if np.isnan(this_off_firing[i, j, k]):
+#                                print('found nan')
+#                                break
+#                off_firing.append(this_off_firing)
+#            
+#            self.off_firing = off_firing
+            
+            if self.laser_exists:
+                self.on_firing= [self._calc_firing_rates(step_size = step_size,
+                                                    window_size = window_size,
+                                                    total_time = tot_time,
+                                                    spike_array = spikes)
+                                    for spikes in self.on_spikes]
+                
+#                for l in range(len(on_spikes)):
+#                    this_on_firing = np.zeros((on_spikes[0].shape[0],on_spikes[0].shape[1],firing_len))
+#                    for i in range(this_on_firing.shape[0]):
+#                        for j in range(this_on_firing.shape[1]):
+#                            for k in range(this_on_firing.shape[2]):
+#                                this_on_firing[i, j, k] = np.mean(on_spikes[l][i, j, step_size*k:step_size*k + window_size])
+#                                if np.isnan(this_on_firing[i, j, k]):
+#                                    print('found nan')
+#                                    break
+#                    on_firing.append(this_on_firing)
+#                
+#                self.on_firing = on_firing
+                
+        elif self.firing_rate_params['calc_type'] == 'baks':
+            
+            #if 'baks' in calc_type:
+            tot_time = self.firing_rate_params['total_time']
+            firing_len = self.firing_rate_params['baks_len']
+            
+            for l in range(len(off_spikes)): # taste
+                this_off_firing = np.zeros((off_spikes[0].shape[0],off_spikes[0].shape[1],firing_len))
+                for i in range(this_off_firing.shape[0]): # nrns
+                    for j in range(this_off_firing.shape[1]): # trials
+                            this_off_firing[i, j, :] = BAKS(np.where(off_spikes[l][i,j,:])[0]/1000, np.linspace(0,tot_time/1000,firing_len))
+                            if sum(np.isnan(this_off_firing[i, j, :])):
                                 print('found nan')
                                 break
-                on_firing.append(this_on_firing)
+                off_firing.append(this_off_firing)
+            self.off_firing = off_firing
             
-            self.on_firing = on_firing
+            if self.laser_exists:
+                
+                for l in range(len(on_spikes)):
+                    this_on_firing = np.zeros((on_spikes[0].shape[0],on_spikes[0].shape[1],firing_len))
+                    for i in range(this_on_firing.shape[0]):
+                        for j in range(this_on_firing.shape[1]):
+                            this_on_firing[i, j, :] = BAKS(np.where(on_spikes[l][i,j,:])[0]/1000, np.linspace(0,tot_time/1000,firing_len))
+                            if sum(np.isnan(this_on_firing[i, j, :])):
+                                print('found nan')
+                                break
+                    on_firing.append(this_on_firing)
+                
+                self.on_firing = on_firing
+                
+        else:
+            print('Please specify either "conv" or "baks" for "calc_type"')
+        
         
         #(taste x nrn x trial x time)
         if self.laser_exists:
-            all_firing_array = np.concatenate((np.asarray(off_firing),np.asarray(on_firing)), axis = 2)
+            all_firing_array = np.concatenate(
+                    (np.asarray(self.off_firing),np.asarray(self.on_firing)), axis = 2)
         else:
             all_firing_array = np.asarray(off_firing)
         self.all_firing_array = all_firing_array
         
-        normal_off_firing = copy.deepcopy(off_firing)
+        
+    def get_normalized_firing(self):
+        """
+        Converts spikes to firing rates
+        """
+        # =============================================================================
+        # Normalize firing
+        # =============================================================================
+        all_firing_array = self.all_firing_array
+        normal_off_firing = copy.deepcopy(self.off_firing)
         
         # Normalized firing of every neuron over entire dataset
         for m in range(all_firing_array.shape[1]): # nrn
             min_val = np.min(all_firing_array[:,m,:,:]) # Find min and max vals in entire dataset
             max_val = np.max(all_firing_array[:,m,:,:])
-            for l in range(len(normal_off_firing)): #taste
-                for n in range(normal_off_firing[0].shape[1]): # trial
-                    normal_off_firing[l][m,n,:] = (normal_off_firing[l][m,n,:] - min_val)/(max_val-min_val)
-                    
+            if not (max_val == 0):
+                for l in range(len(normal_off_firing)): #taste
+                    for n in range(normal_off_firing[0].shape[1]): # trial
+                        normal_off_firing[l][m,n,:] = (normal_off_firing[l][m,n,:] - min_val)/(max_val-min_val)
+            else:
+                for l in range(len(normal_off_firing)): #taste
+                    normal_off_firing[l][m,:,:] = 0
+                
         self.normal_off_firing = normal_off_firing
         all_off_firing_array = np.asarray(self.normal_off_firing)
         new_shape = (all_off_firing_array.shape[1],
@@ -260,15 +335,19 @@ class ephys_data():
 #             self.on_firing = on_firing
 # =============================================================================
             
-            normal_on_firing = copy.deepcopy(on_firing)
+            normal_on_firing = copy.deepcopy(self.on_firing)
             
             for m in range(all_firing_array.shape[1]): # nrn
                 min_val = np.min(all_firing_array[:,m,:,:])
                 max_val = np.max(all_firing_array[:,m,:,:])
-                for l in range(len(normal_on_firing)): #taste
-                    for n in range(normal_on_firing[0].shape[1]): # trial
-                        normal_on_firing[l][m,n,:] = (normal_on_firing[l][m,n,:] - min_val)/(max_val-min_val)
-             
+                if not (max_val == 0):
+                    for l in range(len(normal_on_firing)): #taste
+                        for n in range(normal_on_firing[0].shape[1]): # trial
+                            normal_on_firing[l][m,n,:] = (normal_on_firing[l][m,n,:] - min_val)/(max_val-min_val)
+                else:
+                    for l in range(len(normal_on_firing)): #taste
+                        normal_on_firing[l][m,:,:] = 0
+                    
             self.normal_on_firing = normal_on_firing
             all_on_firing_array = np.asarray(self.normal_on_firing)
             new_all_on_firing_array = np.empty(new_shape)
@@ -278,29 +357,70 @@ class ephys_data():
                             
             self.all_normal_on_firing = new_all_on_firing_array
         
-# =============================================================================
-#     # WILL PROBABLY GET DEPRECATED    
-#     def get_baseline_windows(self):
-#         baseline_window_sizes = self.correlation_params['baseline_window_sizes']
-#         baseline_start_time = self.correlation_params['baseline_start_time']
-#         baseline_end_time = self.correlation_params['baseline_end_time']
-#         all_baseline_windows = []
-#         for i in range(len(baseline_window_sizes)):
-#             #temp_baseline_windows = np.arange(baseline_window_end,baseline_window_start-baseline_window_sizes[i],-baseline_window_sizes[i])
-#             temp_baseline_windows = np.arange(baseline_end_time, baseline_start_time, -100)
-#             temp_baseline_windows = temp_baseline_windows[(temp_baseline_windows - baseline_window_sizes[i]) >0]
-#             for j in range(0,len(temp_baseline_windows)):
-#                 all_baseline_windows.append((temp_baseline_windows[j]- baseline_window_sizes[i],temp_baseline_windows[j]))
-#         self.all_baseline_windows = all_baseline_windows
-# =============================================================================
+    def firing_rate_comparison(self, num_trials):
+        """
+        Compares firing rate calculation using moving widnow and baks for a random number of trials
+        """
+        # Pick out random number of trials
+        spikes = np.asarray(self.spikes)
+        spikes_long = np.reshape(spikes,(np.prod(list(spikes.shape[:-1])),spikes.shape[-1]))
+        chosen_spikes = spikes_long[np.random.randint(0,spikes_long.shape[0],num_trials),:]
         
-# =============================================================================
-#     def get_palatability_correlations(self):
-#         """
-#         Calculate palatability correlations between neurons in the on and off 
-#         conditions
-#         """
-# =============================================================================
+        step_size = self.firing_rate_params['step_size']
+        window_size = self.firing_rate_params['window_size']
+        tot_time = self.firing_rate_params['total_time']
+        firing_len = int((tot_time-window_size)/step_size)-1 # How many time-steps after binning
+        
+        baks_rate = np.zeros((num_trials,self.firing_rate_params['baks_len']))
+        for trial in range(baks_rate.shape[0]):
+            baks_rate[trial,:] = self.BAKS(np.where(chosen_spikes[trial,:])[0]/1000, np.linspace(0,tot_time/1000,self.firing_rate_params['baks_len']))
+        
+        conv_rate = np.zeros((num_trials,firing_len))
+        for trial in range(conv_rate.shape[0]):
+            for time in range(conv_rate.shape[1]): # time
+                conv_rate[trial,time] = np.mean(chosen_spikes[trial, step_size*time:step_size*time + window_size])
+        
+        square_len = np.int(np.ceil(np.sqrt(num_trials)))
+        
+        fig, ax = plt.subplots(square_len,square_len)
+        
+        nd_idx_objs = []
+        for dim in range(ax.ndim):
+            this_shape = np.ones(len(ax.shape))
+            this_shape[dim] = ax.shape[dim]
+            nd_idx_objs.append(np.broadcast_to( np.reshape(np.arange(ax.shape[dim]),this_shape.astype('int')), ax.shape).flatten())
+
+        for trial in range(num_trials):
+            plt.sca(ax[nd_idx_objs[0][trial],nd_idx_objs[1][trial]])
+            raster(chosen_spikes[trial,:])
+            plt.plot(np.linspace(0,tot_time,firing_len),conv_rate[trial,:]/np.max(conv_rate[trial,:]))
+            plt.plot(np.linspace(0,tot_time,self.firing_rate_params['baks_len']),baks_rate[trial,:]/np.max(baks_rate[trial,:]))
+        
+    def firing_overview(self,dat_set):
+        # dat_set takes string values: 'on', 'off'
+        data = eval('self.all_normal_%s_firing' % dat_set)
+        num_nrns = data.shape[0]
+        t_vec = np.linspace(start=0, stop = \
+                self.firing_rate_params['total_time'], num = data.shape[-1])
+
+        # Plot firing rates
+        square_len = np.int(np.ceil(np.sqrt(num_nrns)))
+        fig, ax = plt.subplots(square_len,square_len)
+        
+        nd_idx_objs = []
+        for dim in range(ax.ndim):
+            this_shape = np.ones(len(ax.shape))
+            this_shape[dim] = ax.shape[dim]
+            nd_idx_objs.append(np.broadcast_to( np.reshape(np.arange(ax.shape[dim]),this_shape.astype('int')), ax.shape).flatten())
+        
+        for nrn in range(num_nrns):
+            plt.sca(ax[nd_idx_objs[0][nrn],nd_idx_objs[1][nrn]])
+            plt.gca().set_title(nrn)
+            plt.gca().pcolormesh(t_vec, np.arange(data.shape[1]), data[nrn,:,:])
+            #self.imshow(data[nrn,:,:])
+        plt.show()
+            
+            
         
     def firing_correlation(self, 
                            firing_array, 

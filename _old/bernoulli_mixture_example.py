@@ -1,5 +1,5 @@
 import numpy as np
-
+import matplotlib.pyplot as plt
 
 p0 = [0.1, 0.9, 0.1, 0.9, 0.1, 0.9, 0.1, 0.9, 0.1, 0.9]
 p1 = [0.1, 0.1, 0.1, 0.1, 0.1, 0.9, 0.9, 0.9, 0.9, 0.9]
@@ -13,7 +13,7 @@ x = random.bernoulli(p[z])
 
 N = 100
 D = 10
-K = 10
+K = 3
 
 from bayespy.nodes import Categorical, Dirichlet
 
@@ -33,6 +33,7 @@ X.observe(x)
 
 Q.update(repeat=1000)
 import bayespy.plot as bpplt
-bpplt.hinton(R)
-bpplt.hinton(P)
-bpplt.hinton(Z)
+plt.figure();bpplt.hinton(R)
+plt.figure();bpplt.hinton(P)
+plt.figure();bpplt.hinton(p)
+plt.figure();bpplt.hinton(Z)

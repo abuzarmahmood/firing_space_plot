@@ -117,10 +117,11 @@ for file in range(len(file_list)):
     # Load file and find corresponding directory
     data_dir = os.path.dirname(file_list[file])
     data = ephys_data(data_dir = data_dir ,file_id = file, use_chosen_units = True)
-    data.firing_rate_params = dict(zip(['step_size','window_size','total_time'],
-                                   [25,250,7000]))
+    data.firing_rate_params = dict(zip(['step_size','window_size','total_time','calc_type'],
+                                   [25,250,7000,'conv']))
     data.get_data()
     data.get_firing_rates()    
+    data.get_normalized_firing()
     
     # Smooth firing rates to have smooth PDF
     all_firing_array = np.asarray(data.normal_off_firing)
