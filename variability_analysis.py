@@ -140,11 +140,12 @@ neuron_frame = pd.DataFrame(\
 time_bin_frame = neuron_frame.copy()
 time_bin_frame['time_bin'] = pd.cut(time_bin_frame.time,
         bins =4 ,include_lowest = True, labels = np.arange(4))
-
+# Drop time axis (no longer needed)
+# Take mean of firing rate 
 time_bin_frame.drop('time',inplace=True,axis=1)
 time_bin_frame =\
 time_bin_frame.groupby(['neuron','taste','trial','time_bin'])\
-                .sum().reset_index()
+                .mean().reset_index()
 
 # _____         _       
 #|_   _|_ _ ___| |_ ___ 
@@ -172,9 +173,12 @@ pairwise_ttest_list  = [
             within = 'taste', subject = 'trial', padjust = 'holm') \
             for nrn in tqdm(time_bin_frame.neuron.unique())]
 
-#this_frame = time_bin_frame.query('neuron == 0').drop('neuron',axis=1)
-#sns.pointplot(data = this_frame,
-#   x='time_bin',y='firing_rate',hue='taste');plt.show()
+pairwise_pvals = np.asarray([x['p-unc'] for x in pairwise_ttest_list])
+
+this_frame = time_bin_frame.query('neuron == 0').drop('neuron',axis=1)
+sns.pointplot(data = this_frame,
+   x='time_bin',y='firing_rate',hue='taste');plt.show()
+
 
 #anova_results = pg.rm_anova( data = this_frame, dv = 'firing_rate', within =
 #        ['time_bin','taste'], subject = 'trial')
@@ -253,28 +257,46 @@ trial_plist = [[taste['p-unc'][0] \
 # Mark neurons with any change in responsesi
 # For 4 tastes, correcting alpha to be < 0.01
 changed_tastes = np.sum(np.asarray(trial_plist) < 0.01,axis=1)
-sns.distplot((changed_tastes>0)*1, bins = np.arange(3),kde=False)\
-        .set_title('Distribution of changed units');plt.show()
+changed_frame = pd.DataFrame(data={'changed':changed_tastes>0})
+changed_frame['num'] = 1 
+changed_frame = changed_frame.groupby('changed').count().reset_index()
+sns.barplot(data = changed_frame,x='changed',y='num')\
+        .set_title('Distribution of changed units')
+plt.xlabel('Change in firing pattern')
+plt.ylabel('Number of neurons')
+plt.show()
 
-sns.distplot(changed_tastes[changed_tastes>0],\
-        bins = np.arange(1,6),kde=False)\
+# Pie chart
+plt.pie(changed_frame.num, explode = (0,0.1))
+plt.show()
+
+taste_frame = pd.DataFrame(data =
+        {'taste_count':changed_tastes[changed_tastes>0]})
+taste_frame['num'] = 1
+taste_frame = taste_frame.groupby('taste_count').count().reset_index()
+sns.barplot(data = taste_frame, x='taste_count',y='num')\
         .set_title('Distribution of changed tastes')
+plt.xlabel('Number of tastes with changed patterns')
+plt.ylabel('Number of neurons')
+plt.show()
+
+# Pie chart
+plt.pie(taste_frame.num, explode = (0.05,0.05,0.05,0.05)) 
 plt.show()
 
 sns.heatmap(neuron_array_long[np.where(changed_tastes==4)[0][0],:,:],\
         cmap='viridis');plt.show()
 
-sns.heatmap(neuron_array_long[120,:,:],\
+sns.heatmap(neuron_array_long[14,:,:],\
         cmap='viridis');plt.show()
 
-#nrn = [125,125] 
-#this_frame = trial_bin_frame.query('neuron >= @nrn[0] and  neuron <= @nrn[1]')
-this_frame = pd.concat(
-        [trial_bin_frame.loc[trial_bin_frame.neuron == nrn,:] \
-                for nrn in np.where(changed_tastes == 4)[0]])
-g = sns.FacetGrid(this_frame, row = 'taste', \
-        col = "neuron", hue = "trial_bin")
-g = g.map(sns.pointplot, 'time_bin', 'firing_rate', ci = 'sd')\
+nrn = [1,18] 
+this_frame = time_bin_frame.query('neuron == @nrn[0] or neuron == @nrn[1]')
+#this_frame = pd.concat(
+#        [trial_bin_frame.loc[trial_bin_frame.neuron == nrn,:] \
+#                for nrn in np.where(changed_tastes == 4)[0]])
+g = sns.FacetGrid(this_frame, row = 'neuron', hue = 'taste')
+g = g.map(sns.pointplot, 'time_bin', 'firing_rate', ci = 68)\
         .add_legend()
 plt.show()
 
@@ -316,6 +338,17 @@ group_taste_parray = np.asarray([[group['p-unc'][1] \
 
 group_taste_discrim = np.sum(group_taste_parray < 0.05,axis=1)
 
+## Was there a particular directionality of change between 1st and last half
+## of trials
+
+discrim_order = [(x[0],x[1]) for x in (group_taste_parray < 0.05)*1]
+discrim_order_count = count_occurrences(discrim_order)
+#discrim_order_frame = pd.DataFrame(data = discrim_order_count.values(), \
+#        index = discrim_order_count.keys(), columns =\
+#        ['nrn_count'])
+#
+#discrim_order_frame.assign(group = lambda x:(x['level_0'],x['level_1']))
+
 ## UNITS THAT CHANGED ##
 # Discriminatory -> Not
 change_y2n = \
@@ -325,6 +358,8 @@ change_n2y = \
         sum((~taste_responsive * (group_taste_discrim>0))[changed_tastes>0])
 
 ## UNITS THAT WERE STABLE ##
+# As a control comparison, did units that didn't change switch
+# their responsiveness
 # Discriminatory -> Not
 stable_y2n= \
         sum((taste_responsive * (group_taste_discrim==0))[changed_tastes==0])
@@ -336,12 +371,10 @@ stable_n2y = \
 #sns.distplot(group_taste_discrim[~taste_responsive],
 #        bins=np.arange(3), kde = False);plt.show()
 
-# As a control comparison, did units that didn't change switch
-# their responsiveness
-
-
 # How many significantly different time bins were increased
 # in all by splitting
+# Or how many pairwise comparisons were changed after splitting
+# Basically does splitting generate more accurate decoding
 
 # ____           ____  _   _              ____ _                            
 #|  _ \ _ __ ___/ ___|| |_(_)_ __ ___    / ___| |__   __ _ _ __   __ _  ___ 
@@ -415,3 +448,83 @@ pre_post = np.sum(pre_change*post_change)
 pre_npost = np.sum(pre_change*(1-post_change))
 npre_post = np.sum((1-pre_change)*post_change)
 npre_npost = np.sum((1-pre_change)*(1-post_change))
+
+# ____  _       _       
+#|  _ \| | ___ | |_ ___ 
+#| |_) | |/ _ \| __/ __|
+#|  __/| | (_) | |_\__ \
+#|_|   |_|\___/ \__|___/
+                       
+# Taste discriminative neuron with stable firing
+nrn = 22
+for taste in range(4):
+    error = np.std(np.asarray(neuron_list)[nrn,taste,:,prestim_ind:end_ind],
+            axis=0)/np.sqrt(neuron_array.shape[2])
+    mean = np.mean(np.asarray(neuron_list)[nrn,taste,:,prestim_ind:end_ind],axis=0)
+    plt.fill_between(x = np.arange(-1000,2500,25),
+    y1 = mean - error , y2 = mean + error)
+plt.xlabel('Time post-stimulus delivery (ms)')
+plt.ylabel('Normalized firing rate')
+plt.show()
+
+# Taste discriminative neuron which changes firing
+np.where(taste_responsive * changed_tastes)
+nrn = 18
+this_frame = time_bin_frame.query('neuron == @nrn').drop('neuron',axis=1)
+sns.pointplot(data = this_frame,
+   x='time_bin',y='firing_rate',hue='taste',ci=68)
+plt.xlabel('500ms time-bins post-stimulus delivery')
+plt.ylabel('Mean, normalized firing rate')
+plt.legend(title='Taste')
+plt.show()
+
+taste_p_vec[nrn]
+group_taste_parray[nrn,:]
+
+#nrn = [125,125] 
+#this_frame = trial_bin_frame.query('neuron >= @nrn[0] and  neuron <= @nrn[1]')
+this_frame = trial_bin_frame.loc[trial_bin_frame.neuron == nrn,:] 
+g = sns.FacetGrid(this_frame, row = 'trial_bin', \
+        col = "neuron", hue = "taste")
+g = (g.map(sns.pointplot, 'time_bin', 'firing_rate',ci=68))\
+        .add_legend()
+plt.xlabel('500ms time-bins post-stimulus delivery')
+plt.ylabel('Mean, normalized firing rate')
+plt.show()
+
+sns.heatmap(neuron_array_long[nrn,:,:],\
+        cmap='viridis');plt.show()
+
+pairwise_pvals[nrn,:]<0.05
+
+# Neuron which becomes taste responsive
+nrns = np.where((((group_taste_parray < 0.05)*1)[:,0] == 0)*1*\
+        ((group_taste_parray < 0.05)*1)[:,1] == 1)[0]
+nrn = nrns[0]
+
+# Average plot
+this_frame = time_bin_frame.query('neuron == @nrn').drop('neuron',axis=1)
+sns.pointplot(data = this_frame,
+   x='time_bin',y='firing_rate',hue='taste',ci=68)
+plt.xlabel('500ms time-bins post-stimulus delivery')
+plt.ylabel('Mean, normalized firing rate')
+plt.legend(title='Taste')
+plt.show()
+
+# Individual trial_bin plot
+this_frame = trial_bin_frame.loc[trial_bin_frame.neuron == nrn,:] 
+g = sns.FacetGrid(this_frame, row = 'trial_bin', \
+        col = "neuron", hue = "taste")
+g = (g.map(sns.pointplot, 'time_bin', 'firing_rate',ci=68))\
+        .add_legend()
+plt.xlabel('500ms time-bins post-stimulus delivery')
+plt.ylabel('Mean, normalized firing rate')
+plt.show()
+
+taste_p_vec[1]
+group_taste_parray[1,:]
+
+##
+this_frame = neuron_frame.query('neuron == 4').drop('neuron',axis=1)
+sns.pointplot(data = this_frame,
+   x='time',y='firing_rate',hue='taste');plt.show()
