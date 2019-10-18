@@ -158,16 +158,13 @@ class ephys_data():
         """
         bin_inds = (0,window_size)
         total_bins = int((total_time - window_size + 1) / step_size) + 1
-        bin_list = [(trial,neuron,\
-                (bin_inds[0]+step,bin_inds[1]+step)) \
-                for trial in range(spike_array.shape[0]) \
-                for neuron in range(spike_array.shape[1])
+        bin_list = [(bin_inds[0]+step,bin_inds[1]+step) \
                 for step in np.arange(total_bins)*step_size ]
 
         firing_rate = np.empty((spike_array.shape[0],spike_array.shape[1],total_bins))
         for bin_inds in bin_list:
-            firing_rate[bin_inds[0],bin_inds[1],bin_inds[2][0]//step_size] = \
-                np.sum(spike_array[bin_inds[0],bin_inds[1],bin_inds[2][0]:bin_inds[2][1]])
+            firing_rate[:,:,bin_inds[0]//step_size] = \
+                    np.sum(spike_array[:,:,bin_inds[0]:bin_inds[1]], axis=-1)
 
         return firing_rate
 
