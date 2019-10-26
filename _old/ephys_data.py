@@ -8,9 +8,9 @@ from scipy.stats import pearsonr
 import multiprocessing as mp
 import pylab as plt
 from scipy.special import gamma
-from numba import jit
+#from numba import jit
 
-from BAKS import BAKS
+#from BAKS import BAKS
 
 this_dir = os.getcwd()
 os.chdir(this_dir)
