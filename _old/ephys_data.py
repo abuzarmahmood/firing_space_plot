@@ -9,9 +9,8 @@ import multiprocessing as mp
 import pylab as plt
 from scipy.special import gamma
 from scipy.stats import zscore
-from numba import jit
 
-from BAKS import BAKS
+#from BAKS import BAKS
 
 this_dir = os.getcwd()
 os.chdir(this_dir)

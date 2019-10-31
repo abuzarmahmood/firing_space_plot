@@ -18,6 +18,7 @@ import pandas as pd
 from joblib import Parallel, delayed
 import multiprocessing as mp
 import seaborn as sns
+from scipy.stats import zscore
 
 # Class to simplify loading of ephys data from Katz H5 files
 sys.path.append('/media/bigdata/firing_space_plot/_old')
@@ -36,7 +37,7 @@ from tqdm import tqdm
 #|____/ \___|_|   |_|   \__,_|_| |_|\___|___/
 #                                            
 
-def firing_overview(data):
+def firing_overview(data, time_step = 25, cmap = 'jet'):
     """
     Takes 3D numpy array as input and rolls over first dimension
     to generate images over last 2 dimensions
@@ -44,7 +45,7 @@ def firing_overview(data):
         for every neuron
     """
     num_nrns = data.shape[0]
-    t_vec = np.arange(data.shape[-1]) 
+    t_vec = np.arange(data.shape[-1])*time_step 
 
     # Plot firing rates
     square_len = np.int(np.ceil(np.sqrt(num_nrns)))
@@ -60,7 +61,7 @@ def firing_overview(data):
         plt.sca(ax[nd_idx_objs[0][nrn],nd_idx_objs[1][nrn]])
         plt.gca().set_title(nrn)
         plt.gca().pcolormesh(t_vec, np.arange(data.shape[1]),
-                data[nrn,:,:],cmap='jet')
+                data[nrn,:,:],cmap=cmap)
         #self.imshow(data[nrn,:,:])
         #plt.show()
     return ax
@@ -97,7 +98,7 @@ for x in dir_list:
     file_list = file_list + glob.glob(x + '/**/' + '*.h5',recursive=True)
 
 all_sorted_off_firing = []
-for file_num in range(len(file_list)):
+for file_num in trange(len(file_list)):
 
     # Load data
     # Load firing rate data
@@ -171,9 +172,8 @@ for file_num in range(len(file_list)):
     sorted_on_gapes_array = np.asarray(\
             [x[sorted_gaping_trials[1,taste,:]] for taste,x in \
                 enumerate(gapes_array[1])])
-
-    firing_overview(sorted_off_gapes_array[:,:,gaping_window[0]:gaping_window[1]]);plt.show()
-    firing_overview(sorted_on_gapes_array[:,:,gaping_window[0]:gaping_window[1]]);plt.show()
+    #firing_overview(sorted_off_gapes_array[:,:,gaping_window[0]:gaping_window[1]]);plt.show()
+    #firing_overview(sorted_on_gapes_array[:,:,gaping_window[0]:gaping_window[1]]);plt.show()
 
     ## Sort neural firing by "total gaping"
     sorted_off_firing = np.asarray(\
@@ -187,14 +187,24 @@ for file_num in range(len(file_list)):
                 enumerate(on_firing)])
 
     # Visualize sorted firing
-    firing_overview(sorted_off_firing[2]);plt.title('Off, T2');plt.show()     
-    firing_overview(sorted_off_firing[3]);plt.title('Off, T3');plt.show()     
+    #firing_overview(sorted_off_firing[2]);plt.title('Off, T2');plt.show()     
+    #firing_overview(sorted_off_firing[3]);plt.title('Off, T3');plt.show()     
 
     #firing_overview(sorted_on_firing[2]);plt.title('On, T2');plt.show()     
     #firing_overview(sorted_on_firing[3]);plt.title('On, T3');plt.show()     
 
 # Concatenate firing from ALL files along neuron axis
 all_sorted_off_firing = np.concatenate(all_sorted_off_firing,axis=1)
+
+# Visually remove bad neurons
+firing_overview(all_sorted_off_firing[2]);plt.show()
+firing_overview(all_sorted_off_firing[3]);plt.show()
+
+bad_neurons = [17,30,32,38]
+good_neurons = [x for x in range(all_sorted_off_firing.shape[1]) if x not in
+        bad_neurons]
+
+all_sorted_off_firing = all_sorted_off_firing[:,good_neurons]
 
 # Make array identifiers to convert np array to dataframe
 sorted_idx = make_array_identifiers(all_sorted_off_firing)
@@ -218,7 +228,6 @@ test_frame['time_bin'] = pd.cut(test_frame.time,
 # Chop trials into first and second half (they're sorted by gaping already)
 test_frame['trial_bin'] = pd.cut(test_frame.trial,
         bins =2 ,include_lowest = True, labels = range(2))
-test_frame.drop(columns=['time','trial'],inplace=True)
 
 # Average firing by groups
 mean_test_frame = test_frame.groupby(['neuron','taste','time_bin','trial_bin'])\
@@ -228,7 +237,7 @@ mean_test_frame = test_frame.groupby(['neuron','taste','time_bin','trial_bin'])\
 g = sns.FacetGrid(test_frame.loc[test_frame.neuron < 10],\
         col = 'neuron', row = 'taste', \
         hue = 'trial_bin', sharey = False)
-g = g.map(sns.pointplot, 'time_bin', 'firing_rate', ci = 68)\
+g = g.map(sns.pointplot, 'time_bin', 'firing_rate', ci = 95)\
         .add_legend()
 plt.show()
 
@@ -250,6 +259,52 @@ trial_parray= np.asarray(\
         for taste in neuron] \
         for neuron in trial_anova_list])
 
+corrected_alpha = corrected_alpha/len(test_frame.time_bin.unique())
+
+# (Seaborn) Plot firing rates for signifcantly different neurons 
+this_frame = test_frame.loc[test_frame.neuron.isin(\
+        np.where(np.sum(trial_parray[:,2:]<corrected_alpha,axis=-1))[0]),:]
+this_frame = this_frame.loc[this_frame.taste >=2,:]
+g = sns.FacetGrid(this_frame,\
+        col = 'neuron', row = 'taste', \
+        hue = 'trial_bin', sharey = False)
+g = g.map(sns.pointplot, 'time_bin', 'firing_rate', ci = 95)\
+        .add_legend()
+plt.show()
+
+# (Heatmap) Plot firing rates for signifcantly different neurons 
+firing_overview(all_sorted_off_firing[2,np.where(trial_parray[:,2]<corrected_alpha)[0],:,\
+        :(gaping_window[1]//step_size)], cmap = 'viridis');plt.show()
+firing_overview(all_sorted_off_firing[3,np.where(trial_parray[:,3]<corrected_alpha)[0],:,\
+        :(gaping_window[1]//step_size)], cmap = 'viridis');plt.show()
+
+# Zscore plots
+firing_overview(zscore(all_sorted_off_firing[2,np.where(trial_parray[:,2]<corrected_alpha)[0],:,\
+        :(gaping_window[1]//step_size)]), cmap = 'viridis');plt.show()
+firing_overview(zscore(all_sorted_off_firing[3,np.where(trial_parray[:,3]<corrected_alpha)[0],:,\
+        :(gaping_window[1]//step_size)]), cmap = 'viridis');plt.show()
+
+# (Seaborn) Plot firing rates for signifcantly different neurons 
+# Tastes individually
+this_frame = test_frame.loc[test_frame.neuron.isin(\
+        np.where(trial_parray[:,2]<corrected_alpha)[0]),:]
+this_frame = this_frame.loc[this_frame.taste == 2,:]
+g = sns.FacetGrid(this_frame,\
+        col = 'neuron', row = 'taste', \
+        hue = 'trial_bin', sharey = False)
+g = g.map(sns.pointplot, 'time_bin', 'firing_rate', ci = 95)\
+        .add_legend()
+plt.show()
+
+this_frame = test_frame.loc[test_frame.neuron.isin(\
+        np.where(trial_parray[:,3]<corrected_alpha)[0]),:]
+this_frame = this_frame.loc[this_frame.taste == 3,:]
+g = sns.FacetGrid(this_frame,\
+        col = 'neuron', row = 'taste', \
+        hue = 'trial_bin', sharey = False)
+g = g.map(sns.pointplot, 'time_bin', 'firing_rate', ci = 95)\
+        .add_legend()
+plt.show()
 
 # _____      _             
 #| ____|_  _| |_ _ __ __ _ 

@@ -32,7 +32,12 @@ from ephys_data import ephys_data
 import glob
 from tqdm import tqdm
 from mpl_toolkits.mplot3d import Axes3D
-
+#from sklearn.cluster import AgglomerativeClustering as hier_clust
+from scipy.cluster.hierarchy import dendrogram
+from sklearn.decomposition import PCA as pca
+from scipy.stats import zscore
+#from scipy.spatial.distance import pdist
+from scipy.cluster.hierarchy import linkage
 
 # _                    _   ____        _        
 #| |    ___   __ _  __| | |  _ \  __ _| |_ __ _ 
@@ -42,7 +47,8 @@ from mpl_toolkits.mplot3d import Axes3D
 #                                               
 
 ## Load data
-dir_list = dir_list = ['/media/bigdata/jian_you_data/des_ic',
+#dir_list = ['/media/bigdata/Abuzar_Data/run_this_file']
+dir_list = ['/media/bigdata/jian_you_data/des_ic',
                         '/media/bigdata/NM_2500']
 file_list = []
 for x in dir_list:
@@ -93,14 +99,14 @@ def count_occurrences(iterable):
 # Done before bad-neuron selection so we have good post-stimulus firing
 neuron_array = neuron_array[:,:,:,stim_delivery_ind:end_ind]
 
-bad_neurons_dict = count_occurrences(np.where(np.sum(neuron_array,axis=-1) == 0)[0])
-# Cutoff = 5 trials
-bad_neurons = [key for key,val in bad_neurons_dict.items() if val > 5]
-
-
-# Pull out good neurons
-neuron_array = neuron_array[\
-        [nrn for nrn in range(neuron_array.shape[0]) if nrn not in bad_neurons] ,:,:,:]
+#bad_neurons_dict = count_occurrences(np.where(np.sum(neuron_array,axis=-1) == 0)[0])
+## Cutoff = 5 trials
+#bad_neurons = [key for key,val in bad_neurons_dict.items() if val > 5]
+#
+#
+## Pull out good neurons
+#neuron_array = neuron_array[\
+#        [nrn for nrn in range(neuron_array.shape[0]) if nrn not in bad_neurons] ,:,:,:]
 
 # Add infinitesimal noise to firing rate to avoid 0-related errors
 neuron_array += np.random.random(neuron_array.shape)* 1e-9
@@ -175,10 +181,9 @@ pairwise_ttest_list  = [
 
 pairwise_pvals = np.asarray([x['p-unc'] for x in pairwise_ttest_list])
 
-this_frame = time_bin_frame.query('neuron == 0').drop('neuron',axis=1)
+this_frame = time_bin_frame.query('neuron == 18').drop('neuron',axis=1)
 sns.pointplot(data = this_frame,
    x='time_bin',y='firing_rate',hue='taste');plt.show()
-
 
 #anova_results = pg.rm_anova( data = this_frame, dv = 'firing_rate', within =
 #        ['time_bin','taste'], subject = 'trial')
@@ -189,7 +194,16 @@ taste_p_vec = np.asarray([anova_result['p-unc'][1] \
         for anova_result in anova_list])
 
 # Mark taste responsive neurons
-taste_responsive = taste_p_vec < 0.05
+taste_responsive = taste_p_vec < 0.01
+
+# Plot all discriminative neurons
+g = sns.FacetGrid(data = \
+        time_bin_frame[time_bin_frame.neuron.isin(np.where(taste_responsive)[0])],
+            col = 'neuron', hue = 'taste',\
+        col_wrap = 8)
+g.map(sns.pointplot, 'time_bin', 'firing_rate')
+plt.show()
+
 
 # _____ _      _                ____ _                            
 #|  ___(_)_ __(_)_ __   __ _   / ___| |__   __ _ _ __   __ _  ___ 
@@ -255,8 +269,8 @@ trial_plist = [[taste['p-unc'][0] \
 
 
 # Mark neurons with any change in responsesi
-# For 4 tastes, correcting alpha to be < 0.01
-changed_tastes = np.sum(np.asarray(trial_plist) < 0.01,axis=1)
+# For 4 tastes, correcting alpha to be < 0.05
+changed_tastes = np.sum(np.asarray(trial_plist) < 0.05,axis=1)
 changed_frame = pd.DataFrame(data={'changed':changed_tastes>0})
 changed_frame['num'] = 1 
 changed_frame = changed_frame.groupby('changed').count().reset_index()
@@ -309,7 +323,17 @@ discriminatory_drift = sum((changed_tastes > 0) * (taste_responsive == 1))
 nondiscriminatory_drift = sum((changed_tastes > 0) * (taste_responsive == 0))
 
 # How many STABLE neurons were ON AVERAGE DISCRIMINATIVE
-discriminatory_stable = sum((changed_tastes ==  0) * (taste_responsive == 1))
+discriminatory_stable = \
+        np.where((changed_tastes ==  0) * (taste_responsive == 1 ))[0]
+discriminatory_stable_count = len(discriminatory_stable)
+
+# Plot all discriminative, stable neurons
+g = sns.FacetGrid(data = \
+    trial_bin_frame[trial_bin_frame.neuron.isin(discriminatory_stable)],
+            row = 'trial_bin', col = 'neuron', hue = 'taste')
+g.map(sns.pointplot, 'time_bin', 'firing_rate')
+plt.show()
+
 # How many STABLE neuron were ON AVERAGE NONDISCRIMINATIVE
 nondiscriminatory_stable = \
         sum((changed_tastes ==  0) * (taste_responsive == 0))
@@ -359,7 +383,7 @@ change_n2y = \
 
 ## UNITS THAT WERE STABLE ##
 # As a control comparison, did units that didn't change switch
-# their responsiveness
+# thier responsiveness
 # Discriminatory -> Not
 stable_y2n= \
         sum((taste_responsive * (group_taste_discrim==0))[changed_tastes==0])
@@ -528,3 +552,4 @@ group_taste_parray[1,:]
 this_frame = neuron_frame.query('neuron == 4').drop('neuron',axis=1)
 sns.pointplot(data = this_frame,
    x='time',y='firing_rate',hue='taste');plt.show()
+
