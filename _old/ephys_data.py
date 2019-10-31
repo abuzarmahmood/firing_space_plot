@@ -8,6 +8,7 @@ from scipy.stats import pearsonr
 import multiprocessing as mp
 import pylab as plt
 from scipy.special import gamma
+from scipy.stats import zscore
 from numba import jit
 
 from BAKS import BAKS
@@ -393,9 +394,19 @@ class ephys_data():
             plt.plot(np.linspace(0,tot_time,firing_len),conv_rate[trial,:]/np.max(conv_rate[trial,:]))
             plt.plot(np.linspace(0,tot_time,self.firing_rate_params['baks_len']),baks_rate[trial,:]/np.max(baks_rate[trial,:]))
         
-    def firing_overview(self,dat_set):
+    def firing_overview(self,dat_set, zscore_bool = False, subtract = False, cmap = 'jet'):
         # dat_set takes string values: 'on', 'off'
         data = eval('self.all_normal_%s_firing' % dat_set)
+        
+        # Subtract the average component of firing to
+        # (hopefully) leave the taste discriminative components
+        if subtract:
+            data = data - np.mean(data,axis = 1)[:,np.newaxis,:]
+        
+        # Zscore the firing of every neuron for visualization
+        if zscore_bool:
+            data = zscore(data, axis = 1)
+
         num_nrns = data.shape[0]
         t_vec = np.linspace(start=0, stop = \
                 self.firing_rate_params['total_time'], num = data.shape[-1])
@@ -413,7 +424,10 @@ class ephys_data():
         for nrn in range(num_nrns):
             plt.sca(ax[nd_idx_objs[0][nrn],nd_idx_objs[1][nrn]])
             plt.gca().set_title(nrn)
-            plt.gca().pcolormesh(t_vec, np.arange(data.shape[1]), data[nrn,:,:])
+            plt.gca().pcolormesh(t_vec, 
+                    np.arange(data.shape[1]), 
+                    data[nrn,:,:],
+                    cmap = cmap)
             #self.imshow(data[nrn,:,:])
         plt.show()
             
