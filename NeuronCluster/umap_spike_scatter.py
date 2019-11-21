@@ -1,4 +1,5 @@
 import numpy as np
+import os
 import umap
 import pylab as plt
 import glob
@@ -20,7 +21,7 @@ cluster_num = int(params[0])
 # Plot output in Plots
 
 
-def umap_plots(data_dir, electrode_num, pca_waveforms):
+def umap_plots(data_dir, electrode_num):
     pca_waveforms = np.load(data_dir + \
             '/spike_waveforms/electrode{}/pca_waveforms.npy'.format(electrode_num))
 
@@ -56,7 +57,7 @@ def umap_plots(data_dir, electrode_num, pca_waveforms):
         plt.close(fig2)
 
 for electrode_num in trange(len(os.listdir(data_dir + '/clustering_results'))):
-    umap_plots(data_dir, electrode_num, pca_waveforms)
+    umap_plots(data_dir, electrode_num)
 
 #Parallel(n_jobs = mp.cpu_count())\
 #        (delayed(umap_plots)(data_dir, electrode_num, pca_waveforms) \
