@@ -13,7 +13,6 @@ Repeat analyses with non-parametric tests
 import numpy as np
 import tables
 import glob
-######################### Import dat ish #########################
 import os
 import numpy as np
 import matplotlib.pyplot as plt
