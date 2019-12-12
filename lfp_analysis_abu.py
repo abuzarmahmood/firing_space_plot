@@ -1,6 +1,8 @@
 ## Import required modules
 import os
 import matplotlib.pyplot as plt
+import matplotlib
+matplotlib.use('Qt5Agg')
 import lspopt
 import tables
 import easygui
@@ -9,6 +11,7 @@ from scipy.signal import spectrogram
 from lspopt import spectrogram_lspopt
 import numpy as np
 from scipy.signal import hilbert, butter, filtfilt,freqs 
+from tqdm import tqdm, trange
 
 
 os.chdir('/media/bigdata/firing_space_plot/ephys_data')
@@ -16,7 +19,7 @@ from ephys_data import ephys_data
 
 # Extract data
 dat = \
-ephys_data('/media/bigdata/Abuzar_Data/AM17/AM17_extracted/AM17_4Tastes_191125_084206')
+ephys_data('/media/bigdata/Abuzar_Data/AM17/AM17_extracted/AM17_4Tastes_191126_084934')
 
 dat.firing_rate_params = dict(zip(('step_size','window_size','dt'),
                                     (25,250,1)))
@@ -43,15 +46,24 @@ dat.firing_overview(dat.all_lfp_array, min_val = mean_val - 2*sd_val,
                     max_val = mean_val + 2*sd_val, cmap = 'viridis');plt.show()
 
 # Mean LFP spectrogram 
-region_a = np.asarray([dat.lfp_array[:,x_num,:,0:4500] \
-        for x_num in range(dat.lfp_array.shape[1]) if x_num in middle_channels])
-region_b = np.asarray([dat.lfp_array[:,x_num,:,0:4500] \
-        for x_num in range(dat.lfp_array.shape[1]) if x_num not in middle_channels])
+middle_channels_bool = np.array([True if channel in middle_channels else False \
+        for channel in parsed_lfp_channels ])
+region_a = dat.lfp_array[:,middle_channels_bool,:,:] 
+region_b = dat.lfp_array[:,~middle_channels_bool,:,:]
 region_a_mean = np.mean(region_a,axis=(0,1,2))
 region_b_mean = np.mean(region_b,axis=(0,1,2))
+region_a_std = np.std(region_a,axis=(0,1,2))
+region_b_std = np.std(region_b,axis=(0,1,2))
 
 # Timeseries plot
-plt.plot(region_a_mean);plt.plot(region_b_mean);plt.show()
+plt.fill_between(x = range(len(region_a_mean)), 
+        y1 = region_a_mean - region_a_std, 
+        y2 = region_a_mean + region_a_std, alpha = 0.5)
+plt.fill_between(x = range(len(region_b_mean)), 
+        y1 = region_b_mean - region_b_std, 
+        y2 = region_b_mean + region_b_std, alpha = 0.5)
+plt.plot(region_a_mean);plt.plot(region_b_mean)
+plt.show()
 
 # Mean spectrogram of all responses
 Fs = 1000 
@@ -74,8 +86,8 @@ f,t,region_b_spectrograms= scipy.signal.spectrogram(
             noverlap=signal_window-(signal_window-window_overlap), 
             mode='psd')
 
-region_a_mean_spec = np.mean(region_a_spectrograms,axis=(0,2))
-region_b_mean_spec = np.mean(region_b_spectrograms,axis=(0,2))
+region_a_mean_spec = np.mean(region_a_spectrograms,axis=(1,2))
+region_b_mean_spec = np.mean(region_b_spectrograms,axis=(1,2))
 combined_mean_spec = np.stack((region_a_mean_spec,region_b_mean_spec))
 
 fig,ax = plt.subplots(combined_mean_spec.shape[1]+1,2)
@@ -92,22 +104,23 @@ ax[-1,0].pcolormesh(t, f[f<15], np.mean(combined_mean_spec[0], axis = 0)[f<15,:]
             cmap='jet',vmin = vmin, vmax = vmax)
 ax[-1,1].pcolormesh(t, f[f<15], np.mean(combined_mean_spec[1], axis = 0)[f<15,:],
             cmap='jet',vmin = vmin, vmax = vmax)
+
 plt.show()
 
-# Background subtract
-# Subtract average of power before 2000ms
-#backsub_region_a_mean_spec = region_a_mean_spec - \
-#        np.mean(region_a_mean_spec[:,t<2],axis=1)[:,np.newaxis]
-#backsub_region_b_mean_spec = region_b_mean_spec - \
-#        np.mean(region_b_mean_spec[:,t<2],axis=1)[:,np.newaxis]
-#
-#ax = plt.subplot(211)
-#ax.pcolormesh(t, f[f<15], backsub_region_a_mean_spec[f<15,:], cmap='viridis')
-#plt.title('Region A')
-#ax = plt.subplot(212)
-#ax.pcolormesh(t, f[f<15], backsub_region_b_mean_spec[f<15,:], cmap='viridis')
-#plt.title('Region B')
-#plt.show()
+# Background normalized 
+# Fold change of average of power before 2000ms
+normalized_region_a_mean_spec = region_a_mean_spec /  \
+        np.mean(region_a_mean_spec[:,:,t<2],axis=2)[:,:,np.newaxis]
+normalized_region_b_mean_spec = region_b_mean_spec / \
+        np.mean(region_b_mean_spec[:,:,t<2],axis=2)[:,:,np.newaxis]
+
+ax = plt.subplot(211)
+ax.pcolormesh(t, f[f<25], np.mean(normalized_region_a_mean_spec, axis=0)[f<25,:], cmap='viridis')
+plt.title('Region A')
+ax = plt.subplot(212)
+ax.pcolormesh(t, f[f<25], np.mean(normalized_region_b_mean_spec,axis = 0)[f<25,:], cmap='viridis')
+plt.title('Region B')
+plt.show()
 
 
 # ____  _                    ____  _          __  __ 
@@ -133,6 +146,49 @@ band_freqs = [(1,4),
                 (4,7),
                 (7,12),
                 (12,25)]
+
+bandpassed_lfp = np.asarray([
+                    butter_bandpass_filter(
+                        data = dat.lfp_array,
+                        lowcut = band[0],
+                        highcut = band[1],
+                        fs = Fs) \
+                                for band in tqdm(band_freqs)])
+
+# Plot mean bandpassed lfps for every region
+bandpassed_region_a = bandpassed_lfp[:,:,middle_channels_bool] 
+bandpassed_region_b = bandpassed_lfp[:,:,~middle_channels_bool] 
+
+bandpassed_region_a_mean = np.mean(bandpassed_region_a,axis=(1,2,3))
+bandpassed_region_b_mean = np.mean(bandpassed_region_b,axis=(1,2,3))
+bandpassed_region_a_std = np.std(bandpassed_region_a,axis=(1,2,3))
+bandpassed_region_b_std = np.std(bandpassed_region_b,axis=(1,2,3))
+
+
+# Mean plots for each band
+fig,ax = plt.subplots(combined_mean_spec.shape[1],2)
+for band in range(bandpassed_region_a.shape[0]):
+    ax[band,0].fill_between(\
+            x = range(bandpassed_region_a_mean.shape[-1]),
+            y1 = bandpassed_region_a_mean[band] -\
+                bandpassed_region_a_std[band],
+            y2 = bandpassed_region_a_mean[band] +\
+                bandpassed_region_a_std[band],
+            alpha = 0.5)
+    ax[band,0].plot(\
+            range(bandpassed_region_a_mean.shape[-1]),
+            bandpassed_region_a_mean[band])
+    ax[band,1].fill_between(\
+            x = range(bandpassed_region_b_mean.shape[-1]),
+            y1 = bandpassed_region_b_mean[band] -\
+                bandpassed_region_b_std[band],
+            y2 = bandpassed_region_b_mean[band] +\
+                bandpassed_region_b_std[band],
+            alpha = 0.5)
+    ax[band,1].plot(\
+            range(bandpassed_region_b_mean.shape[-1]),
+            bandpassed_region_b_mean[band])
+plt.show()
 
 
 
