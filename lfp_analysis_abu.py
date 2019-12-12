@@ -27,12 +27,13 @@ dat.firing_rate_params = dict(zip(('step_size','window_size','dt'),
 dat.extract_and_process()
 dat.firing_overview(dat.all_normalized_firing);plt.show()
 
-# _     _____ ____    ____  _          __  __ 
-#| |   |  ___|  _ \  / ___|| |_ _   _ / _|/ _|
-#| |   | |_  | |_) | \___ \| __| | | | |_| |_ 
-#| |___|  _| |  __/   ___) | |_| |_| |  _|  _|
-#|_____|_|   |_|     |____/ \__|\__,_|_| |_|  
-                                             
+# ____                  _                                       
+#/ ___| _ __   ___  ___| |_ _ __ ___   __ _ _ __ __ _ _ __ ___  
+#\___ \| '_ \ / _ \/ __| __| '__/ _ \ / _` | '__/ _` | '_ ` _ \ 
+# ___) | |_) |  __/ (__| |_| | | (_) | (_| | | | (_| | | | | | |
+#|____/| .__/ \___|\___|\__|_|  \___/ \__, |_|  \__,_|_| |_| |_|
+#      |_|                            |___/                     
+
 # Extract channel numbers for lfp
 with tables.open_file(dat.hdf5_name,'r') as hf5:
     parsed_lfp_channels = hf5.root.Parsed_LFP_channels[:]
@@ -95,40 +96,46 @@ vmean = np.mean(combined_mean_spec,axis=None)
 vstd = np.std(combined_mean_spec,axis=None)
 vmin = None 
 vmax = None 
+f_bool = (f>3) * (f<15)
 for taste in range(combined_mean_spec.shape[1]):
-    ax[taste,0].pcolormesh(t, f[f<15], combined_mean_spec[0][taste][f<15,:], 
+    ax[taste,0].pcolormesh(t, f[f_bool], combined_mean_spec[0][taste][f_bool,:], 
             cmap='jet',vmin = vmin, vmax = vmax)
-    ax[taste,1].pcolormesh(t, f[f<15], combined_mean_spec[1][taste][f<15,:], 
+    ax[taste,1].pcolormesh(t, f[f_bool], combined_mean_spec[1][taste][f_bool,:], 
             cmap='jet',vmin = vmin, vmax = vmax)
-ax[-1,0].pcolormesh(t, f[f<15], np.mean(combined_mean_spec[0], axis = 0)[f<15,:],
+ax[-1,0].pcolormesh(t, f[f_bool], np.mean(combined_mean_spec[0], axis = 0)[f_bool,:],
             cmap='jet',vmin = vmin, vmax = vmax)
-ax[-1,1].pcolormesh(t, f[f<15], np.mean(combined_mean_spec[1], axis = 0)[f<15,:],
+ax[-1,1].pcolormesh(t, f[f_bool], np.mean(combined_mean_spec[1], axis = 0)[f_bool,:],
             cmap='jet',vmin = vmin, vmax = vmax)
-
 plt.show()
 
-# Background normalized 
+# Background normalized and subtracted 
 # Fold change of average of power before 2000ms
 normalized_region_a_mean_spec = region_a_mean_spec /  \
         np.mean(region_a_mean_spec[:,:,t<2],axis=2)[:,:,np.newaxis]
+normalized_region_a_mean_spec -= \
+        np.mean(normalized_region_a_mean_spec[:,:,t<2],axis=2)[:,:,np.newaxis]
 normalized_region_b_mean_spec = region_b_mean_spec / \
         np.mean(region_b_mean_spec[:,:,t<2],axis=2)[:,:,np.newaxis]
+normalized_region_b_mean_spec -= \
+        np.mean(normalized_region_b_mean_spec[:,:,t<2],axis=2)[:,:,np.newaxis]
 
 ax = plt.subplot(211)
-ax.pcolormesh(t, f[f<25], np.mean(normalized_region_a_mean_spec, axis=0)[f<25,:], cmap='viridis')
+ax.pcolormesh(t, f[f_bool], np.mean(normalized_region_a_mean_spec,
+    axis=0)[f_bool,:], cmap='jet')
 plt.title('Region A')
 ax = plt.subplot(212)
-ax.pcolormesh(t, f[f<25], np.mean(normalized_region_b_mean_spec,axis = 0)[f<25,:], cmap='viridis')
+ax.pcolormesh(t, f[f_bool], np.mean(normalized_region_b_mean_spec,
+    axis = 0)[f_bool,:], cmap='jet')
 plt.title('Region B')
 plt.show()
 
+# ____                  _ ____               
+#| __ )  __ _ _ __   __| |  _ \ __ _ ___ ___ 
+#|  _ \ / _` | '_ \ / _` | |_) / _` / __/ __|
+#| |_) | (_| | | | | (_| |  __/ (_| \__ \__ \
+#|____/ \__,_|_| |_|\__,_|_|   \__,_|___/___/
+                                            
 
-# ____  _                    ____  _          __  __ 
-#|  _ \| |__   __ _ ___  ___/ ___|| |_ _   _ / _|/ _|
-#| |_) | '_ \ / _` / __|/ _ \___ \| __| | | | |_| |_ 
-#|  __/| | | | (_| \__ \  __/___) | |_| |_| |  _|  _|
-#|_|   |_| |_|\__,_|___/\___|____/ \__|\__,_|_| |_|  
-                                                    
 #define bandpass filter parameters to parse out frequencies
 def butter_bandpass(lowcut, highcut, fs, order=2):
     nyq = 0.5 * fs
@@ -147,6 +154,7 @@ band_freqs = [(1,4),
                 (7,12),
                 (12,25)]
 
+# (band x taste x channel x trial x time)
 bandpassed_lfp = np.asarray([
                     butter_bandpass_filter(
                         data = dat.lfp_array,
@@ -164,31 +172,115 @@ bandpassed_region_b_mean = np.mean(bandpassed_region_b,axis=(1,2,3))
 bandpassed_region_a_std = np.std(bandpassed_region_a,axis=(1,2,3))
 bandpassed_region_b_std = np.std(bandpassed_region_b,axis=(1,2,3))
 
+def error_plot(array,ax):
+    """
+    Array with dims (... x time)
+    """
+    mean = np.mean(array, axis= tuple(range(len(array.shape)-1)))
+    std = np.std(array, axis= tuple(range(len(array.shape)-1)))
+    ax.fill_between(\
+            x = range(array.shape[-1]),
+            y1 = mean + std,
+            y2 = mean - std,
+            alpha = 0.5)
+    ax.plot(range(array.shape[-1]),mean)
 
 # Mean plots for each band
-fig,ax = plt.subplots(combined_mean_spec.shape[1],2)
+fig,ax = plt.subplots(combined_mean_spec.shape[1],2, sharex='all',sharey='row')
 for band in range(bandpassed_region_a.shape[0]):
-    ax[band,0].fill_between(\
-            x = range(bandpassed_region_a_mean.shape[-1]),
-            y1 = bandpassed_region_a_mean[band] -\
-                bandpassed_region_a_std[band],
-            y2 = bandpassed_region_a_mean[band] +\
-                bandpassed_region_a_std[band],
-            alpha = 0.5)
-    ax[band,0].plot(\
-            range(bandpassed_region_a_mean.shape[-1]),
-            bandpassed_region_a_mean[band])
-    ax[band,1].fill_between(\
-            x = range(bandpassed_region_b_mean.shape[-1]),
-            y1 = bandpassed_region_b_mean[band] -\
-                bandpassed_region_b_std[band],
-            y2 = bandpassed_region_b_mean[band] +\
-                bandpassed_region_b_std[band],
-            alpha = 0.5)
-    ax[band,1].plot(\
-            range(bandpassed_region_b_mean.shape[-1]),
-            bandpassed_region_b_mean[band])
+    error_plot(bandpassed_region_a[band], ax[band,0])    
+    error_plot(bandpassed_region_b[band], ax[band,1])
 plt.show()
+
+# Average band, taste plots for every region
+fig, ax = plt.subplots(bandpassed_region_a.shape[0],
+        bandpassed_region_a.shape[1], sharex='all',sharey='row')
+for band in range(bandpassed_region_a.shape[0]):
+    for taste in range(bandpassed_region_a.shape[1]):
+        error_plot(bandpassed_region_a[band,taste],
+                ax[band,taste])
+fig, ax = plt.subplots(bandpassed_region_b.shape[0],
+        bandpassed_region_b.shape[1], sharex='all',sharey='row')
+for band in range(bandpassed_region_b.shape[0]):
+    for taste in range(bandpassed_region_b.shape[1]):
+        error_plot(bandpassed_region_b[band,taste],
+                ax[band,taste])
+plt.show()
+
+# ____  _                    ____  _          __  __ 
+#|  _ \| |__   __ _ ___  ___/ ___|| |_ _   _ / _|/ _|
+#| |_) | '_ \ / _` / __|/ _ \___ \| __| | | | |_| |_ 
+#|  __/| | | | (_| \__ \  __/___) | |_| |_| |  _|  _|
+#|_|   |_| |_|\__,_|___/\___|____/ \__|\__,_|_| |_|  
+                                                    
+# Hilbert transform on all bandpassed signals
+hilbert_bandpass_lfp = hilbert(bandpassed_lfp) 
+
+# Extract phase for all signals
+lfp_phase = np.angle(hilbert_bandpass_lfp)
+lfp_phase_a = lfp_phase[:,:,middle_channels_bool]
+lfp_phase_b = lfp_phase[:,:,~middle_channels_bool]
+
+
+# Extract amplitude envelope for all signals
+lfp_amplitude = np.abs(hilbert_bandpass_lfp)
+lfp_amplitude_a = lfp_amplitude[:,:,middle_channels_bool]
+lfp_amplitude_b = lfp_amplitude[:,:,~middle_channels_bool]
+
+# Plot test examples of amplitude and phase to make sure things are working
+random_trial = tuple((np.random.choice(range(hilbert_bandpass_lfp.shape[i])) \
+               for i in range(len(hilbert_bandpass_lfp.shape)-1))) 
+ax1 = plt.subplot(211)
+ax1.plot(hilbert_bandpass_lfp[random_trial])
+ax1.plot(lfp_amplitude[random_trial])
+ax2 = plt.subplot(212, sharex = ax1)
+ax2.plot(lfp_phase[random_trial])
+plt.show()
+
+# Mean amplitude plots for each band
+fig,ax = plt.subplots(combined_mean_spec.shape[1],2, sharex='all',sharey='row')
+for band in range(bandpassed_region_a.shape[0]):
+    error_plot(lfp_amplitude_a[band], ax[band,0])    
+    error_plot(lfp_amplitude_b[band], ax[band,1])
+plt.show()
+
+# Average ampltide for band, taste plots for every region
+fig, ax = plt.subplots(lfp_amplitude_a.shape[0],
+        lfp_amplitude_a.shape[1], sharex='all',sharey='row')
+for band in range(lfp_amplitude_a.shape[0]):
+    for taste in range(lfp_amplitude_a.shape[1]):
+        error_plot(lfp_amplitude_a[band,taste],
+                ax[band,taste])
+fig, ax = plt.subplots(lfp_amplitude_b.shape[0],
+        lfp_amplitude_b.shape[1], sharex='all',sharey='row')
+for band in range(lfp_amplitude_b.shape[0]):
+    for taste in range(lfp_amplitude_b.shape[1]):
+        error_plot(lfp_amplitude_b[band,taste],
+                ax[band,taste])
+plt.show()
+
+# Average phase consistency
+def phase_consistency_plot(array,ax):
+    """
+    Array with dims (... x time)
+    """
+    phase_vectors = np.exp(array*1.j)
+    mean = np.abs(np.mean(array, axis= tuple(range(len(array.shape)-1))))
+    ax.plot(mean)
+    #std = np.std(array, axis= tuple(range(len(array.shape)-1)))
+    #ax.fill_between(\
+    #        x = range(array.shape[-1]),
+    #        y1 = mean + std,
+    #        y2 = mean - std,
+    #        alpha = 0.5)
+    #ax.plot(range(array.shape[-1]),mean)
+
+fig,ax = plt.subplots(combined_mean_spec.shape[1],2, sharex='all',sharey='row')
+for band in range(bandpassed_region_a.shape[0]):
+    phase_consistency_plot(lfp_phase_a[band], ax[band,0])    
+    phase_consistency_plot(lfp_phase_b[band], ax[band,1])
+plt.show()
+
 
 
 
