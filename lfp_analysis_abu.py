@@ -12,6 +12,8 @@ from lspopt import spectrogram_lspopt
 import numpy as np
 from scipy.signal import hilbert, butter, filtfilt,freqs 
 from tqdm import tqdm, trange
+from sklearn.utils import resample
+from itertools import product
 
 
 os.chdir('/media/bigdata/firing_space_plot/ephys_data')
@@ -19,7 +21,8 @@ from ephys_data import ephys_data
 
 # Extract data
 dat = \
-ephys_data('/media/bigdata/Abuzar_Data/AM17/AM17_extracted/AM17_4Tastes_191126_084934')
+    ephys_data('/media/bigdata/Abuzar_Data/AM12/AM12_extracted/AM12_4Tastes_191106_085215')
+    #ephys_data('/media/bigdata/Abuzar_Data/AM17/AM17_extracted/AM17_4Tastes_191126_084934')
 
 dat.firing_rate_params = dict(zip(('step_size','window_size','dt'),
                                     (25,250,1)))
@@ -96,7 +99,7 @@ vmean = np.mean(combined_mean_spec,axis=None)
 vstd = np.std(combined_mean_spec,axis=None)
 vmin = None 
 vmax = None 
-f_bool = (f>3) * (f<15)
+f_bool = (f>3) * (f<25)
 for taste in range(combined_mean_spec.shape[1]):
     ax[taste,0].pcolormesh(t, f[f_bool], combined_mean_spec[0][taste][f_bool,:], 
             cmap='jet',vmin = vmin, vmax = vmax)
@@ -176,8 +179,9 @@ def error_plot(array,ax):
     """
     Array with dims (... x time)
     """
-    mean = np.mean(array, axis= tuple(range(len(array.shape)-1)))
-    std = np.std(array, axis= tuple(range(len(array.shape)-1)))
+    array = array.reshape(-1,array.shape[-1])
+    mean = np.mean(array, axis= 0) 
+    std = np.std(array, axis= 0)
     ax.fill_between(\
             x = range(array.shape[-1]),
             y1 = mean + std,
@@ -260,29 +264,91 @@ for band in range(lfp_amplitude_b.shape[0]):
 plt.show()
 
 # Average phase consistency
-def phase_consistency_plot(array,ax):
+def phase_consistency_plot(array,
+                            ax = None, 
+                            bootsample_fraction = 0.2, 
+                            boot_iters = 100):
     """
     Array with dims (... x time)
+    Phase will be average in all dimensions supplied except time
     """
-    phase_vectors = np.exp(array*1.j)
-    mean = np.abs(np.mean(array, axis= tuple(range(len(array.shape)-1))))
-    ax.plot(mean)
-    #std = np.std(array, axis= tuple(range(len(array.shape)-1)))
-    #ax.fill_between(\
-    #        x = range(array.shape[-1]),
-    #        y1 = mean + std,
-    #        y2 = mean - std,
-    #        alpha = 0.5)
-    #ax.plot(range(array.shape[-1]),mean)
+    phase_vectors = np.exp(array.reshape(-1,array.shape[-1])*1.j)
+    mean = np.abs(np.mean(phase_vectors, axis= 0)) 
+    bootsample = np.array(\
+            [np.abs(np.mean(\
+                resample(phase_vectors,
+                    n_samples = np.int(phase_vectors.shape[0]*bootsample_fraction)),
+                axis=0)) \
+            for x in range(boot_iters)])
+    std = np.std(bootsample, axis= 0) 
+    if ax is not None:
+        ax.plot(mean)
+        ax.fill_between(\
+                x = range(array.shape[-1]),
+                y1 = mean + std,
+                y2 = mean - std,
+                alpha = 0.5)
+        return mean, std, ax
+    else:
+        return mean, std
 
-fig,ax = plt.subplots(combined_mean_spec.shape[1],2, sharex='all',sharey='row')
+# Average phase consistency for every band in both regions
+fig,ax = plt.subplots(combined_mean_spec.shape[1],2, sharex='all',sharey='all')
 for band in range(bandpassed_region_a.shape[0]):
-    phase_consistency_plot(lfp_phase_a[band], ax[band,0])    
-    phase_consistency_plot(lfp_phase_b[band], ax[band,1])
+    phase_consistency_plot(lfp_phase_a[band], ax[band,0], 
+            bootsample_fraction = 0.3, boot_iters = 20)    
+    phase_consistency_plot(lfp_phase_b[band], ax[band,1], 
+            bootsample_fraction = 0.3, boot_iters = 20)
+plt.show()
+
+# Does phase consistency in BLA get washed out by averaging
+
+# Taste dependent phase consistency
+fig, ax = plt.subplots(lfp_phase_a.shape[0],
+        lfp_phase_a.shape[1], sharex='all',sharey='all')
+for band in range(lfp_phase_a.shape[0]):
+    for taste in range(lfp_phase_a.shape[1]):
+        phase_consistency_plot(lfp_phase_a[band,taste],
+                ax[band,taste])
+fig, ax = plt.subplots(lfp_phase_b.shape[0],
+        lfp_phase_b.shape[1], sharex='all',sharey='all')
+for band in range(lfp_phase_b.shape[0]):
+    for taste in range(lfp_phase_b.shape[1]):
+        phase_consistency_plot(lfp_phase_b[band,taste],
+                ax[band,taste])
 plt.show()
 
 
+# Look at single trials
+band = 0
+this_dat = \
+    bandpassed_region_a[band].reshape(-1,bandpassed_region_a.shape[-1])[:,1000:3000]
+mean = np.mean(this_dat, axis = None)
+std = np.std(this_dat, axis = None)
+dat.imshow(this_dat)
+plt.clim(mean-std,mean+std)
+plt.show()
 
+fig, ax = plt.subplots(1,len(lfp_phase_a))
+for band,this_ax in enumerate(ax):
+    this_dat = lfp_phase_a[band].reshape(-1,lfp_phase_a.shape[-1])[:,1000:3000]
+    plt.sca(this_ax)
+    dat.imshow(this_dat)
+plt.show()
+
+# Within trial phase consistency for BLA
+this_dat = lfp_phase_a.swapaxes(2,3)
+iters = list(product(*list(map(np.arange,this_dat.shape[:3]))))
+phase_consistency_array =\
+    np.zeros(tuple((*this_dat.shape[:3],this_dat.shape[-1])))
+for this_iter in tqdm(iters):
+    phase_consistency_array[this_iter], a = \
+            phase_consistency_plot(this_dat[this_iter])
+
+mean_intratrial_phase_consistency = \
+        np.mean(phase_consistency_array.reshape(-1,phase_consistency_array.shape[-1]),
+                axis=0)
+plt.plot(mean_intratrial_phase_consistency);plt.show()
 
 # ____                 _       _     
 #/ ___|  ___ _ __ __ _| |_ ___| |__  
