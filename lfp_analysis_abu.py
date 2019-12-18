@@ -14,6 +14,9 @@ from scipy.signal import hilbert, butter, filtfilt,freqs
 from tqdm import tqdm, trange
 from sklearn.utils import resample
 from itertools import product
+from scipy.stats import zscore
+from joblib import Parallel, delayed
+import multiprocessing as mp
 
 
 os.chdir('/media/bigdata/firing_space_plot/ephys_data')
@@ -28,7 +31,10 @@ dat.firing_rate_params = dict(zip(('step_size','window_size','dt'),
                                     (25,250,1)))
 
 dat.extract_and_process()
-dat.firing_overview(dat.all_normalized_firing);plt.show()
+
+middle_channels = np.arange(8,24)
+region_label = [1 if any(x[0] == middle_channels) else 0 for x in dat.unit_descriptors]
+dat.firing_overview(dat.all_normalized_firing,subplot_labels = region_label);plt.show()
 
 # ____                  _                                       
 #/ ___| _ __   ___  ___| |_ _ __ ___   __ _ _ __ __ _ _ __ ___  
@@ -41,7 +47,8 @@ dat.firing_overview(dat.all_normalized_firing);plt.show()
 with tables.open_file(dat.hdf5_name,'r') as hf5:
     parsed_lfp_channels = hf5.root.Parsed_LFP_channels[:]
 
-middle_channels = np.arange(8,24)
+middle_channels_bool = np.array([True if channel in middle_channels else False \
+        for channel in parsed_lfp_channels ])
 
 # Calculate clims
 mean_val = np.mean(dat.all_lfp_array, axis = None)
@@ -50,10 +57,9 @@ dat.firing_overview(dat.all_lfp_array, min_val = mean_val - 2*sd_val,
                     max_val = mean_val + 2*sd_val, cmap = 'viridis');plt.show()
 
 # Mean LFP spectrogram 
-middle_channels_bool = np.array([True if channel in middle_channels else False \
-        for channel in parsed_lfp_channels ])
 region_a = dat.lfp_array[:,middle_channels_bool,:,:] 
 region_b = dat.lfp_array[:,~middle_channels_bool,:,:]
+
 region_a_mean = np.mean(region_a,axis=(0,1,2))
 region_b_mean = np.mean(region_b,axis=(0,1,2))
 region_a_std = np.std(region_a,axis=(0,1,2))
@@ -157,6 +163,9 @@ band_freqs = [(1,4),
                 (7,12),
                 (12,25)]
 
+#band_freqs = [(x,x+1) for x in range(1,50)]
+
+
 # (band x taste x channel x trial x time)
 bandpassed_lfp = np.asarray([
                     butter_bandpass_filter(
@@ -236,7 +245,8 @@ random_trial = tuple((np.random.choice(range(hilbert_bandpass_lfp.shape[i])) \
                for i in range(len(hilbert_bandpass_lfp.shape)-1))) 
 ax1 = plt.subplot(211)
 ax1.plot(hilbert_bandpass_lfp[random_trial])
-ax1.plot(lfp_amplitude[random_trial])
+ax1.plot(lfp_amplitude[random_trial],c='orange')
+ax1.plot(-lfp_amplitude[random_trial],c='orange')
 ax2 = plt.subplot(212, sharex = ax1)
 ax2.plot(lfp_phase[random_trial])
 plt.show()
@@ -331,13 +341,13 @@ plt.show()
 
 fig, ax = plt.subplots(1,len(lfp_phase_a))
 for band,this_ax in enumerate(ax):
-    this_dat = lfp_phase_a[band].reshape(-1,lfp_phase_a.shape[-1])[:,1000:3000]
+    this_dat = lfp_phase_a[band,:,1].reshape(-1,lfp_phase_a.shape[-1])[:,1000:3000]
     plt.sca(this_ax)
     dat.imshow(this_dat)
 plt.show()
 
-# Within trial phase consistency for BLA
-this_dat = lfp_phase_a.swapaxes(2,3)
+# Within channel phase consistency for BLA
+this_dat = lfp_phase_b
 iters = list(product(*list(map(np.arange,this_dat.shape[:3]))))
 phase_consistency_array =\
     np.zeros(tuple((*this_dat.shape[:3],this_dat.shape[-1])))
@@ -345,10 +355,130 @@ for this_iter in tqdm(iters):
     phase_consistency_array[this_iter], a = \
             phase_consistency_plot(this_dat[this_iter])
 
-mean_intratrial_phase_consistency = \
-        np.mean(phase_consistency_array.reshape(-1,phase_consistency_array.shape[-1]),
-                axis=0)
-plt.plot(mean_intratrial_phase_consistency);plt.show()
+# Heatmap instead of taking mean
+fig, ax = plt.subplots(phase_consistency_array.shape[0],
+         phase_consistency_array.shape[1], sharex='all',sharey='all')
+for band in range(phase_consistency_array.shape[0]):
+    for taste in range(phase_consistency_array.shape[1]):
+        im = ax[band,taste].imshow(phase_consistency_array[band,taste],
+                vmin = 0, vmax = 1, interpolation='nearest',aspect='auto')
+fig.subplots_adjust(right=0.8)
+cbar_ax = fig.add_axes([0.85, 0.15, 0.02, 0.7])
+fig.colorbar(im,cbar_ax)
+plt.show()
+
+#  ____      _                                  
+# / ___|___ | |__   ___ _ __ ___ _ __   ___ ___ 
+#| |   / _ \| '_ \ / _ \ '__/ _ \ '_ \ / __/ _ \
+#| |__| (_) | | | |  __/ | |  __/ | | | (_|  __/
+# \____\___/|_| |_|\___|_|  \___|_| |_|\___\___|
+#                                               
+
+#Refer to:
+#    http://math.bu.edu/people/mak/sfn-2013/sfn_tutorial.pdf
+#    http://math.bu.edu/people/mak/sfn/tutorial.pdf
+
+
+##################
+## Using STFT (Uses too much memory)
+###################
+
+# Resolution has to be increased for phase of higher frequencies
+Fs = 1000 
+signal_window = 1000 
+window_overlap = 999
+
+def calc_stft(trial, max_freq,Fs,signal_window,window_overlap):
+    """
+    trial : 1D array
+    max_freq : where to lob off the transform
+    """
+    f,t,this_stft = scipy.signal.stft(
+                scipy.signal.detrend(trial), 
+                fs=Fs, 
+                window='hanning', 
+                nperseg=signal_window, 
+                noverlap=signal_window-(signal_window-window_overlap)) 
+    return this_stft[f<max_freq]
+
+
+region_b_iters = list(product(*list(map(np.arange,region_b.shape[:3]))))
+
+# Test run for calc_stft
+this_iter = region_b_iters[0]
+test_stft = calc_stft(region_b[this_iter],25,Fs,signal_window,window_overlap)
+dat.imshow(np.abs(test_stft));plt.show()
+
+region_b_stft = Parallel(n_jobs = mp.cpu_count()-2)\
+        (delayed(calc_stft)(region_b[this_iter],25,Fs,signal_window,window_overlap)\
+        for this_iter in tqdm(region_b_iters))
+
+region_b_stft_array =\
+        np.empty(tuple((*region_b.shape[:3],*test_stft.shape)),
+                dtype=np.dtype(region_b_stft[0][0,0]))
+for iter_num, this_iter in tqdm(enumerate(region_b_iters)):
+    region_b_stft_array[this_iter] = region_b_stft[iter_num]
+
+# To have appropriate f and t
+f,t,this_stft = scipy.signal.stft(
+            scipy.signal.detrend(region_b[region_b_iters[0]]), 
+            fs=Fs, 
+            window='hanning', 
+            nperseg=signal_window, 
+            noverlap=signal_window-(signal_window-window_overlap)) 
+valid_f = f[f<25]
+
+# Check spectrum and phase-locking
+stim_time = 2
+mean_power = np.mean(np.abs(region_b_stft_array),axis=(0,1,2))
+mean_normalized_power = mean_power /\
+                np.mean(mean_power[:,t<stim_time],axis=1)[:,np.newaxis]
+mean_normalized_power -=\
+                np.mean(mean_normalized_power[:,t<stim_time],axis=1)[:,np.newaxis]
+plt.pcolormesh(t, valid_f, mean_normalized_power, cmap='jet')
+plt.show()
+
+all_phases =\
+np.angle(region_b_stft_array).reshape(len(region_b_iters),len(f[f<25]),-1).swapaxes(0,1)
+# Plot phases
+plt.plot(all_phases[7,0].T,'x',c='orange');plt.show()
+dat.imshow(all_phases[7]);plt.colorbar();plt.show()
+
+# Check that the stft is working as expected by visualizing power and phase
+# Check that stft agrees with hilbert
+
+# Plot test examples of amplitude and phase to make sure things are working
+this_dat = region_b
+
+random_trial = tuple((np.random.choice(range(this_dat.shape[i])) \
+               for i in range(len(this_dat.shape)-1))) 
+
+f,t,region_b_stft = scipy.signal.stft(
+            scipy.signal.detrend(region_b[random_trial]), 
+            fs=Fs, 
+            window='hanning', 
+            nperseg=signal_window, 
+            noverlap=signal_window-(signal_window-window_overlap)) 
+
+fig, ax = plt.subplots(len(band_freqs),2, sharex='col')
+for band_num, band in enumerate(band_freqs):
+    ax[band_num,0].plot(np.arange(lfp_amplitude_b.shape[-1]),
+            zscore(lfp_amplitude_b[tuple((band_num,*random_trial))]))
+    ax[band_num,0].plot(t*Fs,
+            zscore(np.mean(np.abs(region_b_stft[(f>band[0])&(f<band[1])]),axis=0)))
+    ax[band_num,1].plot(np.arange(bandpassed_region_b.shape[-1]),
+            np.angle(hilbert(
+                butter_bandpass_filter(
+                            data = this_dat[random_trial],
+                            lowcut = band[0]-0.5,
+                            highcut = band[0]+0.5,
+                            fs = Fs)
+                )))
+    ax[band_num,1].plot(t*Fs,
+            np.angle(region_b_stft[(np.argmin(np.abs(f-band[0])))]))
+plt.show()
+
+
 
 # ____                 _       _     
 #/ ___|  ___ _ __ __ _| |_ ___| |__  
