@@ -504,14 +504,20 @@ plt.legend(loc='best')
 plt.show()
 
 # Empirical test
+from scipy.signal import chirp
+
 dt = 1e-3
 t = np.arange(0,7,dt)
 freq_list = np.arange(2,12,1.5)
 sin_array = np.array([(2**freq)*np.sin(2*np.pi*freq*t) for freq in freq_list])
 sum_sin = np.sum(sin_array,axis=0) + \
    np.random.normal(size=len(t))*0.5
+sum_sin = chirp(t,f0=min(freq_list),f1=max(freq_list),t1=max(t),method='linear')
+# Pad the wave in the beginning
+sum_sin = np.concatenate((np.ones(int(2/dt)),sum_sin))
+t = np.arange(0,9,dt)
 plt.subplot(211)
-dat.imshow(sin_array)
+plt.imshow(sin_array,interpolation='nearest',aspect='auto')
 plt.subplot(212)
 plt.plot(sum_sin)
 plt.show()
@@ -526,18 +532,18 @@ f,t,Sxx= scipy.signal.spectrogram(
             nperseg=signal_window, 
             noverlap=signal_window-(signal_window-window_overlap), 
             mode='psd')
-plt.pcolormesh(t, f[f<freq_list[-1]*2], Sxx[f<freq_list[-1]*2,:], cmap='jet')
+plt.pcolormesh(t, f[f<freq_list[-1]*2], 10*np.log10(Sxx[f<freq_list[-1]*2,:]), cmap='jet')
 plt.show()
 
 recovered_sin = np.array([butter_bandpass_filter(sum_sin, 
-                                                freq-1, 
-                                                freq+1,
+                                                freq-0.5, 
+                                                freq+0.5,
                                                 Fs,
                                                 order=3) \
                     for freq in freq_list])
 fig,ax = plt.subplots(len(freq_list))
 for i in range(len(freq_list)):
-    ax[i].plot(sin_array[i,:])
+    #ax[i].plot(sin_array[i,:])
     ax[i].plot(recovered_sin[i,:])
 plt.show()
 
@@ -545,7 +551,6 @@ plt.show()
 # Spectrogram comparison
 
 # Synethetic data
-from scipy.signal import chirp
 
 t = np.linspace(0, 100, 50001)
 w = chirp(t, f0=20, f1=1, t1=100, method='linear')
