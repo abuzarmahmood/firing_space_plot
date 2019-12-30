@@ -227,8 +227,9 @@ plt.show()
 # Concatenate spectrograms
 tot_spectrograms = np.concatenate((mean_affective_spectrogram,mean_iti_spectrogram_long),1) 
 
-plt.imshow(zscore(10*np.log10(tot_spectrograms)),origin='below',
-        interpolation='bilinear',aspect='auto', cmap='jet',vmin=-1,vmax=1)
+plt.imshow(10*np.log10(tot_spectrograms),origin='below',
+        interpolation='bilinear',aspect='auto', cmap='jet')
+plt.title('Log10 Spectral Power - Affective + ITI concatenated')
 plt.show()
 
 
@@ -327,6 +328,7 @@ for ax_num,this_ax in enumerate(ax):
             y2= mean_this_dat[ax_num] + std_this_dat[ax_num],
             alpha = 0.5,color='orange')
     this_ax.plot(range(len(mean_this_dat[ax_num])),mean_this_dat[ax_num])
+ax[0].title.set_text('Whole Taste session LFP Power')
 plt.show()
 
 # Taste session ITIs 
@@ -347,6 +349,7 @@ for ax_num,this_ax in enumerate(ax):
             y2= mean_this_dat[ax_num] + std_this_dat[ax_num],
             alpha = 0.5,color='orange')
     this_ax.plot(range(len(mean_this_dat[ax_num])),mean_this_dat[ax_num])
+ax[0].title.set_text('Taste ITI LFP Power')
 plt.show()
 
 # Affective session 
@@ -360,6 +363,7 @@ for ax_num,this_ax in enumerate(ax):
             y2= mean_this_dat[ax_num] + std_this_dat[ax_num],
             alpha = 0.5,color='orange')
     this_ax.plot(range(len(mean_this_dat[ax_num])),mean_this_dat[ax_num])
+ax[0].title.set_text('Affective LFP Power')
 plt.show()
 
 
