@@ -6,8 +6,22 @@ session and perform the following tests/visualisations:
     2) Do changes in sickness persists into the taste delivery period
         and are they detectable in the LFP during the ITI period
     3) What are the dynamics of the LFP during the ITI periods
-        and if sickness is noticeable in the LFP does it rebound
+        and if sickness is noticeable in the LFP, does it rebound
         towards health
+
+Precise analyses and outputs:
+    1) 
+        - 2 Way ANOVA on ITI LFP Power by taste and time for every band
+        - FacetGrid heatmap output (taste x band) for each ITI LFP power
+    2)
+        - Bandwise timeseries plot of power in affective and whole taste periods
+        - Heatmap for power for Saline and LiCl sessions
+        - Difference in ITI LFP power for taste after Saline or LiCl 
+    3) 
+    *)  Items saved to HDF5 file for animal
+        - Firing rate output for all 5 recordings
+        - Bandwise LFP power output for all 5 recordings
+        -
 """
 
 # ___                            _   
@@ -38,13 +52,6 @@ import glob
 from collections import namedtuple
 from scipy.signal import convolve
 
-
-# _                    _   ____        _        
-#| |    ___   __ _  __| | |  _ \  __ _| |_ __ _ 
-#| |   / _ \ / _` |/ _` | | | | |/ _` | __/ _` |
-#| |__| (_) | (_| | (_| | | |_| | (_| | || (_| |
-#|_____\___/ \__,_|\__,_| |____/ \__,_|\__\__,_|
-#
 
 ##############
 # Define functions to extract data
@@ -113,6 +120,14 @@ def get_delivery_times(hdf5_name):
     delivery_times['delivery_time'] = delivery_times['delivery_time'] // 30
     delivery_times['chronological'] = np.argsort(delivery_times.delivery_time)
     return delivery_times
+
+
+# _                    _   ____        _        
+#| |    ___   __ _  __| | |  _ \  __ _| |_ __ _ 
+#| |   / _ \ / _` |/ _` | | | | |/ _` | __/ _` |
+#| |__| (_) | (_| | (_| | | |_| | (_| | || (_| |
+#|_____\___/ \__,_|\__,_| |____/ \__,_|\__\__,_|
+#
 
 # All HDF5 files need to be in the same folder
 # Load files and make sure the order is right
@@ -252,6 +267,9 @@ iti_lfp_bandpassed  = \
                         fs = Fs) \
                                 for band in tqdm(band_freqs)])\
                 for data in iti_array_list]
+    
+# Remove to preserve memory
+del affective_whole_lfp, taste_whole_lfp, iti_array_list
 
 # Calculate Hilbert and amplitude
 affective_whole_hilbert = [hilbert(data) for data in tqdm(affective_whole_bandpassed)]
