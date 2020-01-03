@@ -37,7 +37,7 @@ import matplotlib.pyplot as plt
 import matplotlib
 matplotlib.use('Qt5Agg')
 import tables
-#import h5py
+import h5py
 #import easygui
 import scipy
 from scipy.signal import spectrogram
@@ -101,27 +101,25 @@ def get_parsed_lfp(hdf5_name):
             raise Exception('Parsed_LFP node absent in HDF5')
     return all_lfp_array
 
-hdf5_name = final_list[0]
-data = get_parsed_lfp_h5py(hdf5_name) 
 
-def get_parsed_lfp_h5py(hdf5_name):
-    """
-    Extract parsed lfp arrays from specified HD5 files
-    """
-    with h5py.File(hdf5_name, 'r') as hf5: 
-        if 'Parsed_LFP' in hf5.keys():
-            lfp_nodes = [node for node in hf5['Parsed_LFP']\
-                    if 'dig_in' in node]
-            lfp_array = np.asarray([hf5['Parsed_LFP'][node] for node in lfp_nodes])
-            all_lfp_array = \
-                    lfp_array.\
-                        swapaxes(1,2).\
-                        reshape(-1, lfp_array.shape[1],\
-                                lfp_array.shape[-1]).\
-                        swapaxes(0,1)
-        else:
-            raise Exception('Parsed_LFP node absent in HDF5')
-    return all_lfp_array
+#def get_parsed_lfp_h5py(hdf5_name):
+#    """
+#    Extract parsed lfp arrays from specified HD5 files
+#    """
+#    with h5py.File(hdf5_name, 'r') as hf5: 
+#        if 'Parsed_LFP' in hf5.keys():
+#            lfp_nodes = [node for node in hf5['Parsed_LFP']\
+#                    if 'dig_in' in node]
+#            lfp_array = np.asarray([hf5['Parsed_LFP'][node] for node in lfp_nodes])
+#            all_lfp_array = \
+#                    lfp_array.\
+#                        swapaxes(1,2).\
+#                        reshape(-1, lfp_array.shape[1],\
+#                                lfp_array.shape[-1]).\
+#                        swapaxes(0,1)
+#        else:
+#            raise Exception('Parsed_LFP node absent in HDF5')
+#    return all_lfp_array
 
 def get_whole_session_lfp(hdf5_name):
     with tables.open_file(hdf5_name, 'r+') as hf5: 
@@ -129,11 +127,11 @@ def get_whole_session_lfp(hdf5_name):
         whole_lfp = whole_session_lfp_node[0][:]
     return whole_lfp
 
-def get_whole_session_lfp_h5py(hdf5_name):
-    with h5py.File(hdf5_name, 'r') as hf5: 
-        whole_session_lfp_node = list(hf5['Whole_session_raw_LFP'].keys())
-        whole_lfp = hf5['Whole_session_raw_LFP'][whole_session_lfp_node[0]].value
-    return whole_lfp
+#def get_whole_session_lfp_h5py(hdf5_name):
+#    with h5py.File(hdf5_name, 'r') as hf5: 
+#        whole_session_lfp_node = list(hf5['Whole_session_raw_LFP'].keys())
+#        whole_lfp = hf5['Whole_session_raw_LFP'][whole_session_lfp_node[0]].value
+#    return whole_lfp
 
 def get_delivery_times(hdf5_name):
     delivery_times = \
@@ -214,9 +212,9 @@ taste_files = [final_list[2], final_list[-1]]
 #del fin_firing_rates
 
 # Extract LFP from all sessions
-whole_lfp = [np.squeeze(get_parsed_lfp_h5py(file_name))
+whole_lfp = [np.squeeze(get_parsed_lfp(file_name))
         if recording_num in affective_recordings \
-        else get_whole_session_lfp_h5py(file_name) \
+        else get_whole_session_lfp(file_name) \
         for recording_num, file_name in tqdm(enumerate(final_list))]
 
 taste_whole_lfp = [whole_lfp[2],whole_lfp[-1]]
@@ -483,15 +481,18 @@ plt.show()
 # Perform 2-way ANOVA to look at differences in taste and trial_bin
 taste_trial_anova = [\
     [dat.loc[dat.band == band_num].anova(dv = 'power', \
-            between= ['trial_bin','taste'])[['Source','p-unc','np2']] \
+        between= ['trial_bin','taste'])[['Source','p-unc','np2']][:3] \
             for band_num in np.sort(dat.band.unique())] \
         for dat in mean_band_df]
 
-# Stats models ANOVA
-import scipy.stats as stats
-#import researchpy as rp
-import statsmodels.api as sm
-from statsmodels.formula.api import ols
+taste_trial_anova_df = [ [\
+        pd.DataFrame({  'File' : os.path.basename(taste_files[file_num]),
+                        'Band' : band_num,
+                        'Source' : band['Source'],
+                        'p-unc' : band['p-unc'],
+                        'np2' : band['np2']})
+            for band_num,band in enumerate(file)]\
+            for file_num, file in enumerate(taste_trial_anova)]
 
-two_way_anova = ols('power ~ taste * band', data = mean_band_df[0]).fit()
-
+from itertools import chain
+taste_trial_anova_df = pd.concat(list(chain(*taste_trial_anova_df)))
