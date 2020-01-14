@@ -102,37 +102,11 @@ def get_parsed_lfp(hdf5_name):
             raise Exception('Parsed_LFP node absent in HDF5')
     return all_lfp_array
 
-
-#def get_parsed_lfp_h5py(hdf5_name):
-#    """
-#    Extract parsed lfp arrays from specified HD5 files
-#    """
-#    with h5py.File(hdf5_name, 'r') as hf5: 
-#        if 'Parsed_LFP' in hf5.keys():
-#            lfp_nodes = [node for node in hf5['Parsed_LFP']\
-#                    if 'dig_in' in node]
-#            lfp_array = np.asarray([hf5['Parsed_LFP'][node] for node in lfp_nodes])
-#            all_lfp_array = \
-#                    lfp_array.\
-#                        swapaxes(1,2).\
-#                        reshape(-1, lfp_array.shape[1],\
-#                                lfp_array.shape[-1]).\
-#                        swapaxes(0,1)
-#        else:
-#            raise Exception('Parsed_LFP node absent in HDF5')
-#    return all_lfp_array
-
 def get_whole_session_lfp(hdf5_name):
     with tables.open_file(hdf5_name, 'r+') as hf5: 
         whole_session_lfp_node = hf5.list_nodes('/Whole_session_raw_LFP') 
         whole_lfp = whole_session_lfp_node[0][:]
     return whole_lfp
-
-#def get_whole_session_lfp_h5py(hdf5_name):
-#    with h5py.File(hdf5_name, 'r') as hf5: 
-#        whole_session_lfp_node = list(hf5['Whole_session_raw_LFP'].keys())
-#        whole_lfp = hf5['Whole_session_raw_LFP'][whole_session_lfp_node[0]].value
-#    return whole_lfp
 
 def get_delivery_times(hdf5_name):
     delivery_times = \
@@ -192,31 +166,6 @@ final_list = [hdf5_name[x] for x in file_order]
 
 affective_recordings = [0,1,3]
 taste_files = [final_list[2], final_list[-1]]
-
-# Pull in spike trains from all sessions to calculate firing rates
-# Replace list with
-
-#spike_tuple = namedtuple('SpikeTrains',['filename','spiketrains'])
-#
-#all_spike_trains = [spike_tuple(file_name, get_spikes(file_name)) \
-#        for file_name in tqdm(final_list)]
-#
-## Elements 0,1,3 will be from the affective recording 
-## So they're shaped a little weirdly
-#fin_spike_trains = [spike_train.spiketrains[0,0] \
-#        if recording_num in affective_recordings \
-#        else spike_train.spiketrains \
-#        for recording_num, spike_train in enumerate(all_spike_trains)]
-#
-## Calculate firing rates for all spike_trains
-#fin_firing_rates = [calc_normalized_firing(x,250) for x in tqdm(fin_spike_trains)]
-#
-## Downsample spiketrains and delete originals
-#down_ratio = 25
-#down_firing_rate = [x[..., np.arange(0,x.shape[-1],down_ratio)] \
-#        for x in fin_firing_rates]
-#
-#del fin_firing_rates
 
 # Extract LFP from all sessions
 whole_lfp = [np.squeeze(get_parsed_lfp(file_name))
@@ -315,52 +264,7 @@ affective_lfp_amplitude = [np.abs(data) for data in tqdm(affective_whole_hilbert
 #taste_lfp_amplitude = [np.abs(data) for data in taste_whole_hilbert]
 iti_lfp_amplitude = [np.abs(data) for data in tqdm(iti_lfp_hilbert)]
 
-# ____  _       _       
-#|  _ \| | ___ | |_ ___ 
-#| |_) | |/ _ \| __/ __|
-#|  __/| | (_) | |_\__ \
-#|_|   |_|\___/ \__|___/
-#                       
-
-# Plot mean power in all 3 affective recordings to visualize changes
-mean_affective_lfp_amplitude = [np.mean(data,axis=1) for data in affective_lfp_amplitude]
-
-fig,ax = plt.subplots(len(band_freqs),len(mean_affective_lfp_amplitude),sharey='row')
-for session_num,session in enumerate(mean_affective_lfp_amplitude):
-    for band_num, band in enumerate(session):
-        ax[band_num,session_num].plot(band)
-plt.show()
-
-# Plot band power in ITIs for both taste sessions
-mean_iti_lfp_amplitude = \
-        [np.mean(data,axis=2) for data in iti_lfp_amplitude]
-mean_iti_lfp_hists = [[np.histogram(band,bins=100,density=True) for band in data]\
-        for data in mean_iti_lfp_amplitude]
-
-## Plot ECDF for each band
-#num_bins = 100
-#fig,ax = plt.subplots(len(mean_iti_lfp_hists[0]),1)
-#for session_num,session in enumerate(mean_iti_lfp_hists):
-#    for band_num,band in enumerate(session):
-#        ax[band_num].plot(band[1][:-1],np.cumsum(band[0]/np.sum(band[0])))
-#plt.show()
-#
-#mean_concat_iti_lfp_ampltidude = \
-#       np.concatenate(mean_iti_lfp_amplitude,axis=-1)
-#
-#test_hist = np.histogram(mean_concat_iti_lfp_ampltidude[0],bins=100)
-#
-#from scipy.stats import percentileofscore 
-#percentile_iti_lfp_amp = \
-#        [percentileofscore(data,data) for data in mean_concat_iti_lfp_ampltidude]
-#
-#fig,ax = plt.subplots(1,len(mean_concat_iti_lfp_ampltidude))
-#for ax_num,this_ax in enumerate(ax):
-#    this_ax.imshow(mean_concat_iti_lfp_ampltidude[ax_num],
-#            interpolation='nearest',aspect='auto',cmap='jet')
-#plt.show()
-
-
+#    _                _           _     
 #   / \   _ __   __ _| |_   _ ___(_)___ 
 #  / _ \ | '_ \ / _` | | | | / __| / __|
 # / ___ \| | | | (_| | | |_| \__ \ \__ \
@@ -428,41 +332,6 @@ for num, this_ax in enumerate(ax):
 plt.tight_layout()
 plt.show()
 
-## Plot Average power for (taste x band)
-#taste_band_power = [np.asarray([\
-#        data[:,trial_time_data[num].taste == taste,:] \
-#        for taste in np.sort(trial_time_data[num].taste.unique())])\
-#        for num,data in enumerate(mean_iti_lfp_amplitude)]
-#
-## Set points with values > 3*std as masked
-#masked_taste_band_power = [np.asarray(\
-#        [np.ma.masked_greater(data[:,band],
-#            np.mean(data[:,band],axis=None)+3*\
-#                    np.std(data[:,band],axis=None))\
-#        for band in range(data.shape[1])]).swapaxes(0,1) \
-#        for data in taste_band_power]
-#
-#zscore_taste_band_power = [np.asarray(\
-#        [zscore(data[:,band],axis=None) \
-#        for band in range(data.shape[1])]).swapaxes(0,1)\
-#        for data in masked_taste_band_power]
-#
-#for num,data in enumerate(zscore_taste_band_power):
-#    fig,ax = plt.subplots(data.shape[0],
-#                            data.shape[1])
-#    for taste in range(data.shape[0]):
-#        for band in range(data.shape[1]):
-#            plt.sca(ax[taste,band])
-#            im = plt.imshow(data[taste,band],
-#                    interpolation='nearest',aspect='auto',
-#                    cmap = 'viridis',vmin=-1,vmax=3)
-#            im.cmap.set_over('k')
-#    plt.suptitle(os.path.basename(taste_files[num]))
-#    fig.subplots_adjust(bottom = 0.2)
-#    cbar_ax = fig.add_axes([0.15,0.1,0.7,0.02])
-#    plt.colorbar(im, cax = cbar_ax,orientation = 'horizontal', pad = 0.2, extend='max')
-#plt.show()
-
 #    _    _   _  _____     ___    
 #   / \  | \ | |/ _ \ \   / / \   
 #  / _ \ |  \| | | | \ \ / / _ \  
@@ -522,24 +391,6 @@ mean_band_df = [mean_band_df[num].loc[~mean_band_df[num].chronological.isin(bad_
         for num in range(len(mean_band_df))]
 
 mean_band_df[1].to_pickle('test_anova_frame.pkl')
-
-# Find average power across ITI interval
-#taste_band_avg_power = np.mean(zscore_taste_band_spectrograms,axis=-1)
-#nd_idx_objs = make_array_identifiers(taste_band_avg_power)
-#mean_band_df = pd.DataFrame({\
-#                        'taste' : nd_idx_objs[0],
-#                        'band' : nd_idx_objs[1],
-#                        'trial' : nd_idx_objs[2],
-#                        'power' : taste_band_avg_power.flatten()})
-
-
-#mean_trial_df = [mean_band_df[num].\
-#                        groupby(['chronological','band']).\
-#                            aggregate('mean').\
-#                                reset_index() \
-#                                for num in range(len(mean_band_df))]
-#
-#mean_trial_df = mean_trial_df.merge(delivery_times[['chronological','trial']],'inner')
 
 # Cluster trials into bins for anova
 trial_bin_num = 5
@@ -623,3 +474,55 @@ pairwise_session_ttest_frame = pd.concat(
 
 # Report significant values
 pairwise_session_ttest_frame.loc[pairwise_session_ttest_frame.p_val < 0.05]
+
+# ____  _       _       
+#|  _ \| | ___ | |_ ___ 
+#| |_) | |/ _ \| __/ __|
+#|  __/| | (_) | |_\__ \
+#|_|   |_|\___/ \__|___/
+#                       
+
+# Plot mean power in all 3 affective recordings to visualize changes
+mean_affective_lfp_amplitude = [np.mean(data,axis=1) for data in affective_lfp_amplitude]
+
+fig,ax = plt.subplots(len(band_freqs),len(mean_affective_lfp_amplitude),sharey='row')
+for session_num,session in enumerate(mean_affective_lfp_amplitude):
+    for band_num, band in enumerate(session):
+        ax[band_num,session_num].plot(band)
+plt.show()
+
+## Plot Average power for (taste x band)
+#taste_band_power = [np.asarray([\
+#        data[:,trial_time_data[num].taste == taste,:] \
+#        for taste in np.sort(trial_time_data[num].taste.unique())])\
+#        for num,data in enumerate(mean_iti_lfp_amplitude)]
+#
+## Set points with values > 3*std as masked
+#masked_taste_band_power = [np.asarray(\
+#        [np.ma.masked_greater(data[:,band],
+#            np.mean(data[:,band],axis=None)+3*\
+#                    np.std(data[:,band],axis=None))\
+#        for band in range(data.shape[1])]).swapaxes(0,1) \
+#        for data in taste_band_power]
+#
+#zscore_taste_band_power = [np.asarray(\
+#        [zscore(data[:,band],axis=None) \
+#        for band in range(data.shape[1])]).swapaxes(0,1)\
+#        for data in masked_taste_band_power]
+#
+#for num,data in enumerate(zscore_taste_band_power):
+#    fig,ax = plt.subplots(data.shape[0],
+#                            data.shape[1])
+#    for taste in range(data.shape[0]):
+#        for band in range(data.shape[1]):
+#            plt.sca(ax[taste,band])
+#            im = plt.imshow(data[taste,band],
+#                    interpolation='nearest',aspect='auto',
+#                    cmap = 'viridis',vmin=-1,vmax=3)
+#            im.cmap.set_over('k')
+#    plt.suptitle(os.path.basename(taste_files[num]))
+#    fig.subplots_adjust(bottom = 0.2)
+#    cbar_ax = fig.add_axes([0.15,0.1,0.7,0.02])
+#    plt.colorbar(im, cax = cbar_ax,orientation = 'horizontal', pad = 0.2, extend='max')
+#plt.show()
+
