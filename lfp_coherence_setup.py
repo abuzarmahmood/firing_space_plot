@@ -73,6 +73,7 @@ middle_channels = np.arange(8,24)
 data_hdf5_name = 'AM_LFP_analyses.h5'
 data_folder = '/media/bigdata/Abuzar_Data/lfp_analysis'
 data_hdf5_path = os.path.join(data_folder, data_hdf5_name)
+log_file_name = os.path.join(data_folder, 'file_list.txt')
 
 # Create Phase node in data hdf5
 if not os.path.exists(data_hdf5_path):
@@ -87,20 +88,43 @@ with tables.open_file(data_hdf5_path,'r+') as hf5:
 
 
 # Ask user for all relevant files
-file_list = []
-last_dir = None
-while True:
-    if last_dir is not None:
-        file_name = easygui.fileopenbox(msg = 'Please select files to extract'\
-                ' data from, CANCEL to stop', default = last_dir)
-    else:
-        file_name = easygui.fileopenbox(msg = 'Please select files to extract'\
-                ' data from, CANCEL to stop')
-    if file_name is not None:
-        file_list.append(file_name)
-        last_dir = os.path.dirname(file_name)
-    else:
-        break
+# If file_list already exists then ask the user if they want to use it
+if os.path.exists(log_file_name):
+    old_list = open(log_file_name,'r').readlines()
+    old_list = [x.rstrip() for x in old_list]
+    old_basename_list = [os.path.basename(x) for x in old_list]
+    old_bool = easygui.ynbox(msg = "Should this file list be used: \n\n Old list: \n\n{}"\
+            .format("\n".join(old_basename_list), 
+            title = "Save these files?"))
+
+if old_bool:
+    file_list = old_list
+else:
+    old_list = ''
+    file_list = []
+    last_dir = None
+    while True:
+        if last_dir is not None:
+            file_name = easygui.fileopenbox(msg = 'Please select files to extract'\
+                    ' data from, CANCEL to stop', default = last_dir)
+        else:
+            file_name = easygui.fileopenbox(msg = 'Please select files to extract'\
+                    ' data from, CANCEL to stop')
+        if file_name is not None:
+            file_list.append(file_name)
+            last_dir = os.path.dirname(file_name)
+        else:
+            break
+
+    file_basename_list = [os.path.basename(x) for x in file_list]
+    save_bool = easygui.ynbox(msg = 'Should this list of files be saved: '\
+            '\n\nOld list:\n\n{}\n\nNew list:\n\n{}\n\n'\
+            'Files will be saved to : {}'\
+            .format("\n".join(old_basename_list),"\n".join(file_basename_list),log_file_name), 
+            title = "Save these files?")
+
+    if save_bool:
+        open(log_file_name,'w').writelines("\n".join(file_list))
 
 # Extract data
 for file_num in range(len(file_list)):
