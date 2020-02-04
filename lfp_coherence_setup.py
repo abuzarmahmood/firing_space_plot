@@ -126,28 +126,35 @@ else:
     if save_bool:
         open(log_file_name,'w').writelines("\n".join(file_list))
 
-# Extract data
-for file_num in range(len(file_list)):
-    file_name_parts = os.path.basename(file_list[file_num]).split('_')
-    animal_name = file_name_parts[0]
-    date_str = file_name_parts[2]
+# Break down filename into parts so they can be used for naming nodes
+file_name_parts = [os.path.basename(x).split('_') for x in file_list]
+animal_name_list = [x[0] for x in file_name_parts]
+date_str_list = [x[2] for x in file_name_parts]
 
-    # Check output is correct, if not, ask user to define names
+# Check output is correct, if not, ask user to define names
+for file_num in range(len(file_list)):
     node_check = 'a'
     while node_check not in ['y','n']:
         question_str = \
-                'Please confirm (y/n): \nNode:\t{}\nDate:\t{}\n:::'.format(animal_name, date_str)
+                'Please confirm (y/n): \nNode:\t{}\nDate:\t{}\n:::'\
+                .format(animal_name_list[file_num], date_str_list[file_num])
         node_check = input(question_str)
     if node_check == 'n':
-        animal_name, date_str = easygui.multenterbox('Please enter names for nodes in HF5'\
+        animal_name_list[file_num], date_str_list[file_num] = \
+                easygui.multenterbox('Please enter names for nodes in HF5'\
                         '\n{}'.format(os.path.basename(file_list[file_num])),
                             'Enter node names',['Animal Name','Date'])
+
+# Extract data
+for file_num in range(len(file_list)):
+    animal_name = animal_name_list[file_num] 
+    date_str = date_str_list[file_num]
 
     with tables.open_file(data_hdf5_path,'r+') as hf5:
         if '/phases/{}'.format(animal_name) not in hf5:
             hf5.create_group('/phases',animal_name)
-            if '/phases/{}/{}'.format(animal_name,date_str) not in hf5:
-                hf5.create_group('/phases/{}'.format(animal_name),date_str)
+        if '/phases/{}/{}'.format(animal_name,date_str) not in hf5:
+            hf5.create_group('/phases/{}'.format(animal_name),date_str)
 
     dat = ephys_data(os.path.dirname(file_list[file_num]))
     dat.firing_rate_params = dict(zip(('step_size','window_size','dt'),
@@ -193,10 +200,22 @@ for file_num in range(len(file_list)):
 
     # Write arrays to data HF5
     with tables.open_file(data_hdf5_path,'r+') as hf5:
+        # If arrays already present then remove them and rewrite
+        if str('/phases/{}/{}/{}'.format(animal_name, date_str, 'stft_array')) in hf5:
+            hf5.remove_node('/phases/{}/{}'.format(animal_name,date_str),'stft_array')
+        if '/phases/{}/{}/{}'.format(animal_name, date_str, 'amplitude_array') in hf5:
+            hf5.remove_node('/phases/{}/{}'.format(animal_name,date_str),'amplitude_array')
+        if '/phases/{}/{}/{}'.format(animal_name, date_str, 'phase_array') in hf5:
+            hf5.remove_node('/phases/{}/{}'.format(animal_name,date_str),'phase_array')
+        if '/phases/{}/{}/{}'.format(animal_name, date_str, 'parsed_lfp_channels') in hf5:
+            hf5.remove_node('/phases/{}/{}'.format(animal_name,date_str),'parsed_lfp_channels')
+
         hf5.create_array('/phases/{}/{}'.format(animal_name,date_str),'stft_array',stft_array)
         hf5.create_array('/phases/{}/{}'.format(animal_name,date_str),
                 'amplitude_array',amplitude_array)
         hf5.create_array('/phases/{}/{}'.format(animal_name,date_str),'phase_array',phase_array)
+        hf5.create_array('/phases/{}/{}'.format(animal_name,date_str),
+                'parsed_lfp_channels',parsed_lfp_channels)
 
         
     # ____  _       _       
