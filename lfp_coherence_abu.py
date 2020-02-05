@@ -25,8 +25,8 @@ from ephys_data import ephys_data
 
 # Extract data
 dat = \
-    ephys_data('/media/bigdata/Abuzar_Data/AM11/AM11_extracted/AM11_4Tastes_191031_083633')
-    #ephys_data('/media/bigdata/Abuzar_Data/AM12/AM12_extracted/AM12_4Tastes_191106_085215')
+    ephys_data('/media/bigdata/Abuzar_Data/AM12/AM12_extracted/AM12_4Tastes_191106_085215')
+    #ephys_data('/media/bigdata/Abuzar_Data/AM11/AM11_extracted/AM11_4Tastes_191031_083633')
     #ephys_data('/media/bigdata/Abuzar_Data/AM17/AM17_extracted/AM17_4Tastes_191126_084934')
     #ephys_data('/media/bigdata/brads_data/Brad_LFP_ITI_analyses/BS26/BS26_180204')
 
@@ -57,7 +57,8 @@ middle_channels_bool = np.array([True if channel in middle_channels else False \
 mean_val = np.mean(dat.all_lfp_array, axis = None)
 sd_val = np.std(dat.all_lfp_array, axis = None)
 dat.firing_overview(dat.all_lfp_array, min_val = mean_val - 2*sd_val,
-                    max_val = mean_val + 2*sd_val, cmap = 'viridis');plt.show()
+                    max_val = mean_val + 2*sd_val, cmap = 'viridis',
+                    subplot_labels = region_label);plt.show()
 
 # Mean LFP spectrogram 
 region_a = dat.lfp_array[:,middle_channels_bool,:,:] 
@@ -120,6 +121,7 @@ region_a_stft = Parallel(n_jobs = mp.cpu_count()-2)\
                             Fs,signal_window,window_overlap)\
         for this_iter in tqdm(region_a_iters))
 
+# (taste, channel, trial, frequencies, time)
 region_a_stft_array =\
         np.empty(tuple((*region_a.shape[:3],*test_stft.shape)),
                 dtype=np.dtype(region_a_stft[0][0,0]))
@@ -128,6 +130,10 @@ for iter_num, this_iter in tqdm(enumerate(region_a_iters)):
 
 # Delete varialbes to free up memory
 del region_a_stft
+
+# Plot mean spectrogram for all channels to make sure nothing is off
+dat.firing_overview(np.mean(np.abs(region_a_stft_array),axis=(0,2)))
+plt.show()
 
 # Region B
 
@@ -155,6 +161,10 @@ for iter_num, this_iter in tqdm(enumerate(region_b_iters)):
 # Remove original list
 del region_b_stft
 gc.collect()
+
+# Plot mean spectrogram for all channels to make sure nothing is off
+dat.firing_overview(np.mean(np.abs(region_b_stft_array),axis=(0,2)))
+plt.show()
 
 # Pick channel with phase most consistently closest to mean
 region_a_phases = np.angle(region_a_stft_array)
@@ -245,14 +255,14 @@ normalized_region_b_spec = normalize_spectrogram(
 
 # Calculate phase differences across every combination of channels
 # in each region and average them all together
-summed_differences = np.zeros(
-        tuple((region_a_phases.shape[0],*region_a_phases.shape[2:])),
-        dtype = 'complex64')
-for channel_a in trange(region_a_phases.shape[1]):
-    for channel_b in range(region_b_phases.shape[1]):
-        a_dat = region_a_phases[:,channel_a]
-        b_dat = region_b_phases[:,channel_b]
-        summed_differences += np.exp(-1.j*a_dat) - np.exp(-1.j*b_dat)
+#summed_differences = np.zeros(
+#        tuple((region_a_phases.shape[0],*region_a_phases.shape[2:])),
+#        dtype = 'complex64')
+#for channel_a in trange(region_a_phases.shape[1]):
+#    for channel_b in range(region_b_phases.shape[1]):
+#        a_dat = region_a_phases[:,channel_a]
+#        b_dat = region_b_phases[:,channel_b]
+#        summed_differences += np.exp(-1.j*a_dat) - np.exp(-1.j*b_dat)
 
 # Plot
 plt.subplot(411)
@@ -264,15 +274,21 @@ plt.pcolormesh(valid_t,valid_f,normalized_region_b_spec,
 plt.subplot(413)
 plt.pcolormesh(valid_t,valid_f,np.abs(mean_phase_diff),
         cmap='jet')
-plt.subplot(414)
-plt.pcolormesh(valid_t,valid_f,np.abs(np.mean(summed_differences,axis=(0,1))),
-        cmap='jet')
+#plt.subplot(414)
+#plt.pcolormesh(valid_t,valid_f,np.abs(np.mean(summed_differences,axis=(0,1))),
+#        cmap='jet')
 plt.show()
 
 # Per taste coherence
 taste_coherence = np.abs(np.mean(summed_differences,axis=1))
 dat.firing_overview(taste_coherence,time_step=1);plt.show()
 
+# ____                  _                     
+#| __ )  __ _ _ __   __| |_ __   __ _ ___ ___ 
+#|  _ \ / _` | '_ \ / _` | '_ \ / _` / __/ __|
+#| |_) | (_| | | | | (_| | |_) | (_| \__ \__ \
+#|____/ \__,_|_| |_|\__,_| .__/ \__,_|___/___/
+#                        |_|                  
 
 # ____  _                          _               _    _             
 #|  _ \| |__   __ _ ___  ___      | |    ___   ___| | _(_)_ __   __ _ 
@@ -312,3 +328,5 @@ dat.firing_overview(corrected_zscore_phase_hists,cmap='jet');plt.show()
 plt.imshow(corrected_zscore_phase_hists[0],
         cmap='magma',interpolation='gaussian',
         aspect = 'auto');plt.show()
+
+[x for x in data_hf5.root._f_walknodes() if 'stft_array' in x.__str__()]

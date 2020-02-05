@@ -43,7 +43,7 @@ def calc_stft(trial, max_freq,time_range_tuple,
                 noverlap=signal_window-(signal_window-window_overlap)) 
     this_stft =  this_stft[np.where(f<max_freq)[0]]
     this_stft = this_stft[:,np.where((t>=time_range_tuple[0])*(t<time_range_tuple[1]))[0]]
-    return this_stft
+    return f[f<max_freq],t[np.where((t>=time_range_tuple[0])*(t<time_range_tuple[1]))],this_stft
                         
 # Calculate absolute and phase
 def parallelize(func, iterator):
@@ -58,6 +58,11 @@ def convert_to_array(iterator, iter_inds):
     for iter_num, this_iter in tqdm(enumerate(iter_inds)):
         temp_array[this_iter] = iterator[iter_num]
     return temp_array
+
+def remove_node(path_to_node, hf5):
+    if path_to_node in hf5:
+        hf5.remove_node(os.path.dirname(path_to_node),os.path.basename(path_to_node))
+
 
 # Define middle channels in board
 middle_channels = np.arange(8,24)
@@ -82,8 +87,8 @@ if not os.path.exists(data_hdf5_path):
     hf5.close()
 
 with tables.open_file(data_hdf5_path,'r+') as hf5:
-    if '/phases' not in hf5:
-        hf5.create_group('/','phases')
+    if '/stft' not in hf5:
+        hf5.create_group('/','stft')
         hf5.flush()
 
 
@@ -151,10 +156,11 @@ for file_num in range(len(file_list)):
     date_str = date_str_list[file_num]
 
     with tables.open_file(data_hdf5_path,'r+') as hf5:
-        if '/phases/{}'.format(animal_name) not in hf5:
-            hf5.create_group('/phases',animal_name)
-        if '/phases/{}/{}'.format(animal_name,date_str) not in hf5:
-            hf5.create_group('/phases/{}'.format(animal_name),date_str)
+        if '/stft/{}'.format(animal_name) not in hf5:
+            hf5.create_group('/stft',animal_name)
+        if '/stft/{}/{}'.format(animal_name,date_str) not in hf5:
+            hf5.create_group('/stft/{}'.format(animal_name),date_str)
+        hf5.flush()
 
     dat = ephys_data(os.path.dirname(file_list[file_num]))
     dat.firing_rate_params = dict(zip(('step_size','window_size','dt'),
@@ -190,32 +196,53 @@ for file_num in range(len(file_list)):
                                 Fs,signal_window,window_overlap)\
             for this_iter in tqdm(stft_iters))
 
-    amplitude_list = parallelize(np.abs, stft_list)
-    phase_list = parallelize(np.angle, stft_list)
+    freq_vec = stft_list[0][0]
+    time_vec = stft_list[0][1]
+    fin_stft_list = [x[-1] for x in stft_list]
+    del stft_list
+    amplitude_list = parallelize(np.abs, fin_stft_list)
+    phase_list = parallelize(np.angle, fin_stft_list)
 
     # (taste, channel, trial, frequencies, time)
-    stft_array = convert_to_array(stft_list, stft_iters)
+    stft_array = convert_to_array(fin_stft_list, stft_iters)
     amplitude_array = convert_to_array(amplitude_list, stft_iters)
     phase_array = convert_to_array(phase_list, stft_iters)
 
     # Write arrays to data HF5
     with tables.open_file(data_hdf5_path,'r+') as hf5:
-        # If arrays already present then remove them and rewrite
-        if str('/phases/{}/{}/{}'.format(animal_name, date_str, 'stft_array')) in hf5:
-            hf5.remove_node('/phases/{}/{}'.format(animal_name,date_str),'stft_array')
-        if '/phases/{}/{}/{}'.format(animal_name, date_str, 'amplitude_array') in hf5:
-            hf5.remove_node('/phases/{}/{}'.format(animal_name,date_str),'amplitude_array')
-        if '/phases/{}/{}/{}'.format(animal_name, date_str, 'phase_array') in hf5:
-            hf5.remove_node('/phases/{}/{}'.format(animal_name,date_str),'phase_array')
-        if '/phases/{}/{}/{}'.format(animal_name, date_str, 'parsed_lfp_channels') in hf5:
-            hf5.remove_node('/phases/{}/{}'.format(animal_name,date_str),'parsed_lfp_channels')
+        # Write STFT axis values (frequencies and time) under STFT node
+        # This is to signify that all STFT arrays have the same size
 
-        hf5.create_array('/phases/{}/{}'.format(animal_name,date_str),'stft_array',stft_array)
-        hf5.create_array('/phases/{}/{}'.format(animal_name,date_str),
+        # If arrays already present then remove them and rewrite
+        remove_node('/stft/freq_vec',hf5) 
+        remove_node('/stft/time_vec',hf5) 
+        remove_node('/stft/{}/{}/{}'.format(animal_name, date_str, 'stft_array'),hf5) 
+        remove_node('/stft/{}/{}/{}'.format(animal_name, date_str, 'amplitude_array'),hf5) 
+        remove_node('/stft/{}/{}/{}'.format(animal_name, date_str, 'phase_array'),hf5) 
+        remove_node('/stft/{}/{}/{}'.format(animal_name, date_str, 'parsed_lfp_channels'),hf5) 
+
+        #if '/stft/freq_vec' in hf5:
+        #    hf5.remove_node('/stft','freq_vec')
+        #if '/stft/time_vec' in hf5:
+        #    hf5.remove_node('/stft','time_vec')
+        #if '/stft/{}/{}/{}'.format(animal_name, date_str, 'stft_array') in hf5:
+        #    hf5.remove_node('/stft/{}/{}'.format(animal_name,date_str),'stft_array')
+        #if '/stft/{}/{}/{}'.format(animal_name, date_str, 'amplitude_array') in hf5:
+        #    hf5.remove_node('/stft/{}/{}'.format(animal_name,date_str),'amplitude_array')
+        #if '/stft/{}/{}/{}'.format(animal_name, date_str, 'phase_array') in hf5:
+        #    hf5.remove_node('/stft/{}/{}'.format(animal_name,date_str),'phase_array')
+        #if '/stft/{}/{}/{}'.format(animal_name, date_str, 'parsed_lfp_channels') in hf5:
+        #    hf5.remove_node('/stft/{}/{}'.format(animal_name,date_str),'parsed_lfp_channels')
+
+        hf5.create_array('/stft','freq_vec',freq_vec)
+        hf5.create_array('/stft','time_vec',time_vec)
+        hf5.create_array('/stft/{}/{}'.format(animal_name,date_str),'stft_array',stft_array)
+        hf5.create_array('/stft/{}/{}'.format(animal_name,date_str),
                 'amplitude_array',amplitude_array)
-        hf5.create_array('/phases/{}/{}'.format(animal_name,date_str),'phase_array',phase_array)
-        hf5.create_array('/phases/{}/{}'.format(animal_name,date_str),
+        hf5.create_array('/stft/{}/{}'.format(animal_name,date_str),'phase_array',phase_array)
+        hf5.create_array('/stft/{}/{}'.format(animal_name,date_str),
                 'parsed_lfp_channels',parsed_lfp_channels)
+        hf5.flush()
 
         
     # ____  _       _       
@@ -262,10 +289,12 @@ for file_num in range(len(file_list)):
     fig.savefig(os.path.join(plot_dir,'spectrogram_overview.png'))
 
     # Plot mean phase for all channels to make sure nothing is off
-    dat.firing_overview(np.mean(phase_array,axis=(0,2)), 
-            subplot_labels = middle_channels_bool)
+    dat.firing_overview(np.angle(np.mean(phase_array*1.j,axis=(0,2))), 
+            subplot_labels = middle_channels_bool, min_val = -np.pi, max_val = np.pi)
     fig = plt.gcf()
     for ax in fig.get_axes():
         ax.axis('off')
     fig.set_size_inches(10,8)
     fig.savefig(os.path.join(plot_dir,'phase_overview.png'))
+
+    plt.close('all')
