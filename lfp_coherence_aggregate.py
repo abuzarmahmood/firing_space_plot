@@ -14,8 +14,6 @@ from itertools import product
 from joblib import Parallel, delayed
 import multiprocessing as mp
 import shutil
-os.chdir('/media/bigdata/firing_space_plot/ephys_data')
-from ephys_data import ephys_data
 
 # ___       _ _   _       _ _          _   _             
 #|_ _|_ __ (_) |_(_) __ _| (_)______ _| |_(_) ___  _ __  
@@ -148,6 +146,9 @@ for this_node_num in tqdm(range(len(phase_node_list))):
     min_err_spectrograms = [np.mean(dat, axis = (0,1)) for dat in min_err_chan_amp]
     norm_spectrograms = [normalize_spectrogram(dat,time_vec,2) for dat in min_err_spectrograms]
 
+    this_plot_dir = os.path.join(
+                data_folder,*node_path_list[this_node_num].split('/')[2:])
+
     fig = plt.figure()
     ax0 = plt.subplot(3,2,1)
     ax1 = plt.subplot(3,2,2)
@@ -165,10 +166,7 @@ for this_node_num in tqdm(range(len(phase_node_list))):
     ax5.pcolormesh(time_vec, freq_vec, mean_coherence, cmap = 'jet',vmin=0,vmax=1)
     ax5.set_title('Phase coherence'.format(min_err_channel_nums[0]))
     fig.set_size_inches(8,10)
-    fig.savefig(
-            os.path.join(
-                data_folder,*node_path_list[this_node_num].split('/')[2:], 
-                'mean_phase_coherence'))
+    fig.savefig(os.path.join(this_plot_dir),'mean_phase_coherence')
      
     # Plot 2
     # a) Phase coherence by taste
@@ -177,10 +175,7 @@ for this_node_num in tqdm(range(len(phase_node_list))):
         plt.sca(ax[this_ax])
         plt.pcolormesh(time_vec, freq_vec, mean_taste_coherence[this_ax], cmap = 'jet')
     fig.set_size_inches(8,10)
-    fig.savefig(
-            os.path.join(
-                data_folder,*node_path_list[this_node_num].split('/')[2:], 
-                'phase_coherence_taste'))
+    fig.savefig(os.path.join(this_plot_dir),'phase_coherence_taste'))
 
     # Plot 2
     # b) Phase consistency by taste 
@@ -189,19 +184,62 @@ for this_node_num in tqdm(range(len(phase_node_list))):
         plt.sca(ax[this_ax])
         plt.pcolormesh(time_vec, freq_vec, taste_phase_consistency[0][this_ax], cmap = 'jet')
     fig.set_size_inches(8,10)
-    fig.savefig(
-            os.path.join(
-                data_folder,*node_path_list[this_node_num].split('/')[2:], 
-                'phase_consistency_RG0'))
+    fig.savefig(os.path.join(this_plot_dir),'phase_consistency_RG0')
 
     fig, ax = plt.subplots(4,1)
     for this_ax in range(len(ax)):
         plt.sca(ax[this_ax])
         plt.pcolormesh(time_vec, freq_vec, taste_phase_consistency[1][this_ax], cmap = 'jet')
     fig.set_size_inches(8,10)
-    fig.savefig(
-            os.path.join(
-                data_folder,*node_path_list[this_node_num].split('/')[2:], 
-                'phase_consistency_RG1'))
+    fig.savefig(os.path.join(this_plot_dir),'phase_consistency_RG1')
 
     plt.close('all')
+
+#    _                                    _       
+#   / \   __ _  __ _ _ __ ___  __ _  __ _| |_ ___ 
+#  / _ \ / _` |/ _` | '__/ _ \/ _` |/ _` | __/ _ \
+# / ___ \ (_| | (_| | | |  __/ (_| | (_| | ||  __/
+#/_/   \_\__, |\__, |_|  \___|\__, |\__,_|\__\___|
+#        |___/ |___/          |___/               
+
+# Run through all directories and pull out final channel phases
+hf5 = tables.open_file(data_hdf5_path,'r')
+final_phases = [hf5.get_node(os.path.join(this_path,'region_phase_channels')) \
+        for this_path in node_path_list] 
+phase_diffs = [np.exp(-1.j*x[0]) - np.exp(-1.j*x[1]) for x in tqdm(final_phases)]
+coherence_array = np.array([np.abs(np.mean(x,axis=(0,1))) for x in phase_diffs])
+mean_aggregate_coherence = np.mean(coherence_array,axis=0)
+
+# Show mean and std of coherence for bands
+# Remove first freq band from array
+fin_coherence_array = coherence_array[:,1:].swapaxes(0,1)
+coherence_list = np.split(fin_coherence_array,6,axis=0)
+freq_list = np.split(freq_vec[1:],6)
+coherence_means = [np.mean(x,axis=(0,1)) for x in coherence_list]
+coherence_std = [np.std(x,axis=(0,1)) for x in coherence_list]
+
+##################################################
+# Save outputs are plots
+##################################################
+agg_plot_dir = os.path.join(data_folder,'aggregate_analysis')
+if not os.path.exists(agg_plot_dir):
+    os.makedirs(agg_plot_dir)
+
+fig,ax = plt.subplots()
+ax.pcolormesh(time_vec, freq_vec, mean_aggregate_coherence, 
+        cmap = 'jet',vmin = 0, vmax=1)
+fig.set_size_inches(8,10)
+fig.savefig(os.path.join(agg_plot_dir,'mean_phase_coherence'))
+
+
+fig, ax = plt.subplots(len(coherence_means),sharey=True,sharex=True)
+for this_ax, this_mean, this_std, this_freq in \
+        zip(ax, coherence_means, coherence_std, freq_list):
+    this_ax.fill_between(time_vec, this_mean - 2*this_std, this_mean+ 2*this_std)
+    this_ax.plot(time_vec, this_mean, color='r')
+    this_ax.set_title('Frequencies : {}'.format(this_freq))
+fig.set_size_inches(8,10)
+fig.savefig(os.path.join(agg_plot_dir,'bandwise_phase_coherence'))
+
+plt.close('all')
+
