@@ -207,8 +207,53 @@ hf5 = tables.open_file(data_hdf5_path,'r')
 final_phases = [hf5.get_node(os.path.join(this_path,'region_phase_channels')) \
         for this_path in node_path_list] 
 phase_diffs = [np.exp(-1.j*x[0]) - np.exp(-1.j*x[1]) for x in tqdm(final_phases)]
+
 coherence_array = np.array([np.abs(np.mean(x,axis=(0,1))) for x in phase_diffs])
 mean_aggregate_coherence = np.mean(coherence_array,axis=0)
+
+##################################################
+# Calculate trial shuffled coherence
+##################################################
+# Concatenate trials from all tastes to make shuffling easier
+final_phases_long = [np.reshape(phases, tuple((phases.shape[0],-1, *phases.shape[3:]))) \
+        for phases in final_phases] 
+
+#final_phase_vectors_long = [np.exp(x*-1.j) for x in final_phases_long]
+
+# Check reshaping (phase consistency should still be present)
+#phase_consistency_long = [np.abs(np.mean(np.exp(phases*-1.j),axis=1)) \
+#        for phases in final_phases_long]
+#plt.imshow(phase_consistency_long[1][0],interpolation='nearest', 
+#               aspect='auto',origin='lower',cmap='jet',vmin=0,vmax=1);plt.show()
+
+# For each set, resample 1000 trials, find coherence and store
+# Doing it this way might bog down the system (but we'll cross that bridge
+# when we get to it :p)
+from sklearn.utils import resample
+
+def parallelize(func, iterator):
+    return Parallel(n_jobs = mp.cpu_count()-2)\
+            (delayed(func)(this_iter) for this_iter in tqdm(iterator))
+
+def resample_trials(array):
+    temp_array = np.array([phases[resample(np.arange(phases.shape[0]), \
+            n_samples = 1000, random_state = 0)] for phases in array])
+    return temp_array
+
+def calc_phase_diff(array):
+    return np.squeeze(np.diff(np.exp(array*-1.j),axis=0))
+
+# Convert at this stage so converting after resampling doesn't take too long
+phase_vectors_resampled = parallelize(resample_trials, final_phases_long) 
+#plt.imshow(phase_vectors_resampled[1][1][:,1],interpolation='nearest', 
+#           aspect='auto',origin='lower',cmap='jet');plt.show()
+
+shuffled_phase_diff = [calc_phase_diff(x) for x in tqdm(phase_vectors_resampled)]
+
+mean_shuffle_coherence = [np.abs(np.mean(x,axis=0)) for x in shuffled_phase_diff]
+mean_aggregate_shuffle_coherence = np.mean(np.array(mean_shuffle_coherence),axis=0)
+#plt.imshow(np.mean(np.array(mean_shuffle_coherence),axis=0),interpolation='nearest', 
+#           aspect='auto',origin='lower',cmap='jet',vmin=0,vmax=1);plt.show()
 
 # Show mean and std of coherence for bands
 # Remove first freq band from array
@@ -225,12 +270,19 @@ agg_plot_dir = os.path.join(data_folder,'aggregate_analysis')
 if not os.path.exists(agg_plot_dir):
     os.makedirs(agg_plot_dir)
 
-fig,ax = plt.subplots()
-ax.pcolormesh(time_vec, freq_vec, mean_aggregate_coherence, 
+fig,ax = plt.subplots(3,1)
+ax[0].pcolormesh(time_vec, freq_vec, mean_aggregate_coherence, 
         cmap = 'jet',vmin = 0, vmax=1)
+ax[0].set_title('Original coherence')
+ax[1].pcolormesh(time_vec, freq_vec, mean_aggregate_shuffle_coherence, 
+        cmap = 'jet',vmin = 0, vmax=1)
+ax[1].set_title('Trial-shuffled coherence')
+ax[2].pcolormesh(time_vec, freq_vec, 
+        mean_aggregate_coherence - mean_aggregate_shuffle_coherence, 
+        cmap = 'jet',vmin = 0, vmax=1)
+ax[2].set_title('Shuffle-subtracted coherence')
 fig.set_size_inches(8,10)
 fig.savefig(os.path.join(agg_plot_dir,'mean_phase_coherence'))
-
 
 fig, ax = plt.subplots(len(coherence_means),sharey=True,sharex=True)
 for this_ax, this_mean, this_std, this_freq in \
