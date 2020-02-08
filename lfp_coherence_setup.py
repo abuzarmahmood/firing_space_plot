@@ -185,7 +185,7 @@ for file_num in range(len(file_list)):
     signal_window = 500 
     window_overlap = 499
     max_freq = 25
-    time_range_tuple = (1,5)
+    time_range_tuple = (0,5)
 
     # Generate list of individual trials to be fed into STFT function
     stft_iters = list(product(*list(map(np.arange,dat.lfp_array.shape[:3]))))

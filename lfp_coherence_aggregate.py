@@ -14,6 +14,8 @@ from itertools import product
 from joblib import Parallel, delayed
 import multiprocessing as mp
 import shutil
+os.chdir('/media/bigdata/firing_space_plot/ephys_data')
+from ephys_data import ephys_data
 
 # ___       _ _   _       _ _          _   _             
 #|_ _|_ __ (_) |_(_) __ _| (_)______ _| |_(_) ___  _ __  
@@ -107,6 +109,8 @@ for this_node_num in tqdm(range(len(phase_node_list))):
 
     # Write out final phase channels and channel numbers 
     with tables.open_file(data_hdf5_path,'r+') as hf5:
+        # region_phase_channels are the phases of the chosen channels
+        # relative_region_channel_nums are the indices of the channels used
         remove_node(os.path.join(node_path_list[this_node_num],'region_phase_channels'),hf5)
         remove_node(os.path.join(node_path_list[this_node_num],'relative_region_channel_nums'),hf5)
         #remove_node(os.path.join(node_path_list[this_node_num],'phase_difference_array'),hf5)
@@ -202,7 +206,9 @@ for this_node_num in tqdm(range(len(phase_node_list))):
 #/_/   \_\__, |\__, |_|  \___|\__, |\__,_|\__\___|
 #        |___/ |___/          |___/               
 
-# Run through all directories and pull out final channel phases
+##################################################
+# Calculate mean coherence for all sessions
+##################################################
 hf5 = tables.open_file(data_hdf5_path,'r')
 final_phases = [hf5.get_node(os.path.join(this_path,'region_phase_channels')) \
         for this_path in node_path_list] 
@@ -210,6 +216,14 @@ phase_diffs = [np.exp(-1.j*x[0]) - np.exp(-1.j*x[1]) for x in tqdm(final_phases)
 
 coherence_array = np.array([np.abs(np.mean(x,axis=(0,1))) for x in phase_diffs])
 mean_aggregate_coherence = np.mean(coherence_array,axis=0)
+
+# Calculate mean and std of coherence for bands
+# Remove first freq band from array
+fin_coherence_array = coherence_array[:,1:].swapaxes(0,1)
+coherence_list = np.split(fin_coherence_array,6,axis=0)
+freq_list = np.split(freq_vec[1:],6)
+coherence_means = [np.mean(x,axis=(0,1)) for x in coherence_list]
+coherence_std = [np.std(x,axis=(0,1)) for x in coherence_list]
 
 ##################################################
 # Calculate trial shuffled coherence
@@ -255,13 +269,6 @@ mean_aggregate_shuffle_coherence = np.mean(np.array(mean_shuffle_coherence),axis
 #plt.imshow(np.mean(np.array(mean_shuffle_coherence),axis=0),interpolation='nearest', 
 #           aspect='auto',origin='lower',cmap='jet',vmin=0,vmax=1);plt.show()
 
-# Show mean and std of coherence for bands
-# Remove first freq band from array
-fin_coherence_array = coherence_array[:,1:].swapaxes(0,1)
-coherence_list = np.split(fin_coherence_array,6,axis=0)
-freq_list = np.split(freq_vec[1:],6)
-coherence_means = [np.mean(x,axis=(0,1)) for x in coherence_list]
-coherence_std = [np.std(x,axis=(0,1)) for x in coherence_list]
 
 ##################################################
 # Save outputs are plots
