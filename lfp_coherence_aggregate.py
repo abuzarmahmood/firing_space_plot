@@ -14,6 +14,7 @@ from itertools import product
 from joblib import Parallel, delayed
 import multiprocessing as mp
 import shutil
+from sklearn.utils import resample
 os.chdir('/media/bigdata/firing_space_plot/ephys_data')
 from ephys_data import ephys_data
 
@@ -170,7 +171,7 @@ for this_node_num in tqdm(range(len(phase_node_list))):
     ax5.pcolormesh(time_vec, freq_vec, mean_coherence, cmap = 'jet',vmin=0,vmax=1)
     ax5.set_title('Phase coherence'.format(min_err_channel_nums[0]))
     fig.set_size_inches(8,10)
-    fig.savefig(os.path.join(this_plot_dir),'mean_phase_coherence')
+    fig.savefig(os.path.join(this_plot_dir,'mean_phase_coherence'))
      
     # Plot 2
     # a) Phase coherence by taste
@@ -179,7 +180,7 @@ for this_node_num in tqdm(range(len(phase_node_list))):
         plt.sca(ax[this_ax])
         plt.pcolormesh(time_vec, freq_vec, mean_taste_coherence[this_ax], cmap = 'jet')
     fig.set_size_inches(8,10)
-    fig.savefig(os.path.join(this_plot_dir),'phase_coherence_taste'))
+    fig.savefig(os.path.join(this_plot_dir,'phase_coherence_taste'))
 
     # Plot 2
     # b) Phase consistency by taste 
@@ -188,14 +189,14 @@ for this_node_num in tqdm(range(len(phase_node_list))):
         plt.sca(ax[this_ax])
         plt.pcolormesh(time_vec, freq_vec, taste_phase_consistency[0][this_ax], cmap = 'jet')
     fig.set_size_inches(8,10)
-    fig.savefig(os.path.join(this_plot_dir),'phase_consistency_RG0')
+    fig.savefig(os.path.join(this_plot_dir,'phase_consistency_RG0'))
 
     fig, ax = plt.subplots(4,1)
     for this_ax in range(len(ax)):
         plt.sca(ax[this_ax])
         plt.pcolormesh(time_vec, freq_vec, taste_phase_consistency[1][this_ax], cmap = 'jet')
     fig.set_size_inches(8,10)
-    fig.savefig(os.path.join(this_plot_dir),'phase_consistency_RG1')
+    fig.savefig(os.path.join(this_plot_dir,'phase_consistency_RG1'))
 
     plt.close('all')
 
@@ -209,10 +210,14 @@ for this_node_num in tqdm(range(len(phase_node_list))):
 ##################################################
 # Calculate mean coherence for all sessions
 ##################################################
-hf5 = tables.open_file(data_hdf5_path,'r')
-final_phases = [hf5.get_node(os.path.join(this_path,'region_phase_channels')) \
-        for this_path in node_path_list] 
-phase_diffs = [np.exp(-1.j*x[0]) - np.exp(-1.j*x[1]) for x in tqdm(final_phases)]
+with tables.open_file(data_hdf5_path,'r') as hf5:
+    final_phases = [hf5.get_node(os.path.join(this_path,'region_phase_channels')) \
+            for this_path in node_path_list] 
+    phase_diffs = [np.exp(-1.j*x[0]) - np.exp(-1.j*x[1]) for x in tqdm(final_phases)]
+
+    # Concatenate trials from all tastes to make shuffling easier
+    final_phases_long = [np.reshape(phases, tuple((phases.shape[0],-1, *phases.shape[3:]))) \
+            for phases in final_phases] 
 
 coherence_array = np.array([np.abs(np.mean(x,axis=(0,1))) for x in phase_diffs])
 mean_aggregate_coherence = np.mean(coherence_array,axis=0)
@@ -228,9 +233,6 @@ coherence_std = [np.std(x,axis=(0,1)) for x in coherence_list]
 ##################################################
 # Calculate trial shuffled coherence
 ##################################################
-# Concatenate trials from all tastes to make shuffling easier
-final_phases_long = [np.reshape(phases, tuple((phases.shape[0],-1, *phases.shape[3:]))) \
-        for phases in final_phases] 
 
 #final_phase_vectors_long = [np.exp(x*-1.j) for x in final_phases_long]
 
@@ -243,7 +245,6 @@ final_phases_long = [np.reshape(phases, tuple((phases.shape[0],-1, *phases.shape
 # For each set, resample 1000 trials, find coherence and store
 # Doing it this way might bog down the system (but we'll cross that bridge
 # when we get to it :p)
-from sklearn.utils import resample
 
 def parallelize(func, iterator):
     return Parallel(n_jobs = mp.cpu_count()-2)\
