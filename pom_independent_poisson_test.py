@@ -23,61 +23,131 @@ plot_image(samples.T);plt.show()
 
 seed = 0
 np.random.seed(seed)
-n_states = 2
+n_states = 4
 
 # Make a pomegranate Independent Exponential distribution object 
 # with emissions = range(n_units + 1) - 1 for each state
 model = HiddenMarkovModel('{}'.format(seed)) 
+lambdas = [np.random.random(dims) for state in range(n_states)] 
 states = [State(
             IndependentComponentsDistribution(
-                [ExponentialDistribution(x) for x in np.random.random(dims)]),\
+                [ExponentialDistribution(x) for x in lambdas[state]]),\
         name = 'State{}'.format(state+1)) for state in range(n_states)]
 model.add_states(states)
 # Add transitions from model.start to each state (equal probabilties)
 for state in states:
     model.add_transition(model.start, state, float(1.0/len(states)))
 
-# Add transitions between the states - 
-# 0.95-0.999 is the probability of not transitioning in every state
-for i in range(n_states):
-    not_transitioning_prob = (0.999-0.95)*np.random.random() + 0.95
-    for j in range(n_states):
-        if i==j:
-            model.add_transition(states[i], states[j], not_transitioning_prob)
-        else:
-            model.add_transition(states[i], states[j], 
-                    float((1.0 - not_transitioning_prob)/(n_states - 1)))
+# Generate initial transition matrix
+initial_trans_mat = np.eye(n_states)
+initial_trans_mat += np.random.random(initial_trans_mat.shape)*0.05
+initial_trans_mat /= np.sum(initial_trans_mat,axis=1)
+
+for (i,j),prob in np.ndenumerate(initial_trans_mat):
+    model.add_transition(states[i], states[j],prob)
+
+## Add transitions between the states - 
+## 0.95-0.999 is the probability of not transitioning in every state
+#for i in range(n_states):
+#    not_transitioning_prob = (0.999-0.95)*np.random.random() + 0.95
+#    for j in range(n_states):
+#        if i==j:
+#            train_model.add_transition(states[i], states[j], not_transitioning_prob)
+#        else:
+#            train_model.add_transition(states[i], states[j], 
+#                    float((1.0 - not_transitioning_prob)/(n_states - 1)))
 
 # Bake the model
 model.bake()
 
 # Generate samples to plot
-model_samples = np.asarray(model.sample(1000))
-state_probs = model.predict_proba(model_samples)
-plot_image(zscore(model_samples.T,axis=-1))
+samples = np.asarray(model.sample(1000))
+state_probs = model.predict_proba(samples)
+plot_image(zscore(samples.T,axis=-1))
 plt.plot(state_probs * dims);plt.show()
+
+# Train a new train_model on the collected data
+# Make a pomegranate Independent Exponential distribution object 
+# with emissions = range(n_units + 1) - 1 for each state
+train_model = HiddenMarkovModel('{}'.format(seed)) 
+states = [State(
+            IndependentComponentsDistribution(
+                [ExponentialDistribution(x) for x in np.random.random(dims)]),\
+        name = 'State{}'.format(state+1)) for state in range(n_states)]
+train_model.add_states(states)
+# Add transitions from train_model.start to each state (equal probabilties)
+for state in states:
+    train_model.add_transition(train_model.start, state, float(1.0/len(states)))
+
+# Generate initial transition matrix
+initial_trans_mat = np.eye(n_states)
+initial_trans_mat += np.random.random(initial_trans_mat.shape)*0.05
+initial_trans_mat /= np.sum(initial_trans_mat,axis=1)
+
+for (i,j),prob in np.ndenumerate(initial_trans_mat):
+    train_model.add_transition(states[i], states[j],prob)
+
+## Add transitions between the states - 
+## 0.95-0.999 is the probability of not transitioning in every state
+#for i in range(n_states):
+#    not_transitioning_prob = (0.999-0.95)*np.random.random() + 0.95
+#    for j in range(n_states):
+#        if i==j:
+#            train_model.add_transition(states[i], states[j], not_transitioning_prob)
+#        else:
+#            train_model.add_transition(states[i], states[j], 
+#                    float((1.0 - not_transitioning_prob)/(n_states - 1)))
+
+# Bake the train_model
+train_model.bake()
+
 
 # Train the model on the samples collected
 sample_len = 500
 num_samples = 20
 threshold = 1e-9
 train_dat = np.asarray([np.asarray(model.sample(sample_len)) for x in range(num_samples)])
-model.fit(train_dat, algorithm = 'baum-welch', stop_threshold = threshold, verbose = True)
-state_probs = np.array([model.predict_proba(x) for x in train_dat])
-transition_mat, emission_mat= model.forward_backward(train_dat)
+train_model.fit(train_dat, algorithm = 'baum-welch', stop_threshold = threshold, verbose = True)
+state_probs = np.array([train_model.predict_proba(x) for x in train_dat])
+transition_mat, emission_mat= train_model.forward_backward(train_dat)
 
+state_emissions = np.zeros((n_states,train_dat.shape[-1]))
+for (i,j),temp in np.ndenumerate(state_emissions):
+    state_emissions[i,j] = train_model.states[i].distribution.parameters[0][j].parameters[0]
+
+#for i in range(n_states):
+#    for j in range(train_dat.shape[-1]):
+#        state_emissions[i,j] = train_model.states[i].distribution.parameters[0][j].parameters[0]
+
+# Align state emissions
+from scipy.spatial import distance_matrix as distmat
+dists = distmat(np.array(lambdas), state_emissions)
+emissions_order = np.argmin(dists,axis=1)
+
+posterior_proba = np.zeros((train_dat.shape[0], train_dat.shape[1], n_states))
+for i in range(train_dat.shape[0]):
+    c, d = model.forward_backward(train_dat[i, :, :])
+    posterior_proba[i, :, :] = np.exp(d)
+    
+viterbi_path = np.array([train_model.predict(x,'viterbi') for x in train_dat])
+    
+# Compare estimated emissions with ground truth
 plt.subplot(121)
-plot_image(emission_mat)
+plot_image(np.array(lambdas).T)
 plt.subplot(122)
-plot_image(transition_mat)
+plot_image(state_emissions[emissions_order].T)
 plt.show()
 
-trial_num = 0
-plt.subplot(121)
+trial_num = 4
+fig,ax = plt.subplots(2,1,sharex=True)
+plt.sca(ax[0])
 plot_image(zscore(train_dat[trial_num].T,axis=-1))
 #plot_image(train_dat[trial_num].T)
 plt.plot(state_probs[trial_num]*dims)
-plt.subplot(122)
-plot_image(emission_mat)
-plt.colorbar()
+plt.sca(ax[1])
+plot_image(zscore(train_dat[trial_num].T,axis=-1))
+plt.plot(dims*viterbi_path[trial_num]/np.max(viterbi_path,axis=None))
+#plt.plot(posterior_proba[trial_num])
+#plot_image(emission_mat)
+#plt.colorbar()
 plt.show()
