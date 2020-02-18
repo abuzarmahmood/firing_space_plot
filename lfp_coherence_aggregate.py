@@ -168,7 +168,6 @@ for this_node_num in tqdm(range(len(phase_node_list))):
             for freq in time_bin] \
             for time_bin in phase_diff_reshape.T]).swapaxes(0,1) 
 
-
     # Average Coherence across trials
     mean_taste_coherence = np.abs(np.mean(phase_diff,axis=1))
     mean_coherence = np.mean(mean_taste_coherence,axis=0)
@@ -219,6 +218,13 @@ for this_node_num in tqdm(range(len(phase_node_list))):
     this_plot_dir = os.path.join(
                 data_folder,*node_path_list[this_node_num].split('/')[2:])
 
+    # Plot 1
+    # a) Normalized BLA Spectrogram
+    # b) Normalized GC Spectrogram
+    # c) Normalized BLA Phase consistency
+    # d) Normalized GC Phase consistency
+    # e) Raw BLA-GC Phase Coherence
+    # f) Normalized BLA-GC Phase Coherence
     fig = plt.figure()
     ax0 = plt.subplot(4,2,1)
     ax1 = plt.subplot(4,2,2)
@@ -253,16 +259,7 @@ for this_node_num in tqdm(range(len(phase_node_list))):
     fig.set_size_inches(8,10)
     fig.savefig(os.path.join(this_plot_dir,'phase_coherence_taste'))
 
-
-    # Histograms of phase difference by bands
-    fig, ax = plt.subplots()
-    plt.sca(ax)
-    firing_overview(phase_diff_hists.swapaxes(1,2),
-            time_vec,phase_bins[1:],subplot_labels = freq_vec)
-    fig.set_size_inches(10,8)
-    fig.savefig(os.path.join(this_plot_dir,'phase_diff_histograms'))
-
-    # Plot 2
+    # Plot 3
     # a) Normalized Phase coherence by taste
     fig, ax = plt.subplots(4,1)
     for this_ax in range(len(ax)):
@@ -273,7 +270,15 @@ for this_node_num in tqdm(range(len(phase_node_list))):
     fig.set_size_inches(8,10)
     fig.savefig(os.path.join(this_plot_dir,'normalized_phase_coherence_taste'))
 
-    # Plot 2
+    # Plot 4
+    # Histograms of phase difference by bands
+    firing_overview(phase_diff_hists.swapaxes(1,2),
+            time_vec,phase_bins[1:],subplot_labels = freq_vec)
+    fig = plt.gcf()
+    fig.set_size_inches(10,8)
+    fig.savefig(os.path.join(this_plot_dir,'phase_diff_histograms'))
+
+    # Plot 5
     # b) Phase consistency by taste 
     fig, ax = plt.subplots(4,1)
     for this_ax in range(len(ax)):
@@ -282,6 +287,8 @@ for this_node_num in tqdm(range(len(phase_node_list))):
     fig.set_size_inches(8,10)
     fig.savefig(os.path.join(this_plot_dir,'phase_consistency_RG0'))
 
+    # Plot 6
+    # b) Phase consistency by taste 
     fig, ax = plt.subplots(4,1)
     for this_ax in range(len(ax)):
         plt.sca(ax[this_ax])
@@ -301,7 +308,7 @@ for this_node_num in tqdm(range(len(phase_node_list))):
 ##################################################
 # Calculate mean coherence for all sessions
 ##################################################
-Print('Calculating aggreate coherence measures')
+print('Calculating aggreate coherence measures')
 
 with tables.open_file(data_hdf5_path,'r') as hf5:
     final_phases = [hf5.get_node(os.path.join(this_path,'region_phase_channels')) \
@@ -349,7 +356,7 @@ def resample_trials(array):
     return temp_array
 
 def calc_phase_diff(array):
-    return np.squeeze(np.exp(np.diff(array,axis=0)))
+    return np.squeeze(np.exp(-1.j*np.diff(array,axis=0)))
 
 # Convert at this stage so converting after resampling doesn't take too long
 phase_vectors_resampled = parallelize(resample_trials, final_phases_long) 
@@ -371,13 +378,18 @@ agg_plot_dir = os.path.join(data_folder,'aggregate_analysis')
 if not os.path.exists(agg_plot_dir):
     os.makedirs(agg_plot_dir)
 
+#normalized_mean_coherence = normalize_timeseries(mean_aggregate_coherence,time_vec,2)
+#normalized_shuffle_coherence = normalize_timeseries(mean_aggregate_shuffle_coherence,time_vec,2)
+
 fig,ax = plt.subplots(3,1)
-ax[0].pcolormesh(time_vec, freq_vec, mean_aggregate_coherence, 
-        cmap = 'jet',vmin = 0, vmax=1)
-ax[0].set_title('Original coherence')
-ax[1].pcolormesh(time_vec, freq_vec, mean_aggregate_shuffle_coherence, 
-        cmap = 'jet',vmin = 0, vmax=1)
-ax[1].set_title('Trial-shuffled coherence')
+ax[0].pcolormesh(time_vec, freq_vec, zscore(mean_aggregate_coherence,axis=-1), 
+#ax[0].pcolormesh(time_vec, freq_vec, mean_aggregate_coherence, 
+        cmap = 'viridis')#,vmin = 0, vmax=1)
+ax[0].set_title('Normalized Original coherence')
+ax[1].pcolormesh(time_vec, freq_vec, zscore(mean_aggregate_shuffle_coherence,axis=-1), 
+#ax[1].pcolormesh(time_vec, freq_vec, mean_aggregate_shuffle_coherence, 
+        cmap = 'viridis')#,vmin = 0, vmax=1)
+ax[1].set_title('Normalized Trial-shuffled coherence')
 ax[2].pcolormesh(time_vec, freq_vec, 
         mean_aggregate_coherence - mean_aggregate_shuffle_coherence, 
         cmap = 'jet',vmin = 0, vmax=1)
