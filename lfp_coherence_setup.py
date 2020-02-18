@@ -137,14 +137,18 @@ animal_name_list = [x[0] for x in file_name_parts]
 date_str_list = [x[2] for x in file_name_parts]
 
 # Check output is correct, if not, ask user to define names
-for file_num in range(len(file_list)):
-    node_check = 'a'
-    while node_check not in ['y','n']:
-        question_str = \
-                'Please confirm (y/n): \nNode:\t{}\nDate:\t{}\n:::'\
-                .format(animal_name_list[file_num], date_str_list[file_num])
-        node_check = input(question_str)
-    if node_check == 'n':
+parts_check_str = 'Node\tDate\n\n' + \
+        "\n".join(['{}\t{}'.format(animal,date) \
+        for animal, date in zip(animal_name_list,date_str_list)])
+choice_list = ['{} | {}'.format(animal,date) \
+        for animal, date in zip(animal_name_list,date_str_list)]
+node_check_choices = easygui.multchoicebox(msg = 'Please select all correct answers',
+        choices = choice_list) 
+unselected_choices = \
+        [num  for num,x in enumerate(choice_list) if x not in node_check_choices]
+
+if len(unselected_choices) > 0:
+    for file_num in unselected_choices:
         animal_name_list[file_num], date_str_list[file_num] = \
                 easygui.multenterbox('Please enter names for nodes in HF5'\
                         '\n{}'.format(os.path.basename(file_list[file_num])),
@@ -220,19 +224,6 @@ for file_num in range(len(file_list)):
         remove_node('/stft/{}/{}/{}'.format(animal_name, date_str, 'amplitude_array'),hf5) 
         remove_node('/stft/{}/{}/{}'.format(animal_name, date_str, 'phase_array'),hf5) 
         remove_node('/stft/{}/{}/{}'.format(animal_name, date_str, 'parsed_lfp_channels'),hf5) 
-
-        #if '/stft/freq_vec' in hf5:
-        #    hf5.remove_node('/stft','freq_vec')
-        #if '/stft/time_vec' in hf5:
-        #    hf5.remove_node('/stft','time_vec')
-        #if '/stft/{}/{}/{}'.format(animal_name, date_str, 'stft_array') in hf5:
-        #    hf5.remove_node('/stft/{}/{}'.format(animal_name,date_str),'stft_array')
-        #if '/stft/{}/{}/{}'.format(animal_name, date_str, 'amplitude_array') in hf5:
-        #    hf5.remove_node('/stft/{}/{}'.format(animal_name,date_str),'amplitude_array')
-        #if '/stft/{}/{}/{}'.format(animal_name, date_str, 'phase_array') in hf5:
-        #    hf5.remove_node('/stft/{}/{}'.format(animal_name,date_str),'phase_array')
-        #if '/stft/{}/{}/{}'.format(animal_name, date_str, 'parsed_lfp_channels') in hf5:
-        #    hf5.remove_node('/stft/{}/{}'.format(animal_name,date_str),'parsed_lfp_channels')
 
         hf5.create_array('/stft','freq_vec',freq_vec)
         hf5.create_array('/stft','time_vec',time_vec)
