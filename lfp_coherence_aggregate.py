@@ -41,6 +41,54 @@ def normalize_timeseries(array, time_vec, stim_time):
     #array -= mean_baseline
     return array
 
+def firing_overview(data, t_vec, y_values_vec,
+                    interpolation = 'nearest',
+                    cmap = 'jet',
+                    min_val = None, max_val=None, 
+                    subplot_labels = None):
+    """
+    Takes 3D numpy array as input and rolls over first dimension
+    to generate images over last 2 dimensions
+    E.g. (neuron x trial x time) will generate heatmaps of firing
+        for every neuron
+    """
+    if data.shape[-1] != len(time_vec):
+        raise Exception('Time dimension in data needs to be'\
+            'equal to length of time_vec')
+    num_nrns = data.shape[0]
+
+    if min_val is None:
+        min_val = np.min(data,axis=None)
+    elif max_val is None:
+        max_val = np.max(data,axis=None)
+
+    # Plot firing rates
+    square_len = np.int(np.ceil(np.sqrt(num_nrns)))
+    fig, ax = plt.subplots(square_len,square_len)
+    
+    nd_idx_objs = []
+    for dim in range(ax.ndim):
+        this_shape = np.ones(len(ax.shape))
+        this_shape[dim] = ax.shape[dim]
+        nd_idx_objs.append(
+                np.broadcast_to( 
+                    np.reshape(
+                        np.arange(ax.shape[dim]),
+                        this_shape.astype('int')), ax.shape).flatten())
+    
+    if subplot_labels is None:
+        subplot_labels = np.zeros(num_nrns)
+    if y_values_vec is None:
+        y_values_vec = np.arange(data.shape[1])
+    for nrn in range(num_nrns):
+        plt.sca(ax[nd_idx_objs[0][nrn],nd_idx_objs[1][nrn]])
+        plt.gca().set_title('{}:{}'.format(int(subplot_labels[nrn]),nrn))
+        plt.gca().pcolormesh(t_vec, y_values_vec,
+                data[nrn,:,:],cmap=cmap,
+                vmin = min_val, vmax = max_val)
+    return ax
+
+
 # Define middle channels in board
 middle_channels = np.arange(8,24)
 
@@ -108,7 +156,20 @@ for this_node_num in tqdm(range(len(phase_node_list))):
     # to have trials along a single axis
     ##phase_diff = np.exp(-1.j*min_err_phase[0]) - np.exp(-1.j*min_err_phase[1])
     phase_diff = np.exp(1.j*(min_err_phase[0] - min_err_phase[1]))
-    # Average across trials
+
+    # Plot phase diff as histogram time-series for each band to confirm coherence
+    # Reshape phase_diff array and extract angle
+    phase_diff_reshape = np.angle(
+            np.reshape(phase_diff, 
+            (np.prod(phase_diff.shape[:2]),*phase_diff.shape[2:])))
+    phase_bin_nums = 30
+    phase_bins = np.linspace(-np.pi, np.pi, phase_bin_nums)
+    phase_diff_hists = np.array([[np.histogram(freq,phase_bins)[0] \
+            for freq in time_bin] \
+            for time_bin in phase_diff_reshape.T]).swapaxes(0,1) 
+
+
+    # Average Coherence across trials
     mean_taste_coherence = np.abs(np.mean(phase_diff,axis=1))
     mean_coherence = np.mean(mean_taste_coherence,axis=0)
 
@@ -191,6 +252,15 @@ for this_node_num in tqdm(range(len(phase_node_list))):
                 vmin=0,vmax=1)
     fig.set_size_inches(8,10)
     fig.savefig(os.path.join(this_plot_dir,'phase_coherence_taste'))
+
+
+    # Histograms of phase difference by bands
+    fig, ax = plt.subplots()
+    plt.sca(ax)
+    firing_overview(phase_diff_hists.swapaxes(1,2),
+            time_vec,phase_bins[1:],subplot_labels = freq_vec)
+    fig.set_size_inches(10,8)
+    fig.savefig(os.path.join(this_plot_dir,'phase_diff_histograms'))
 
     # Plot 2
     # a) Normalized Phase coherence by taste
