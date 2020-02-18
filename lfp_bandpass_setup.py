@@ -144,6 +144,11 @@ band_freqs = [(1,4),
                 (7,12),
                 (12,25)]
 
+with tables.open_file(data_hdf5_path,'r+') as hf5:
+    if '/bandpass_lfp/frequency_bands' in hf5:
+        remove_node('/bandpass_lfp/frequency_bands',hf5) 
+    hf5.create_array('/bandpass_lfp', 'frequency_bands', np.array(band_freqs))
+
 # Extract data
 for file_num in tqdm(range(len(file_list))):
     animal_name = animal_name_list[file_num] 
@@ -178,12 +183,8 @@ for file_num in tqdm(range(len(file_list))):
         # This is to signify that all STFT arrays have the same size
 
         # If arrays already present then remove them and rewrite
-        remove_node('/bandpass_lfp/{}/{}/{}'.format(animal_name, date_str, 'frequency_bands'),hf5) 
         remove_node('/bandpass_lfp/{}/{}/{}'.format(animal_name, date_str, 'bandpassed_lfp'),hf5) 
-
         hf5.create_array('/bandpass_lfp/{}/{}'.format(animal_name,date_str),
-                'frequency_bands',np.array(band_freqs))
-        hf5.create_array('/bandpass_lfp/{}/{}'.format(animal_name,date_str),
-                'bandpassed_lfp',np.array(lfp_bandpassed))
+                'bandpassed_lfp_array',np.array(lfp_bandpassed))
         hf5.flush()
 
