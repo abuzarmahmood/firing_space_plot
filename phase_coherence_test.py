@@ -214,10 +214,23 @@ Refer to
 http://math.bu.edu/people/mak/sfn-2013/sfn_tutorial.pdf 
 Slide 29,30
 """
-cross_spectrum = np.mean(y1_stft * np.conj(y2_stft),axis=0)
-y1_power_spectrum = np.real(np.mean(y1_stft * np.conj(y1_stft),axis=0))
-y2_power_spectrum = np.real(np.mean(y2_stft * np.conj(y2_stft),axis=0))
+def calc_coherence(stft_a, stft_b):
+    """
+    inputs : arrays of shape (trials x freq x time)
+    """
+    cross_spec = np.mean(stft_a * np.conj(stft_b),axis=0)
+    a_power_spectrum = np.mean(np.abs(stft_a)**2,axis=0)
+    b_power_spectrum = np.mean(np.abs(stft_b)**2,axis=0)
+    coherence = np.abs(cross_spec)/np.sqrt(a_power_spectrum*b_power_spectrum)
+    return coherence
 
-coherence = np.abs(cross_spectrum) / np.sqrt(y1_power_spectrum * y2_power_spectrum)
+#cross_spectrum = np.mean(y1_stft * np.conj(y2_stft),axis=0)
+#y1_power_spectrum = np.real(np.mean(y1_stft * np.conj(y1_stft),axis=0))
+#y2_power_spectrum = np.real(np.mean(y2_stft * np.conj(y2_stft),axis=0))
+#y1_power_spectrum = np.mean(np.abs(y1_stft)**2,axis=0)
+#y2_power_spectrum = np.mean(np.abs(y2_stft)**2,axis=0)
 
+#coherence = np.abs(cross_spectrum) / np.sqrt(y1_power_spectrum * y2_power_spectrum)
+
+coherence = calc_coherence(y1_stft,y2_stft)
 img_plot(coherence);plt.show()
