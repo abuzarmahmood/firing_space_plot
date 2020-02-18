@@ -21,6 +21,7 @@ import shutil
 from sklearn.utils import resample
 os.chdir('/media/bigdata/firing_space_plot/ephys_data')
 from ephys_data import ephys_data
+from scipy.stats import zscore
 
 # ___       _ _   _       _ _          _   _             
 #|_ _|_ __ (_) |_(_) __ _| (_)______ _| |_(_) ___  _ __  
@@ -112,6 +113,7 @@ with tables.open_file(data_hdf5_path,'r') as hf5:
     # Pull parsed_lfp_channel from each array
     parsed_channel_list  = [hf5.get_node(path,'parsed_lfp_channels')[:] for path in node_path_list]
 
+
 #  ____      _                                  
 # / ___|___ | |__   ___ _ __ ___ _ __   ___ ___ 
 #| |   / _ \| '_ \ / _ \ '__/ _ \ '_ \ / __/ _ \
@@ -124,6 +126,9 @@ with tables.open_file(data_hdf5_path,'r') as hf5:
 
 print('Calculating phase coherences')
 for this_node_num in tqdm(range(len(phase_node_list))):
+    ######################################## 
+    ## Coherence from Phase Difference
+    ######################################## 
     phase_array = phase_array_list[this_node_num].swapaxes(0,1)
     parsed_channels = parsed_channel_list[this_node_num]
     middle_channels_bool = np.array([True if channel in middle_channels else False \
@@ -148,7 +153,8 @@ for this_node_num in tqdm(range(len(phase_node_list))):
     min_err_phase = [this_phase_array[np.argmin(this_error)] \
             for this_phase_array,this_error in zip(phase_array_split,mean_error)]
 
-    # These are the relative numbers for the channels
+    # These are the relative numbers for the selected channels
+    # To be used with indexing
     min_err_channel_nums = [this_channel_vec[np.argmin(this_error)] \
             for this_channel_vec,this_error in zip(relative_channel_num_split,mean_error)] 
 
@@ -172,6 +178,33 @@ for this_node_num in tqdm(range(len(phase_node_list))):
     mean_taste_coherence = np.abs(np.mean(phase_diff,axis=1))
     mean_coherence = np.mean(mean_taste_coherence,axis=0)
 
+    ######################################## 
+    ## Coherence from STFT
+    ######################################## 
+    # As a secondary measure, calculate coherence from STFT
+    # to make sure calculations are correct
+
+    def calc_coherence(stft_a, stft_b, trial_axis = 0):
+        """
+        inputs : arrays of shape (trials x freq x time)
+        """
+        cross_spec = np.mean(stft_a * np.conj(stft_b),axis=trial_axis)
+        a_power_spectrum = np.mean(np.abs(stft_a)**2,axis=trial_axis)
+        b_power_spectrum = np.mean(np.abs(stft_b)**2,axis=trial_axis)
+        coherence = np.abs(cross_spec)/np.sqrt(a_power_spectrum*b_power_spectrum)
+        return coherence
+
+    with tables.open_file(data_hdf5_path,'r') as hf5:
+        stft_array  = hf5.get_node(node_path_list[this_node_num],'stft_array')[:] 
+    # Extract relevant channels and discard rest
+    selected_stft_array = stft_array[:,min_err_channel_nums]
+
+    stft_coherence = calc_coherence(selected_stft_array[:,0],
+                selected_stft_array[:,1], trial_axis = 1)
+
+    ######################################## 
+    ## Write out data 
+    ######################################## 
     # Write out final phase channels and channel numbers 
     with tables.open_file(data_hdf5_path,'r+') as hf5:
         # region_phase_channels are the phases of the chosen channels
@@ -295,6 +328,22 @@ for this_node_num in tqdm(range(len(phase_node_list))):
         plt.pcolormesh(time_vec, freq_vec, taste_phase_consistency[1][this_ax], cmap = 'jet')
     fig.set_size_inches(8,10)
     fig.savefig(os.path.join(this_plot_dir,'phase_consistency_RG1'))
+
+    # Plot 7
+    # a-d) Coherence per taste using STFT
+    # e) Average STFT coherence
+    fig, ax = plt.subplots(5,1)
+    for this_ax in range(len(ax)-1):
+        plt.sca(ax[this_ax])
+        plt.pcolormesh(time_vec, freq_vec, 
+                normalize_timeseries(stft_coherence[this_ax],time_vec,2), cmap = 'jet')
+                #stft_coherence[this_ax], cmap = 'jet')
+    plt.sca(ax[-1])
+    plt.pcolormesh(time_vec, freq_vec, 
+                normalize_timeseries(np.mean(stft_coherence,axis=0),time_vec,2), cmap = 'jet')
+                #np.mean(stft_coherence,axis=0), cmap = 'jet')
+    fig.set_size_inches(8,10)
+    fig.savefig(os.path.join(this_plot_dir,'STFT_Coherence'))
 
     plt.close('all')
 
