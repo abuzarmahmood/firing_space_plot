@@ -150,11 +150,11 @@ y2_stft = [x[-1] for x in y2_stft_tuple]
 y1_tmin = np.min([x.shape[1] for x in y1_stft])
 y2_tmin = np.min([x.shape[1] for x in y2_stft])
 fin_t = np.min((y1_tmin, y2_tmin))
-y1_stft = [x[...,:fin_t] for x in y1_stft] 
-y2_stft = [x[...,:fin_t] for x in y2_stft] 
+y1_stft = np.array([x[...,:fin_t] for x in y1_stft] )
+y2_stft = np.array([x[...,:fin_t] for x in y2_stft] )
 
-y1_amplitude = np.asarray([np.abs(x) for x in y1_stft])
-y2_amplitude = np.asarray([np.abs(x) for x in y2_stft])
+y1_amplitude = np.abs(y1_stft) #np.asarray([np.abs(x) for x in y1_stft])
+y2_amplitude = np.abs(y2_stft) #np.asarray([np.abs(x) for x in y2_stft])
 
 y1_mean_power = np.mean(y1_amplitude,axis=0)
 y2_mean_power = np.mean(y2_amplitude,axis=0)
@@ -165,8 +165,8 @@ plt.subplot(212)
 plt.imshow(y2_mean_power, interpolation = 'nearest', aspect = 'auto', origin = 'lower')
 plt.show()
 
-y1_phase = np.asarray([np.angle(x) for x in y1_stft])
-y2_phase = np.asarray([np.angle(x) for x in y2_stft])
+y1_phase = np.angle(y1_stft) #np.asarray([np.angle(x) for x in y1_stft])
+y2_phase = np.angle(y2_stft) #np.asarray([np.angle(x) for x in y2_stft])
 
 fig,ax = plt.subplots(2,1,sharex=True)
 ax[0].imshow(y1_phase[0], interpolation = 'nearest', aspect = 'auto', origin = 'lower')
@@ -209,3 +209,15 @@ plt.plot(mean_coherence.T);plt.show()
 # ___) || | |  _|   | |  
 #|____/ |_| |_|     |_|  
                         
+"""
+Refer to 
+http://math.bu.edu/people/mak/sfn-2013/sfn_tutorial.pdf 
+Slide 29,30
+"""
+cross_spectrum = np.mean(y1_stft * np.conj(y2_stft),axis=0)
+y1_power_spectrum = np.real(np.mean(y1_stft * np.conj(y1_stft),axis=0))
+y2_power_spectrum = np.real(np.mean(y2_stft * np.conj(y2_stft),axis=0))
+
+coherence = np.abs(cross_spectrum) / np.sqrt(y1_power_spectrum * y2_power_spectrum)
+
+img_plot(coherence);plt.show()
