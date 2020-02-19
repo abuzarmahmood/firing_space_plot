@@ -42,7 +42,7 @@ def normalize_timeseries(array, time_vec, stim_time):
     #array -= mean_baseline
     return array
 
-def firing_overview(data, t_vec, y_values_vec,
+def firing_overview(data, t_vec = None, y_values_vec = None,
                     interpolation = 'nearest',
                     cmap = 'jet',
                     min_val = None, max_val=None, 
@@ -62,10 +62,14 @@ def firing_overview(data, t_vec, y_values_vec,
         min_val = np.min(data,axis=None)
     elif max_val is None:
         max_val = np.max(data,axis=None)
+    elif t_vec is None:
+        t_vec = np.arange(data.shape[-1])
+    elif y_values_vec is None:
+        y_values_vec = np.arange(data.shape[1])
 
     # Plot firing rates
     square_len = np.int(np.ceil(np.sqrt(num_nrns)))
-    fig, ax = plt.subplots(square_len,square_len)
+    fig, ax = plt.subplots(square_len,square_len, sharex='all',sharey='all')
     
     nd_idx_objs = []
     for dim in range(ax.ndim):
@@ -243,13 +247,21 @@ for this_node_num in tqdm(range(len(phase_node_list))):
     # Pull out stft amplitude from file
     with tables.open_file(data_hdf5_path,'r+') as hf5:
         amplitude_array  = hf5.get_node(node_path_list[this_node_num],'amplitude_array')[:] 
+
+    amplitude_array_split = [amplitude_array[:,x] for x in relative_channel_num_split]
+    mean_channel_amplitude_array = np.array([np.mean(x,axis=1) for x in amplitude_array_split])
+    mean_channel_amplitude_array_long = np.reshape(mean_channel_amplitude_array,
+            (-1,np.prod(mean_channel_amplitude_array.shape[1:3]),
+                *mean_channel_amplitude_array.shape[3:]))
+
     # Extract relevant channels
     min_err_chan_amp = [np.squeeze(amplitude_array[:,chan]) for chan in min_err_channel_nums]
     min_err_spectrograms = [np.mean(dat, axis = (0,1)) for dat in min_err_chan_amp]
     norm_spectrograms = [normalize_timeseries(dat,time_vec,2) for dat in min_err_spectrograms]
 
+    animal_date_list = node_path_list[this_node_num].split('/')[2:]
     this_plot_dir = os.path.join(
-                data_folder,*node_path_list[this_node_num].split('/')[2:])
+                data_folder,*animal_date_list)
 
     # Plot 1
     # a) Normalized BLA Spectrogram
@@ -279,6 +291,7 @@ for this_node_num in tqdm(range(len(phase_node_list))):
             normalize_timeseries(mean_coherence, time_vec, 2),
             cmap = 'jet')
     ax6.set_title('Normalized Phase coherence'.format(min_err_channel_nums[0]))
+    fig.suptitle("_".join(animal_date_list))
     fig.set_size_inches(8,10)
     fig.savefig(os.path.join(this_plot_dir,'mean_phase_coherence'))
      
@@ -290,6 +303,7 @@ for this_node_num in tqdm(range(len(phase_node_list))):
         plt.pcolormesh(time_vec, freq_vec, mean_taste_coherence[this_ax], cmap = 'jet',
                 vmin=0,vmax=1)
     fig.set_size_inches(8,10)
+    fig.suptitle("_".join(animal_date_list))
     fig.savefig(os.path.join(this_plot_dir,'phase_coherence_taste'))
 
     # Plot 3
@@ -301,6 +315,7 @@ for this_node_num in tqdm(range(len(phase_node_list))):
                 normalize_timeseries(mean_taste_coherence[this_ax], time_vec, 2),
                 cmap = 'jet')
     fig.set_size_inches(8,10)
+    fig.suptitle("_".join(animal_date_list))
     fig.savefig(os.path.join(this_plot_dir,'normalized_phase_coherence_taste'))
 
     # Plot 4
@@ -309,6 +324,7 @@ for this_node_num in tqdm(range(len(phase_node_list))):
             time_vec,phase_bins[1:],subplot_labels = freq_vec)
     fig = plt.gcf()
     fig.set_size_inches(10,8)
+    fig.suptitle("_".join(animal_date_list))
     fig.savefig(os.path.join(this_plot_dir,'phase_diff_histograms'))
 
     # Plot 5
@@ -318,6 +334,7 @@ for this_node_num in tqdm(range(len(phase_node_list))):
         plt.sca(ax[this_ax])
         plt.pcolormesh(time_vec, freq_vec, taste_phase_consistency[0][this_ax], cmap = 'jet')
     fig.set_size_inches(8,10)
+    fig.suptitle("_".join(animal_date_list))
     fig.savefig(os.path.join(this_plot_dir,'phase_consistency_RG0'))
 
     # Plot 6
@@ -327,6 +344,7 @@ for this_node_num in tqdm(range(len(phase_node_list))):
         plt.sca(ax[this_ax])
         plt.pcolormesh(time_vec, freq_vec, taste_phase_consistency[1][this_ax], cmap = 'jet')
     fig.set_size_inches(8,10)
+    fig.suptitle("_".join(animal_date_list))
     fig.savefig(os.path.join(this_plot_dir,'phase_consistency_RG1'))
 
     # Plot 7
@@ -343,7 +361,51 @@ for this_node_num in tqdm(range(len(phase_node_list))):
                 normalize_timeseries(np.mean(stft_coherence,axis=0),time_vec,2), cmap = 'jet')
                 #np.mean(stft_coherence,axis=0), cmap = 'jet')
     fig.set_size_inches(8,10)
+    fig.suptitle("_".join(animal_date_list))
     fig.savefig(os.path.join(this_plot_dir,'STFT_Coherence'))
+
+    # Plot 8 + 9
+    # Power in each band over all trials for both regions separately
+    firing_overview(
+            zscore(
+                mean_channel_amplitude_array_long[0].swapaxes(0,1),axis=0),
+                t_vec = time_vec,subplot_labels = freq_vec)
+    fig = plt.gcf()
+    fig.set_size_inches(8,10)
+    fig.suptitle("_".join(animal_date_list))
+    fig.savefig(os.path.join(this_plot_dir,'RG0_Freq_power_trials'))
+
+    firing_overview(
+            zscore(
+                mean_channel_amplitude_array_long[1].swapaxes(0,1),axis=0),
+                t_vec = time_vec,subplot_labels = freq_vec)
+    fig = plt.gcf()
+    fig.set_size_inches(8,10)
+    fig.suptitle("_".join(animal_date_list))
+    fig.savefig(os.path.join(this_plot_dir,'RG1_Freq_power_trials'))
+
+    # Plot 10
+    # a-d) Mean spectrogram for each taste
+    # e) Mean spectrogram across all tastes
+    fig, ax = plt.subplots(5,2,sharex='all',sharey='all')
+    for region_num, region in enumerate(mean_channel_amplitude_array):
+        for taste_num,taste in enumerate(region):
+            ax[taste_num,region_num].pcolormesh(
+                    time_vec,freq_vec,normalize_timeseries(np.mean(taste,axis=0),time_vec,2),
+                    cmap = 'jet')
+    ax[-1,0].pcolormesh(time_vec,freq_vec,
+            normalize_timeseries(np.mean(mean_channel_amplitude_array,axis=(1,2))[0],time_vec,2),
+            cmap='jet')
+    ax[-1,1].pcolormesh(time_vec,freq_vec,
+            normalize_timeseries(np.mean(mean_channel_amplitude_array,axis=(1,2))[1],time_vec,2),
+            cmap='jet')
+    ax[-1,0].set_title('Average spectrum')
+    ax[-1,1].set_title('Average spectrum')
+    ax[0,0].set_title('Region 0')
+    ax[0,1].set_title('Region 1')
+    fig.set_size_inches(8,10)
+    fig.suptitle("_".join(animal_date_list))
+    fig.savefig(os.path.join(this_plot_dir,'Average_Spectra'))
 
     plt.close('all')
 
