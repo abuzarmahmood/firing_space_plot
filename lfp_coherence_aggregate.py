@@ -250,9 +250,6 @@ for this_node_num in tqdm(range(len(phase_node_list))):
 
     amplitude_array_split = [amplitude_array[:,x] for x in relative_channel_num_split]
     mean_channel_amplitude_array = np.array([np.mean(x,axis=1) for x in amplitude_array_split])
-    mean_channel_amplitude_array_long = np.reshape(mean_channel_amplitude_array,
-            (-1,np.prod(mean_channel_amplitude_array.shape[1:3]),
-                *mean_channel_amplitude_array.shape[3:]))
 
     # Extract relevant channels
     min_err_chan_amp = [np.squeeze(amplitude_array[:,chan]) for chan in min_err_channel_nums]
@@ -366,18 +363,51 @@ for this_node_num in tqdm(range(len(phase_node_list))):
 
     # Plot 8 + 9
     # Power in each band over all trials for both regions separately
+    # Sort trials by time of max power per taste, per region
+    mean_channel_amplitude_array_long = np.reshape(mean_channel_amplitude_array,
+            (-1,np.prod(mean_channel_amplitude_array.shape[1:3]),
+                *mean_channel_amplitude_array.shape[3:]))
+            
+    # zscore array along trials for every timepoint
+    zscore_amplitude_array_long = np.array([[zscore(freq,axis=0) for freq in region]\
+            for region in mean_channel_amplitude_array_long.swapaxes(1,2)])
+    #zscore_amplitude_array_long = zscore(mean_channel_amplitude_array_long,axis=1)
+    stim_time = 2
+    max_times = np.argmax(zscore_amplitude_array_long[...,time_vec>stim_time], axis=-1)
+    trials_per_taste = mean_channel_amplitude_array.shape[2]
+    trial_order = np.zeros(max_times.shape)
+    for region_num,region in enumerate(max_times):
+        for freq_num,freq in enumerate(region):
+            for taste in range(mean_channel_amplitude_array.shape[1]):
+                trial_order[region_num,freq_num,
+                        (taste*trials_per_taste):((taste+1)*trials_per_taste)] = \
+                            taste*trials_per_taste + \
+                            np.argsort(freq[(taste*trials_per_taste):((taste+1)*trials_per_taste)])
+
+    sorted_zscore_amplitude = np.array(
+            [[freq[(len(freq_order) - 1) - freq_order] for freq,freq_order in zip(region,region_order)]\
+                    for region,region_order in \
+                    zip(zscore_amplitude_array_long,trial_order.astype(int))])
+
+    # Cycle through max times for every band and region and sort trials within tastes
+    #firing_overview(
+    #        zscore(
+    #            mean_channel_amplitude_array_long[0].swapaxes(0,1),axis=0),
+    #            t_vec = time_vec,subplot_labels = freq_vec)
     firing_overview(
-            zscore(
-                mean_channel_amplitude_array_long[0].swapaxes(0,1),axis=0),
+                sorted_zscore_amplitude[0],
                 t_vec = time_vec,subplot_labels = freq_vec)
     fig = plt.gcf()
     fig.set_size_inches(8,10)
     fig.suptitle("_".join(animal_date_list))
     fig.savefig(os.path.join(this_plot_dir,'RG0_Freq_power_trials'))
 
+    #firing_overview(
+    #        zscore(
+    #            mean_channel_amplitude_array_long[1].swapaxes(0,1),axis=0),
+    #            t_vec = time_vec,subplot_labels = freq_vec)
     firing_overview(
-            zscore(
-                mean_channel_amplitude_array_long[1].swapaxes(0,1),axis=0),
+                sorted_zscore_amplitude[1],
                 t_vec = time_vec,subplot_labels = freq_vec)
     fig = plt.gcf()
     fig.set_size_inches(8,10)
@@ -387,18 +417,25 @@ for this_node_num in tqdm(range(len(phase_node_list))):
     # Plot 10
     # a-d) Mean spectrogram for each taste
     # e) Mean spectrogram across all tastes
+    # Pre-determine color limits
+    mean_channel_trial_amplitude_array = np.mean(mean_channel_amplitude_array,axis=2)
+    min_val,max_val = mean_channel_trial_amplitude_array.min(),\
+                        mean_channel_trial_amplitude_array.max()
     fig, ax = plt.subplots(5,2,sharex='all',sharey='all')
-    for region_num, region in enumerate(mean_channel_amplitude_array):
+    for region_num, region in enumerate(mean_channel_trial_amplitude_array):
         for taste_num,taste in enumerate(region):
             ax[taste_num,region_num].pcolormesh(
-                    time_vec,freq_vec,normalize_timeseries(np.mean(taste,axis=0),time_vec,2),
-                    cmap = 'jet')
+                    #time_vec,freq_vec,normalize_timeseries(taste,time_vec,2),
+                    time_vec,freq_vec,taste,
+                    cmap = 'jet', vmin= min_val, vmax = max_val)
     ax[-1,0].pcolormesh(time_vec,freq_vec,
-            normalize_timeseries(np.mean(mean_channel_amplitude_array,axis=(1,2))[0],time_vec,2),
-            cmap='jet')
+            #normalize_timeseries(np.mean(mean_trial_channel_amplitude_array,axis=(1))[0],time_vec,2),
+            np.mean(mean_channel_amplitude_array,axis=(1))[0],
+            cmap = 'jet', vmin= min_val, vmax = max_val)
     ax[-1,1].pcolormesh(time_vec,freq_vec,
-            normalize_timeseries(np.mean(mean_channel_amplitude_array,axis=(1,2))[1],time_vec,2),
-            cmap='jet')
+            #normalize_timeseries(np.mean(mean_trial_channel_amplitude_array,axis=(1))[1],time_vec,2),
+            np.mean(mean_channel_amplitude_array,axis=(1))[1],
+            cmap = 'jet', vmin= min_val, vmax = max_val)
     ax[-1,0].set_title('Average spectrum')
     ax[-1,1].set_title('Average spectrum')
     ax[0,0].set_title('Region 0')
