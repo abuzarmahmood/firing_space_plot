@@ -71,7 +71,9 @@ def percentile_probability(vec,percentile_bounds):
     """
     probs = np.empty(len(percentile_bounds)-1)
     for i in range(len(percentile_bounds)-1):
-        probs[i] = np.sum(np.logical_and(vec>=percentile_bounds[i],vec<percentile_bounds[i+1]))/len(vec)
+        probs[i] = np.sum(
+                    np.logical_and(
+                        vec>=percentile_bounds[i],vec<percentile_bounds[i+1]))/len(vec)
     return probs
 # =============================================================================
 # =============================================================================

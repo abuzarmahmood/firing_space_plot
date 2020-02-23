@@ -7,9 +7,7 @@ matplotlib.use('Qt5Agg')
 import tables
 import easygui
 import scipy
-from scipy.signal import spectrogram
 import numpy as np
-from scipy.signal import hilbert, butter, filtfilt,freqs 
 from tqdm import tqdm, trange
 from itertools import product
 from joblib import Parallel, delayed

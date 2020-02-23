@@ -157,8 +157,8 @@ plt.show()
 ##################################################
 ## Find best number of states in training data empirically
 ##################################################
-state_range = range(1,6)
-repeats_per_state = 5
+state_range = range(1,10)
+repeats_per_state = 10
 seed_vec = np.arange(len(state_range)*repeats_per_state)
 # Generate vector with state_range and seed to give to Parallel
 param_vec = list(zip(list(state_range)*repeats_per_state,seed_vec))

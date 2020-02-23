@@ -209,7 +209,7 @@ for file_num in range(len(file_list)):
 
     # (taste, channel, trial, frequencies, time)
     stft_array = convert_to_array(fin_stft_list, stft_iters)
-    amplitude_array = convert_to_array(amplitude_list, stft_iters)
+    amplitude_array = convert_to_array(amplitude_list, stft_iters)**2
     phase_array = convert_to_array(phase_list, stft_iters)
 
     # Write arrays to data HF5
