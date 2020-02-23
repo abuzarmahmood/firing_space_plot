@@ -1,6 +1,3 @@
-"""
-Working directly with the STFT is likely faster rather than finding angle separately
-"""
 
 ## Import required modules
 import os
@@ -29,6 +26,10 @@ from scipy.stats import zscore
 # | || | | | | |_| | (_| | | |/ / (_| | |_| | (_) | | | |
 #|___|_| |_|_|\__|_|\__,_|_|_/___\__,_|\__|_|\___/|_| |_|
 #                                                        
+
+##################################################
+## Define functions
+##################################################
 
 def remove_node(path_to_node, hf5):
     if path_to_node in hf5:
@@ -93,6 +94,19 @@ def firing_overview(data, t_vec = None, y_values_vec = None,
                 vmin = min_val, vmax = max_val)
     return ax
 
+def calc_coherence(stft_a, stft_b, trial_axis = 0):
+    """
+    inputs : arrays of shape (trials x freq x time)
+    """
+    cross_spec = np.mean(stft_a * np.conj(stft_b),axis=trial_axis)
+    a_power_spectrum = np.mean(np.abs(stft_a)**2,axis=trial_axis)
+    b_power_spectrum = np.mean(np.abs(stft_b)**2,axis=trial_axis)
+    coherence = np.abs(cross_spec)/np.sqrt(a_power_spectrum*b_power_spectrum)
+    return coherence
+
+##################################################
+## Read in data 
+##################################################
 
 # Define middle channels in board
 middle_channels = np.arange(8,24)
@@ -130,6 +144,7 @@ with tables.open_file(data_hdf5_path,'r') as hf5:
 
 print('Calculating phase coherences')
 for this_node_num in tqdm(range(len(phase_node_list))):
+
     ######################################## 
     ## Coherence from Phase Difference
     ######################################## 
@@ -188,15 +203,6 @@ for this_node_num in tqdm(range(len(phase_node_list))):
     # As a secondary measure, calculate coherence from STFT
     # to make sure calculations are correct
 
-    def calc_coherence(stft_a, stft_b, trial_axis = 0):
-        """
-        inputs : arrays of shape (trials x freq x time)
-        """
-        cross_spec = np.mean(stft_a * np.conj(stft_b),axis=trial_axis)
-        a_power_spectrum = np.mean(np.abs(stft_a)**2,axis=trial_axis)
-        b_power_spectrum = np.mean(np.abs(stft_b)**2,axis=trial_axis)
-        coherence = np.abs(cross_spec)/np.sqrt(a_power_spectrum*b_power_spectrum)
-        return coherence
 
     with tables.open_file(data_hdf5_path,'r') as hf5:
         stft_array  = hf5.get_node(node_path_list[this_node_num],'stft_array')[:] 
@@ -360,89 +366,6 @@ for this_node_num in tqdm(range(len(phase_node_list))):
     fig.set_size_inches(8,10)
     fig.suptitle("_".join(animal_date_list))
     fig.savefig(os.path.join(this_plot_dir,'STFT_Coherence'))
-
-    # Plot 8 + 9
-    # Power in each band over all trials for both regions separately
-    # Sort trials by time of max power per taste, per region
-    mean_channel_amplitude_array_long = np.reshape(mean_channel_amplitude_array,
-            (-1,np.prod(mean_channel_amplitude_array.shape[1:3]),
-                *mean_channel_amplitude_array.shape[3:]))
-            
-    # zscore array along trials for every timepoint
-    zscore_amplitude_array_long = np.array([[zscore(freq,axis=0) for freq in region]\
-            for region in mean_channel_amplitude_array_long.swapaxes(1,2)])
-    #zscore_amplitude_array_long = zscore(mean_channel_amplitude_array_long,axis=1)
-    stim_time = 2
-    max_times = np.argmax(zscore_amplitude_array_long[...,time_vec>stim_time], axis=-1)
-    trials_per_taste = mean_channel_amplitude_array.shape[2]
-    trial_order = np.zeros(max_times.shape)
-    for region_num,region in enumerate(max_times):
-        for freq_num,freq in enumerate(region):
-            for taste in range(mean_channel_amplitude_array.shape[1]):
-                trial_order[region_num,freq_num,
-                        (taste*trials_per_taste):((taste+1)*trials_per_taste)] = \
-                            taste*trials_per_taste + \
-                            np.argsort(freq[(taste*trials_per_taste):((taste+1)*trials_per_taste)])
-
-    sorted_zscore_amplitude = np.array(
-            [[freq[(len(freq_order) - 1) - freq_order] for freq,freq_order in zip(region,region_order)]\
-                    for region,region_order in \
-                    zip(zscore_amplitude_array_long,trial_order.astype(int))])
-
-    # Cycle through max times for every band and region and sort trials within tastes
-    #firing_overview(
-    #        zscore(
-    #            mean_channel_amplitude_array_long[0].swapaxes(0,1),axis=0),
-    #            t_vec = time_vec,subplot_labels = freq_vec)
-    firing_overview(
-                sorted_zscore_amplitude[0],
-                t_vec = time_vec,subplot_labels = freq_vec)
-    fig = plt.gcf()
-    fig.set_size_inches(8,10)
-    fig.suptitle("_".join(animal_date_list))
-    fig.savefig(os.path.join(this_plot_dir,'RG0_Freq_power_trials'))
-
-    #firing_overview(
-    #        zscore(
-    #            mean_channel_amplitude_array_long[1].swapaxes(0,1),axis=0),
-    #            t_vec = time_vec,subplot_labels = freq_vec)
-    firing_overview(
-                sorted_zscore_amplitude[1],
-                t_vec = time_vec,subplot_labels = freq_vec)
-    fig = plt.gcf()
-    fig.set_size_inches(8,10)
-    fig.suptitle("_".join(animal_date_list))
-    fig.savefig(os.path.join(this_plot_dir,'RG1_Freq_power_trials'))
-
-    # Plot 10
-    # a-d) Mean spectrogram for each taste
-    # e) Mean spectrogram across all tastes
-    # Pre-determine color limits
-    mean_channel_trial_amplitude_array = np.mean(mean_channel_amplitude_array,axis=2)
-    min_val,max_val = mean_channel_trial_amplitude_array.min(),\
-                        mean_channel_trial_amplitude_array.max()
-    fig, ax = plt.subplots(5,2,sharex='all',sharey='all')
-    for region_num, region in enumerate(mean_channel_trial_amplitude_array):
-        for taste_num,taste in enumerate(region):
-            ax[taste_num,region_num].pcolormesh(
-                    #time_vec,freq_vec,normalize_timeseries(taste,time_vec,2),
-                    time_vec,freq_vec,taste,
-                    cmap = 'jet', vmin= min_val, vmax = max_val)
-    ax[-1,0].pcolormesh(time_vec,freq_vec,
-            #normalize_timeseries(np.mean(mean_trial_channel_amplitude_array,axis=(1))[0],time_vec,2),
-            np.mean(mean_channel_amplitude_array,axis=(1))[0],
-            cmap = 'jet', vmin= min_val, vmax = max_val)
-    ax[-1,1].pcolormesh(time_vec,freq_vec,
-            #normalize_timeseries(np.mean(mean_trial_channel_amplitude_array,axis=(1))[1],time_vec,2),
-            np.mean(mean_channel_amplitude_array,axis=(1))[1],
-            cmap = 'jet', vmin= min_val, vmax = max_val)
-    ax[-1,0].set_title('Average spectrum')
-    ax[-1,1].set_title('Average spectrum')
-    ax[0,0].set_title('Region 0')
-    ax[0,1].set_title('Region 1')
-    fig.set_size_inches(8,10)
-    fig.suptitle("_".join(animal_date_list))
-    fig.savefig(os.path.join(this_plot_dir,'Average_Spectra'))
 
     plt.close('all')
 
