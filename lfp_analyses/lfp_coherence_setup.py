@@ -188,7 +188,7 @@ for file_num in range(len(file_list)):
     Fs = 1000 
     signal_window = 500 
     window_overlap = 499
-    max_freq = 25
+    max_freq = 100
     time_range_tuple = (0,5)
 
     # Generate list of individual trials to be fed into STFT function
@@ -209,8 +209,11 @@ for file_num in range(len(file_list)):
 
     # (taste, channel, trial, frequencies, time)
     stft_array = convert_to_array(fin_stft_list, stft_iters)
+    del fin_stft_list
     amplitude_array = convert_to_array(amplitude_list, stft_iters)**2
+    del amplitude_list
     phase_array = convert_to_array(phase_list, stft_iters)
+    del phase_list
 
     # Write arrays to data HF5
     with tables.open_file(data_hdf5_path,'r+') as hf5:
@@ -289,3 +292,8 @@ for file_num in range(len(file_list)):
     fig.savefig(os.path.join(plot_dir,'phase_overview.png'))
 
     plt.close('all')
+
+    ########################################
+    # Delete old variables
+    ########################################
+    del stft_array, phase_array, amplitude_array
