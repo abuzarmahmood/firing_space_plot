@@ -16,6 +16,7 @@ import multiprocessing as mp
 import shutil
 os.chdir('/media/bigdata/firing_space_plot/ephys_data')
 from ephys_data import ephys_data
+from visualize import *
 
 ########################################################
 # Define functions and relevant variables to extract data
@@ -267,7 +268,7 @@ for file_num in range(len(file_list)):
 
     # Plot firing rates for all neurons
     region_label = [1 if any(x[0] == middle_channels) else 0 for x in dat.unit_descriptors]
-    dat.firing_overview(dat.all_normalized_firing)#,subplot_labels = region_label);
+    firing_overview(dat.all_normalized_firing)#,subplot_labels = region_label);
     fig = plt.gcf()
     #for ax in fig.get_axes():
     #    ax.axis('off')
@@ -278,7 +279,7 @@ for file_num in range(len(file_list)):
     # Calculate clims
     #mean_val = np.mean(dat.all_lfp_array, axis = None)
     #sd_val = np.std(dat.all_lfp_array, axis = None)
-    dat.firing_overview(dat.all_lfp_array, 
+    firing_overview(dat.all_lfp_array, 
                         cmap = 'viridis',
                         subplot_labels = middle_channels_bool, zscore_bool = True)
     fig = plt.gcf()
@@ -288,7 +289,7 @@ for file_num in range(len(file_list)):
     fig.savefig(os.path.join(plot_dir,'raw_lfp_overview.png'))
 
     # Plot mean spectrogram for all channels to make sure nothing is off
-    dat.firing_overview(
+    firing_overview(
             data = np.array([normalize_timeseries(x,time_vec,2) \
                     for x in np.mean(amplitude_array,axis=(0,2))]),
             t_vec = time_vec,
@@ -303,7 +304,7 @@ for file_num in range(len(file_list)):
     del amplitude_array
 
     # Plot mean phase for all channels to make sure nothing is off
-    dat.firing_overview(np.angle(np.mean(np.exp(phase_array*-1.j),axis=(0,2))), 
+    firing_overview(np.angle(np.mean(np.exp(phase_array*-1.j),axis=(0,2))), 
             subplot_labels = middle_channels_bool)#, min_val = -np.pi, max_val = np.pi)
     fig = plt.gcf()
     #for ax in fig.get_axes():

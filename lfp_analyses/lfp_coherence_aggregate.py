@@ -18,6 +18,7 @@ import shutil
 from sklearn.utils import resample
 os.chdir('/media/bigdata/firing_space_plot/ephys_data')
 from ephys_data import ephys_data
+from visualize import *
 from scipy.stats import zscore
 
 # ___       _ _   _       _ _          _   _             
@@ -42,66 +43,6 @@ def normalize_timeseries(array, time_vec, stim_time):
     #mean_baseline = np.mean(array[:,time_vec<stim_time],axis=1)[:,np.newaxis]
     #array -= mean_baseline
     return array
-
-def firing_overview(data, t_vec = None, y_values_vec = None,
-                    interpolation = 'nearest',
-                    cmap = 'jet',
-                    #min_val = None, max_val=None, 
-                    cmap_lims = 'individual',
-                    subplot_labels = None):
-    """
-    Takes 3D numpy array as input and rolls over first dimension
-    to generate images over last 2 dimensions
-    E.g. (neuron x trial x time) will generate heatmaps of firing
-        for every neuron
-    """
-
-    #if min_val is None:
-    #    min_val = np.min(data,axis=None)
-    #if max_val is None:
-    #    max_val = np.max(data,axis=None)
-    if cmap_lims == 'shared':
-        min_val, max_val = np.repeat(np.min(data,axis=None),data.shape[0]),\
-                                np.repeat(np.max(data,axis=None),data.shape[0])
-    else:
-        min_val,max_val = np.min(data,axis=tuple(list(np.arange(data.ndim)[1:]))),\
-                            np.max(data,axis=tuple(list(np.arange(data.ndim)[1:])))
-    if t_vec is None:
-        t_vec = np.arange(data.shape[-1])
-    if y_values_vec is None:
-        y_values_vec = np.arange(data.shape[1])
-
-    if data.shape[-1] != len(t_vec):
-        raise Exception('Time dimension in data needs to be'\
-            'equal to length of time_vec')
-    num_nrns = data.shape[0]
-
-    # Plot firing rates
-    square_len = np.int(np.ceil(np.sqrt(num_nrns)))
-    fig, ax = plt.subplots(square_len,np.int(np.ceil(num_nrns / square_len)), 
-            sharex='all',sharey='all')
-    
-    nd_idx_objs = []
-    for dim in range(ax.ndim):
-        this_shape = np.ones(len(ax.shape))
-        this_shape[dim] = ax.shape[dim]
-        nd_idx_objs.append(
-                np.broadcast_to( 
-                    np.reshape(
-                        np.arange(ax.shape[dim]),
-                        this_shape.astype('int')), ax.shape).flatten())
-    
-    if subplot_labels is None:
-        subplot_labels = np.zeros(num_nrns)
-    if y_values_vec is None:
-        y_values_vec = np.arange(data.shape[1])
-    for nrn in range(num_nrns):
-        plt.sca(ax[nd_idx_objs[0][nrn],nd_idx_objs[1][nrn]])
-        plt.gca().set_title('{}:{}'.format(int(subplot_labels[nrn]),nrn))
-        plt.gca().pcolormesh(t_vec, y_values_vec,
-                data[nrn,:,:],cmap=cmap,
-                vmin = min_val[nrn], vmax = max_val[nrn])
-    return ax
 
 def calc_coherence(stft_a, stft_b, trial_axis = 0):
     """
