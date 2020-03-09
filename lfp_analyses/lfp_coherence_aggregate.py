@@ -46,7 +46,8 @@ def normalize_timeseries(array, time_vec, stim_time):
 def firing_overview(data, t_vec = None, y_values_vec = None,
                     interpolation = 'nearest',
                     cmap = 'jet',
-                    min_val = None, max_val=None, 
+                    #min_val = None, max_val=None, 
+                    cmap_lims = 'individual',
                     subplot_labels = None):
     """
     Takes 3D numpy array as input and rolls over first dimension
@@ -54,23 +55,31 @@ def firing_overview(data, t_vec = None, y_values_vec = None,
     E.g. (neuron x trial x time) will generate heatmaps of firing
         for every neuron
     """
-    if data.shape[-1] != len(time_vec):
+
+    #if min_val is None:
+    #    min_val = np.min(data,axis=None)
+    #if max_val is None:
+    #    max_val = np.max(data,axis=None)
+    if cmap_lims == 'shared':
+        min_val, max_val = np.repeat(np.min(data,axis=None),data.shape[0]),\
+                                np.repeat(np.max(data,axis=None),data.shape[0])
+    else:
+        min_val,max_val = np.min(data,axis=tuple(list(np.arange(data.ndim)[1:]))),\
+                            np.max(data,axis=tuple(list(np.arange(data.ndim)[1:])))
+    if t_vec is None:
+        t_vec = np.arange(data.shape[-1])
+    if y_values_vec is None:
+        y_values_vec = np.arange(data.shape[1])
+
+    if data.shape[-1] != len(t_vec):
         raise Exception('Time dimension in data needs to be'\
             'equal to length of time_vec')
     num_nrns = data.shape[0]
 
-    if min_val is None:
-        min_val = np.min(data,axis=None)
-    elif max_val is None:
-        max_val = np.max(data,axis=None)
-    elif t_vec is None:
-        t_vec = np.arange(data.shape[-1])
-    elif y_values_vec is None:
-        y_values_vec = np.arange(data.shape[1])
-
     # Plot firing rates
     square_len = np.int(np.ceil(np.sqrt(num_nrns)))
-    fig, ax = plt.subplots(square_len,square_len, sharex='all',sharey='all')
+    fig, ax = plt.subplots(square_len,np.int(np.ceil(num_nrns / square_len)), 
+            sharex='all',sharey='all')
     
     nd_idx_objs = []
     for dim in range(ax.ndim):
@@ -91,7 +100,7 @@ def firing_overview(data, t_vec = None, y_values_vec = None,
         plt.gca().set_title('{}:{}'.format(int(subplot_labels[nrn]),nrn))
         plt.gca().pcolormesh(t_vec, y_values_vec,
                 data[nrn,:,:],cmap=cmap,
-                vmin = min_val, vmax = max_val)
+                vmin = min_val[nrn], vmax = max_val[nrn])
     return ax
 
 def calc_coherence(stft_a, stft_b, trial_axis = 0):
@@ -123,14 +132,17 @@ with tables.open_file(data_hdf5_path,'r') as hf5:
     freq_vec = hf5.get_node('/stft','freq_vec')[:]
     time_vec = hf5.get_node('/stft','time_vec')[:]
 
-    phase_node_list = [x for x in hf5.root.stft._f_walknodes() if 'phase_array' in x.__str__()]
+    phase_node_path_list = [x.__str__().split(" ")[0] for x in hf5.root.stft._f_walknodes() \
+            if 'phase_array' in x.__str__()]
     print('Extracting phase info')
-    phase_array_list = [x[:] for x in tqdm(phase_node_list)]
+    #phase_array_list = [x[:] for x in tqdm(phase_node_list)]
     # Extract all nodes with phase array
-    node_path_list = [os.path.dirname(x.__str__().split(" ")[0]) for x in phase_node_list]
+    node_path_list = [os.path.dirname(x) for x in phase_node_path_list]
     # Pull parsed_lfp_channel from each array
     parsed_channel_list  = [hf5.get_node(path,'parsed_lfp_channels')[:] for path in node_path_list]
 
+# Define variables to be maintained across files
+initial_dir = dir() + ['initial_dir']
 
 #  ____      _                                  
 # / ___|___ | |__   ___ _ __ ___ _ __   ___ ___ 
@@ -143,12 +155,13 @@ with tables.open_file(data_hdf5_path,'r') as hf5:
 #    http://math.bu.edu/people/mak/sfn/tutorial.pdf
 
 print('Calculating phase coherences')
-for this_node_num in tqdm(range(len(phase_node_list))):
+for this_node_num in tqdm(range(len(phase_node_path_list))):
 
     ######################################## 
     ## Coherence from Phase Difference
     ######################################## 
-    phase_array = phase_array_list[this_node_num].swapaxes(0,1)
+    with tables.open_file(data_hdf5_path,'r') as hf5:
+        phase_array = hf5.get_node(node_path_list[this_node_num],'phase_array')[:].swapaxes(0,1)
     parsed_channels = parsed_channel_list[this_node_num]
     middle_channels_bool = np.array([True if channel in middle_channels else False \
             for channel in parsed_channels ])
@@ -202,7 +215,6 @@ for this_node_num in tqdm(range(len(phase_node_list))):
     ######################################## 
     # As a secondary measure, calculate coherence from STFT
     # to make sure calculations are correct
-
 
     with tables.open_file(data_hdf5_path,'r') as hf5:
         stft_array  = hf5.get_node(node_path_list[this_node_num],'stft_array')[:] 
@@ -368,6 +380,14 @@ for this_node_num in tqdm(range(len(phase_node_list))):
     fig.savefig(os.path.join(this_plot_dir,'STFT_Coherence'))
 
     plt.close('all')
+
+    ######################################## 
+    ## Delete all variables related to single file
+    ######################################## 
+    for item in dir():
+        if item not in initial_dir:
+            del globals()[item]
+
 
 #    _                                    _       
 #   / \   __ _  __ _ _ __ ___  __ _  __ _| |_ ___ 

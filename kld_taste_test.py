@@ -70,13 +70,16 @@ from ephys_data import ephys_data
 
 # Extract data
 dat = \
-    ephys_data('/media/bigdata/Abuzar_Data/AM12/AM12_extracted/AM12_4Tastes_191106_085215')
+    ephys_data('/media/bigdata/Abuzar_Data/AM18/AM18_extracted/AM18_4Tastes_191203_144833/')
+    #ephys_data('/media/bigdata/Abuzar_Data/AM12/AM12_extracted/AM12_4Tastes_191106_085215')
     #ephys_data('/media/bigdata/Abuzar_Data/AM17/AM17_extracted/AM17_4Tastes_191126_084934')
 
 dat.firing_rate_params = dict(zip(('step_size','window_size','dt'),
                                     (25,250,1)))
 
-dat.extract_and_process()
+dat.get_spikes()
+dat.get_firing_rates()
+#dat.extract_and_process()
 dat.firing_overview(dat.all_normalized_firing);plt.show()
 
 # Generate firing rate distribution for each taste
@@ -220,7 +223,7 @@ taste_discrim_vec = np.array([calc_taste_discrim(nrn,taste_labels) \
 # Plot firing of neurons sorted by taste discriminability
 dat.firing_overview(dat.all_normalized_firing[np.argsort(np.max(taste_discrim_vec,axis=(1,2)))]);plt.show()
 
-# Wrapper function to generate both pairwise KLDs and shuffles
+# Wrapper function to generate both shuffles
 def shuffle_taste_discrim(this_nrn, taste_labels, shuffle_count = 100,
         symbols = 5, time_bin_count = 40): 
     """
@@ -235,12 +238,14 @@ def shuffle_taste_discrim(this_nrn, taste_labels, shuffle_count = 100,
     return random_klds
 
 # Plot all_comparison vs shuffle
-nrn = 19
-this_taste_discrim = calc_taste_discrim(all_firing_long[nrn],taste_labels, time_bin_count = 50)
+nrn = 2
+time_bins = 70
+symbols = 10
+this_taste_discrim = calc_taste_discrim(all_firing_long[nrn],taste_labels, symbols = symbols,time_bin_count = time_bins)
 this_taste_shuffle = shuffle_taste_discrim(all_firing_long[nrn],
-        taste_labels,time_bin_count = 50).swapaxes(0,1)
+        taste_labels,symbols = symbols,time_bin_count = time_bins).swapaxes(0,1)
 
-dat.imshow(all_firing_long[nrn]);plt.show()
+dat.imshow(all_firing_long[nrn])#;plt.show()
 
 from scipy.stats import gaussian_kde
 
@@ -261,4 +266,5 @@ for taste_num, (taste, shuffle) in enumerate(zip(this_taste_discrim,this_taste_s
     ax[taste_num].fill_between(np.arange(len(taste)),
             mean_shuffle - 2*std_shuffle, mean_shuffle + 2*std_shuffle,
             alpha = 0.5, color = 'blue')
+    ax[taste_num].set_title(taste_comparisons[taste_num])
 plt.show()

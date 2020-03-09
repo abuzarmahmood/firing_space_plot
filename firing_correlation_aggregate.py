@@ -27,9 +27,11 @@ def remove_node(path_to_node, hf5):
     if path_to_node in hf5:
         hf5.remove_node(os.path.dirname(path_to_node),os.path.basename(path_to_node))
 
-def firing_overview(data, time_step = 25, interpolation = 'nearest',
+def firing_overview(data, t_vec = None, y_values_vec = None,
+                    interpolation = 'nearest',
                     cmap = 'jet',
-                    min_val = None, max_val=None, 
+                    #min_val = None, max_val=None, 
+                    cmap_lims = 'individual',
                     subplot_labels = None):
     """
     Takes 3D numpy array as input and rolls over first dimension
@@ -37,17 +39,30 @@ def firing_overview(data, time_step = 25, interpolation = 'nearest',
     E.g. (neuron x trial x time) will generate heatmaps of firing
         for every neuron
     """
-    num_nrns = data.shape[0]
-    t_vec = np.arange(data.shape[-1])*time_step 
 
-    if min_val is None:
-        min_val = np.min(data,axis=None)
-    elif max_val is None:
-        max_val = np.max(data,axis=None)
+    #if min_val is None:
+    #    min_val = np.min(data,axis=None)
+    #if max_val is None:
+    #    max_val = np.max(data,axis=None)
+    if cmap_lims == 'shared':
+        min_val, max_val = np.repeat(np.min(data,axis=None),data.shape[0]),\
+                                np.repeat(np.max(data,axis=None),data.shape[0])
+    else:
+        min_val,max_val = np.min(data,axis=tuple(list(np.arange(data.ndim)[1:]))),\
+                            np.max(data,axis=tuple(list(np.arange(data.ndim)[1:])))
+    if t_vec is None:
+        t_vec = np.arange(data.shape[-1])
+    if y_values_vec is None:
+        y_values_vec = np.arange(data.shape[1])
+
+    if data.shape[-1] != len(t_vec):
+        raise Exception('Time dimension in data needs to be'\
+            'equal to length of time_vec')
+    num_nrns = data.shape[0]
 
     # Plot firing rates
     square_len = np.int(np.ceil(np.sqrt(num_nrns)))
-    fig, ax = plt.subplots(square_len,square_len)
+    fig, ax = plt.subplots(square_len,square_len, sharex='all',sharey='all')
     
     nd_idx_objs = []
     for dim in range(ax.ndim):
@@ -61,13 +76,16 @@ def firing_overview(data, time_step = 25, interpolation = 'nearest',
     
     if subplot_labels is None:
         subplot_labels = np.zeros(num_nrns)
+    if y_values_vec is None:
+        y_values_vec = np.arange(data.shape[1])
     for nrn in range(num_nrns):
         plt.sca(ax[nd_idx_objs[0][nrn],nd_idx_objs[1][nrn]])
         plt.gca().set_title('{}:{}'.format(int(subplot_labels[nrn]),nrn))
-        plt.gca().pcolormesh(t_vec, np.arange(data.shape[1]),
+        plt.gca().pcolormesh(t_vec, y_values_vec,
                 data[nrn,:,:],cmap=cmap,
-                vmin = min_val, vmax = max_val)
+                vmin = min_val[nrn], vmax = max_val[nrn])
     return ax
+
 
 
 # ___       _ _   _       _ _          _   _             
@@ -144,6 +162,32 @@ smooth_kern = smooth_kern_temp[:smooth_kern_temp.shape[0]//2]
 #firing_overview(firing_array_long)
 #firing_overview(smooth_firing_long, nime_step = 1);plt.show()
 
+# Take fixed window around every spike for 'master' neuron
+# Split trial for other neuron same way
+# Perform convolution and save mean value for window
+fin_conv_values = np.zeros(array1.shape)
+window_radius = 250
+array1 = spike_array_split[0][0]
+array2 = spike_array_split[1][0]
+array1[array1<0.1] = 0
+array2[array2<0.1] = 0
+trial_iters = list(np.ndindex(array1.shape[:2]))
+#this_iter = trial_iters[0]
+for this_iter in trial_iters:
+    nrn1_trial = array1[this_iter]
+    nrn2_trial = array2[this_iter]
+    spike_inds = np.where(nrn1_trial)[0]
+    spike_inds = [x for x in spike_inds if x-window_radius>0]
+    spike_windows = [(x-window_radius,x+window_radius) for x in spike_inds] 
+    # Remove any windows with t<0
+    #spike_windows = [x for x in spike_windows if x[0]>0 and x[1]>0] 
+    conv_arrays = np.array([[trial[window[0]:window[1]] for window in spike_windows] \
+            for trial in [nrn1_trial,nrn2_trial]])
+    # Mean cross correlation per spike
+    out = np.mean(fftconvolve(conv_arrays[0],conv_arrays[1],mode = 'same',axes=-1),axis=-1)
+    fin_conv_values[(*this_iter,spike_inds)] = out
+plot_image(out);plt.show()
+
 # Reshape spike_arrays to be total_steps x window_size arrays
 def step_break_array(array, window_size, step_size, zscore_bool=True):
     total_time = array.shape[-1] - (array.shape[-1] % step_size)
@@ -206,18 +250,78 @@ def spike_convolutions(nrn_pair):
 
 def firing_convolutions(nrn_pair):
     this_pair_firing = \
-            [x[nrn_pair[ind]] for ind,x in enumerate(smooth_firing_split)]
+            [x[ind] for ind,x in zip(nrn_pair,smooth_firing_split)]
+            #[x[nrn_pair[ind]] for ind,x in enumerate(smooth_firing_split)]
     firing_conv = step_convolve(this_pair_firing[0],this_pair_firing[1],
                     window_size = window_size, step_size = step_size,
                     zscore_bool=False)
     return firing_conv
 
+def firing_convolutions_shuffle(nrn_pair, shuffle_count = 100):
+    this_pair_firing = \
+            [x[ind] for ind,x in zip(nrn_pair,smooth_firing_split)]
+    choices = [np.random.choice(range(this_pair_firing[0].shape[1]),shuffle_count) \
+            for x in range(len(nrn_pair))]
+    firing_conv = step_convolve(
+                this_pair_firing[0][:,choices[0]],
+                this_pair_firing[1][:,choices[1]],
+                window_size = window_size, step_size = step_size,
+                zscore_bool=False)
+    return np.mean(firing_conv,axis=1)
+
+from scipy.stats import gamma
+from scipy.stats import zscore
+
+alpha = np.linspace(0.1,2,100)
+gamma_mat = zscore(np.array([gamma.rvs(a,size=10000) for a in alpha]),axis=-1)
+bins = np.linspace(np.min(gamma_mat,axis=None),np.max(gamma_mat,axis=None),100)
+hist_out = np.array([np.histogram(gamma_vec,bins)[0] for gamma_vec in gamma_mat])
+mads = asymmetric_mad(gamma_mat)
+med_val = np.median(gamma_mat,axis=-1)
+plt.pcolormesh(bins,np.arange(hist_out.shape[0]),hist_out)
+for dist_num in range(gamma_mat.shape[0]):
+    plt.vlines([med_val[dist_num] - 2*mads[0][dist_num], med_val[dist_num] + 2*mads[1][dist_num]] ,
+            dist_num-0.5,dist_num+0.5)
+    plt.vlines(med_val[dist_num],dist_num-0.5,dist_num+0.5,color='red')
+plt.show()
+
+def asymmetric_mad(array,axis=-1):
+    median_val = np.median(array,axis=axis)
+    med_diff = array - np.expand_dims(median_val,axis=axis)
+    lower_vals, higher_vals = np.copy(med_diff),np.copy(med_diff)
+    lower_vals[lower_vals > 0] = np.nan
+    higher_vals[higher_vals < 0] = np.nan
+    lower_mad = np.sqrt(np.nanmean(lower_vals,axis=axis)**2)
+    higher_mad = np.sqrt(np.nanmean(higher_vals,axis=axis)**2)
+    return lower_mad, higher_mad
+
 spike_conv_array = np.array( 
         Parallel(n_jobs = mp.cpu_count()-2)\
         (delayed(spike_convolutions)(nrn_pair) for nrn_pair in tqdm(nrn_pair_list)))
+spike_conv_array = np.mean(spike_conv_array,axis=2)
 firing_conv_array = np.array(
         Parallel(n_jobs = mp.cpu_count()-2)\
         (delayed(firing_convolutions)(nrn_pair) for nrn_pair in tqdm(nrn_pair_list)))
+#firing_conv_array = np.mean(firing_conv_array,axis=2)
+firing_shuffle_conv_array = np.array(
+        Parallel(n_jobs = mp.cpu_count()-2)\
+        (delayed(firing_convolutions_shuffle)(nrn_pair) for nrn_pair in tqdm(nrn_pair_list)))
+firing_shuffle_conv_array = np.broadcast_to(firing_shuffle_conv_array[:,:,np.newaxis],
+        firing_conv_array.shape)
+#firing_shuffle_conv_array = np.mean(firing_shuffle_conv_array,axis=2)
+shuffle_corrected_firing_conv = firing_conv_array - firing_shuffle_conv_array
+mean_shuffle_corrected_conv = np.mean(shuffle_corrected_firing_conv,axis=-1)
+mean2_shuffle_corrected_conv = np.mean(mean_shuffle_corrected_conv,axis=2)
+std_shuffle_corrected_conv = np.std(mean_shuffle_corrected_conv,axis=2)
+
+plot_pair = 10
+plt.plot(mean2_shuffle_corrected_conv[plot_pair].T)
+for mean,std in zip(mean2_shuffle_corrected_conv[plot_pair],std_shuffle_corrected_conv[plot_pair]):
+    plt.fill_between(x = range(mean.shape[-1]),
+            y1 = mean-2*std, y2 = mean+2*std, alpha = 0.5)
+plt.show()
+
+firing_overview(shuffle_corrected_firing_conv[0][0],cmap_lims='shared');plt.show()
 
 ############################################################
 ## Shuffled correlations

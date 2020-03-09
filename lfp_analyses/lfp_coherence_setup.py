@@ -63,6 +63,13 @@ def remove_node(path_to_node, hf5):
     if path_to_node in hf5:
         hf5.remove_node(os.path.dirname(path_to_node),os.path.basename(path_to_node))
 
+def normalize_timeseries(array, time_vec, stim_time):
+    mean_baseline = np.mean(array[:,time_vec<stim_time],axis=1)[:,np.newaxis]
+    array = array/mean_baseline
+    # Recalculate baseline
+    #mean_baseline = np.mean(array[:,time_vec<stim_time],axis=1)[:,np.newaxis]
+    #array -= mean_baseline
+    return array
 
 # Define middle channels in board
 middle_channels = np.arange(8,24)
@@ -131,6 +138,11 @@ else:
     if save_bool:
         open(log_file_name,'w').writelines("\n".join(file_list))
 
+# Ask user to select files to perform anaysis on
+selected_files = easygui.multchoicebox(msg = 'Please select files to run analysis on',
+    choices = ['{}) '.format(num)+os.path.basename(x) for num,x in enumerate(file_list)])
+file_list = [file_list[int(x.split(')')[0])] for x in selected_files]
+
 # Break down filename into parts so they can be used for naming nodes
 file_name_parts = [os.path.basename(x).split('_') for x in file_list]
 animal_name_list = [x[0] for x in file_name_parts]
@@ -188,7 +200,7 @@ for file_num in range(len(file_list)):
     Fs = 1000 
     signal_window = 500 
     window_overlap = 499
-    max_freq = 100
+    max_freq = 20 
     time_range_tuple = (0,5)
 
     # Generate list of individual trials to be fed into STFT function
@@ -238,6 +250,7 @@ for file_num in range(len(file_list)):
                 'parsed_lfp_channels',parsed_lfp_channels)
         hf5.flush()
 
+    del stft_array
         
     # ____  _       _       
     #|  _ \| | ___ | |_ ___ 
@@ -254,46 +267,50 @@ for file_num in range(len(file_list)):
 
     # Plot firing rates for all neurons
     region_label = [1 if any(x[0] == middle_channels) else 0 for x in dat.unit_descriptors]
-    dat.firing_overview(dat.all_normalized_firing,subplot_labels = region_label);
+    dat.firing_overview(dat.all_normalized_firing)#,subplot_labels = region_label);
     fig = plt.gcf()
-    for ax in fig.get_axes():
-        ax.axis('off')
+    #for ax in fig.get_axes():
+    #    ax.axis('off')
     fig.set_size_inches(10,8)
     fig.savefig(os.path.join(plot_dir,'firing_rate_overview.png'))
 
     # Plot raw LFP for all channels
     # Calculate clims
-    mean_val = np.mean(dat.all_lfp_array, axis = None)
-    sd_val = np.std(dat.all_lfp_array, axis = None)
-    dat.firing_overview(dat.all_lfp_array, min_val = mean_val - 2*sd_val,
-                        max_val = mean_val + 2*sd_val, cmap = 'viridis',
-                        subplot_labels = middle_channels_bool)
+    #mean_val = np.mean(dat.all_lfp_array, axis = None)
+    #sd_val = np.std(dat.all_lfp_array, axis = None)
+    dat.firing_overview(dat.all_lfp_array, 
+                        cmap = 'viridis',
+                        subplot_labels = middle_channels_bool, zscore_bool = True)
     fig = plt.gcf()
-    for ax in fig.get_axes():
-        ax.axis('off')
+    #for ax in fig.get_axes():
+    #    ax.axis('off')
     fig.set_size_inches(10,8)
     fig.savefig(os.path.join(plot_dir,'raw_lfp_overview.png'))
 
     # Plot mean spectrogram for all channels to make sure nothing is off
-    dat.firing_overview(np.mean(amplitude_array,axis=(0,2)), subplot_labels = middle_channels_bool)
+    dat.firing_overview(
+            data = np.array([normalize_timeseries(x,time_vec,2) \
+                    for x in np.mean(amplitude_array,axis=(0,2))]),
+            t_vec = time_vec,
+            y_values_vec = freq_vec,
+            subplot_labels = middle_channels_bool)
     fig = plt.gcf()
-    for ax in fig.get_axes():
-        ax.axis('off')
+    #for ax in fig.get_axes():
+    #    ax.axis('off')
     fig.set_size_inches(10,8)
     fig.savefig(os.path.join(plot_dir,'spectrogram_overview.png'))
 
+    del amplitude_array
+
     # Plot mean phase for all channels to make sure nothing is off
-    dat.firing_overview(np.angle(np.mean(phase_array*1.j,axis=(0,2))), 
-            subplot_labels = middle_channels_bool, min_val = -np.pi, max_val = np.pi)
+    dat.firing_overview(np.angle(np.mean(np.exp(phase_array*-1.j),axis=(0,2))), 
+            subplot_labels = middle_channels_bool)#, min_val = -np.pi, max_val = np.pi)
     fig = plt.gcf()
-    for ax in fig.get_axes():
-        ax.axis('off')
+    #for ax in fig.get_axes():
+    #    ax.axis('off')
     fig.set_size_inches(10,8)
     fig.savefig(os.path.join(plot_dir,'phase_overview.png'))
 
+    del phase_array
     plt.close('all')
 
-    ########################################
-    # Delete old variables
-    ########################################
-    del stft_array, phase_array, amplitude_array

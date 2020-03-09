@@ -38,7 +38,7 @@ class ephys_data():
         window_size :: params :: In milliseconds. For moving window firing rate
                                 calculation
         sampling_rate :: params :: In ms, To calculate total number of bins 
-        spike_array :: params :: 3D array with time as last dimension
+        spike_array :: params :: N-D array with time as last dimension
         """
 
         if np.sum([step_size % dt , window_size % dt]) > 1e-14:
@@ -56,8 +56,8 @@ class ephys_data():
 
         firing_rate = np.empty((spike_array.shape[0],spike_array.shape[1],total_bins))
         for bin_inds in bin_list:
-            firing_rate[:,:,bin_inds[0]//fin_step_size] = \
-                    np.sum(spike_array[:,:,bin_inds[0]:bin_inds[1]], axis=-1)
+            firing_rate[...,bin_inds[0]//fin_step_size] = \
+                    np.sum(spike_array[...,bin_inds[0]:bin_inds[1]], axis=-1)
 
         return firing_rate
 
@@ -69,27 +69,42 @@ class ephys_data():
         plt.imshow(x,interpolation='nearest',aspect='auto')
 
     @staticmethod
-    def firing_overview(data, time_step = 25, interpolation = 'nearest',
+    def firing_overview(data, t_vec = None, y_values_vec = None,
+                        interpolation = 'nearest',
                         cmap = 'jet',
-                        min_val = None, max_val=None, 
-                        subplot_labels = None):
+                        #min_val = None, max_val=None, 
+                        cmap_lims = 'individual',
+                        subplot_labels = None,
+                        zscore_bool = False):
         """
         Takes 3D numpy array as input and rolls over first dimension
         to generate images over last 2 dimensions
         E.g. (neuron x trial x time) will generate heatmaps of firing
             for every neuron
         """
-        num_nrns = data.shape[0]
-        t_vec = np.arange(data.shape[-1])*time_step 
 
-        if min_val is None:
-            min_val = np.min(data,axis=None)
-        elif max_val is None:
-            max_val = np.max(data,axis=None)
+        if zscore_bool:
+            data = np.array([zscore(dat,axis=None) for dat in data])
+
+        if cmap_lims == 'shared':
+            min_val, max_val = np.repeat(np.min(data,axis=None),data.shape[0]),\
+                                    np.repeat(np.max(data,axis=None),data.shape[0])
+        else:
+            min_val,max_val = np.min(data,axis=tuple(list(np.arange(data.ndim)[1:]))),\
+                                np.max(data,axis=tuple(list(np.arange(data.ndim)[1:])))
+        if t_vec is None:
+            t_vec = np.arange(data.shape[-1])
+        if y_values_vec is None:
+            y_values_vec = np.arange(data.shape[1])
+
+        if data.shape[-1] != len(t_vec):
+            raise Exception('Time dimension in data needs to be'\
+                'equal to length of time_vec')
+        num_nrns = data.shape[0]
 
         # Plot firing rates
         square_len = np.int(np.ceil(np.sqrt(num_nrns)))
-        fig, ax = plt.subplots(square_len,square_len)
+        fig, ax = plt.subplots(square_len,square_len, sharex='all',sharey='all')
         
         nd_idx_objs = []
         for dim in range(ax.ndim):
@@ -103,12 +118,14 @@ class ephys_data():
         
         if subplot_labels is None:
             subplot_labels = np.zeros(num_nrns)
+        if y_values_vec is None:
+            y_values_vec = np.arange(data.shape[1])
         for nrn in range(num_nrns):
             plt.sca(ax[nd_idx_objs[0][nrn],nd_idx_objs[1][nrn]])
             plt.gca().set_title('{}:{}'.format(int(subplot_labels[nrn]),nrn))
-            plt.gca().pcolormesh(t_vec, np.arange(data.shape[1]),
-                    data[nrn,:,:],cmap=cmap,
-                    vmin = min_val, vmax = max_val)
+            plt.gca().pcolormesh(t_vec, y_values_vec,
+                    data[nrn],cmap=cmap,
+                    vmin = min_val[nrn], vmax = max_val[nrn])
         return ax
 
     ####################
@@ -138,9 +155,15 @@ class ephys_data():
         
     def extract_and_process(self):
         self.get_unit_descriptors()
-        self.get_lfps()
         self.get_spikes()
         self.get_firing_rates()
+        self.get_lfps()
+
+    def separate_laser_data(self):
+        self.separate_laser_spikes()
+        self.separate_laser_firing()
+        self.separate_laser_lfp()
+
 
     def get_hdf5_name(self):
         """
@@ -169,29 +192,44 @@ class ephys_data():
         with tables.open_file(self.hdf5_name, 'r+') as hf5_file:
             self.unit_descriptors = hf5_file.root.unit_descriptor[:]
 
+    def check_laser(self):
+        with tables.open_file(self.hdf5_name, 'r+') as hf5: 
+            dig_in_list = \
+                [x for x in hf5.list_nodes('/spike_trains') if 'dig_in' in x.__str__()]
+            self.laser_exists = sum([dig_in.__contains__('laser_durations') \
+                for dig_in in dig_in_list]) > 0
+        
+            if self.laser_exists:
+                self.laser_durations = [dig_in.laser_durations[:] \
+                        for dig_in in dig_in_list]
+
     def get_spikes(self):
         """
         Extract spike arrays from specified HD5 files
         """
         self.get_hdf5_name() 
-
         with tables.open_file(self.hdf5_name, 'r+') as hf5: 
-        
-            # Iterate through tastes and extract spikes from laser on and off conditions
-            # If no array for laser durations, put everything in laser off
             
             dig_in_list = \
                 [x for x in hf5.list_nodes('/spike_trains') if 'dig_in' in x.__str__()]
             
             self.spikes = [dig_in.spike_array[:] for dig_in in dig_in_list]
-            
-            self.laser_exists = sum([dig_in.__contains__('laser_durations') \
-                    for dig_in in dig_in_list]) > 0
-            
-            if self.laser_exists:
-                self.laser_durations = [dig_in.laser_durations[:] \
-                        for dig_in in dig_in_list]
 
+    def separate_laser_spikes(self):
+        """
+        Separate spike arrays into laser on and off conditions
+        """
+        if 'laser_exists' not in dir(self):
+            self.check_laser()
+        if 'spikes' not in dir(self):
+            self.get_spikes()
+        if self.laser_exists:
+            self.on_spikes = np.array([taste[laser>0] for taste,laser in \
+                    zip(self.spikes,self.laser_durations)])
+            self.off_spikes = np.array([taste[laser==0] for taste,laser in \
+                    zip(self.spikes,self.laser_durations)])
+        else:
+            raise Exception('No laser trials in this experiment')
 
     def get_lfps(self):
         """
@@ -212,6 +250,26 @@ class ephys_data():
                             swapaxes(0,1)
             else:
                 raise Exception('Parsed_LFP node absent in HDF5')
+
+    def separate_laser_lfp(self):
+        """
+        Separate spike arrays into laser on and off conditions
+        """
+        if 'laser_exists' not in dir(self):
+            self.check_laser()
+        if 'lfp_array' not in dir(self):
+            self.get_lfps()
+        if self.laser_exists:
+            self.on_lfp = np.array([taste.swapaxes(0,1)[laser>0] for taste,laser in \
+                    zip(self.lfp_array,self.laser_durations)])
+            self.off_lfp = np.array([taste.swapaxes(0,1)[laser==0] for taste,laser in \
+                    zip(self.lfp_array,self.laser_durations)])
+            self.all_on_lfp =\
+                np.reshape(self.on_lfp,(-1,*self.on_lfp.shape[-2:]))
+            self.all_off_lfp =\
+                np.reshape(self.off_lfp,(-1,*self.off_lfp.shape[-2:]))
+        else:
+            raise Exception('No laser trials in this experiment')
 
     def get_firing_rates(self):
         """
@@ -267,3 +325,23 @@ class ephys_data():
         else:
             raise Exception('Cannot currently handle different'\
                     'numbers of trials')
+
+    def separate_laser_firing(self):
+        """
+        Separate spike arrays into laser on and off conditions
+        """
+        if 'laser_exists' not in dir(self):
+            self.check_laser()
+        if 'firing_array' not in dir(self):
+            self.get_firing_rates()
+        if self.laser_exists:
+            self.on_firing = np.array([taste[laser>0] for taste,laser in \
+                    zip(self.firing_list,self.laser_durations)])
+            self.off_firing = np.array([taste[laser==0] for taste,laser in \
+                    zip(self.firing_list,self.laser_durations)])
+            self.all_on_firing =\
+                np.reshape(self.on_firing,(-1,*self.on_firing.shape[-2:]))
+            self.all_off_firing =\
+                np.reshape(self.off_firing,(-1,*self.off_firing.shape[-2:]))
+        else:
+            raise Exception('No laser trials in this experiment')
