@@ -26,15 +26,6 @@ from scipy.stats import mannwhitneyu, ttest_ind, ttest_1samp
 #|___|_| |_|_|\__|_|\__,_|_|_/___\__,_|\__|_|\___/|_| |_|
 #                                                        
 
-def normalize_timeseries(array, time_vec, stim_time):
-    mean_baseline = np.mean(array[:,time_vec<stim_time],axis=1)[:,np.newaxis]
-    array = array/mean_baseline
-    # Recalculate baseline
-    #mean_baseline = np.mean(array[:,time_vec<stim_time],axis=1)[:,np.newaxis]
-    #array -= mean_baseline
-    return array
-
-
 ##################################################
 ## Read in data 
 ##################################################
@@ -99,15 +90,6 @@ for this_node_num in tqdm(range(len(phase_node_path_list))):
                                 'phase_difference_array')[:]
 
 
-    #phase_diff_reshape = np.angle(
-    #        np.reshape(phase_diff, 
-    #        (np.prod(phase_diff.shape[:2]),*phase_diff.shape[2:])))
-    #phase_bin_nums = 30
-    #phase_bins = np.linspace(-np.pi, np.pi, phase_bin_nums)
-    #phase_diff_hists = np.array([[np.histogram(freq,phase_bins)[0] \
-    #        for freq in time_bin] \
-    #        for time_bin in phase_diff_reshape.T]).swapaxes(0,1) 
-
     # Estimate error in coherence calculation by bootstrapping
     bootstrap_samples = 500
     coherence_boot_array = np.zeros(\
@@ -119,23 +101,6 @@ for this_node_num in tqdm(range(len(phase_node_path_list))):
                                 phase_diff.shape[1], replace = True)]
         coherence_boot_array[repeat] = \
                 np.abs(np.mean(this_phase_diff,axis=(0,1)))
-
-
-
-
-    # Test plot : Plot mean coherence with std for all bands
-    fig, ax = visualize.gen_square_subplots(coherence_boot_array.shape[1])
-            #sharey=True,sharex=True)
-    for ax_num, this_ax in enumerate(ax.flatten()[:coherence_boot_array.shape[1]]):
-        this_coherence = coherence_boot_array[:,ax_num]
-        mean_val = np.mean(this_coherence,axis=0)
-        std_val = np.std(this_coherence,axis=0)
-        this_ax.plot(mean_val)
-        this_ax.fill_between(x = np.arange(coherence_boot_array.shape[-1]),
-                y1 = mean_val - 2*std_val,
-                y2 = mean_val + 2*std_val, alpha = 0.5)
-    plt.show()
-
 
     ####################################### 
     # Difference from baseline
@@ -155,13 +120,6 @@ for this_node_num in tqdm(range(len(phase_node_path_list))):
         np.mean(coherence_boot_array[..., t < baseline_t],axis=-1)\
         [...,np.newaxis]
 
-    #baseline_sampling_dist = np.array([\
-    #        np.mean(\
-    #            resample(baseline_sub_coherence[:,baseline_inds].T, 
-    #            n_samples = bin_size, replace = True),
-    #        axis = 0) \
-    #                for repeat in trange(bootstrap_samples)])
-
     ci_interval = 0.95
     lower_bound, higher_bound = \
             np.percentile(baseline_sub_coherence[...,baseline_inds],
@@ -174,19 +132,6 @@ for this_node_num in tqdm(range(len(phase_node_path_list))):
     # 1) Generate sampling distribution of baseline mean from baseline_sub array
     #       with count per sample equal to bin size
     # 2) Find p-value of mean-bin values using sampling distribution
-
-    #baseline_boot_array = coherence_boot_array[..., baseline_inds]\
-    #        .reshape((coherence_boot_array.shape[1],-1))
-
-    #ci_interval = 0.95
-    #lower_bound, higher_bound = \
-    #        np.percentile(baseline_boot_array,100*(1-ci_interval)/2, axis=-1),\
-    #        np.percentile(baseline_boot_array,100*(1+ci_interval)/2, axis=-1)
-
-    #coherence_mean_bins = np.mean(\
-    #        np.reshape(coherence_boot_array,
-    #        (*coherence_boot_array.shape[:2],-1,bin_size)),
-    #        axis = (0,-1)).T.swapaxes(0,1)
 
     freq_label_list = ["{}-{}".format(int(freq), int(freq+2)) \
             for freq in freq_vec]
@@ -208,18 +153,6 @@ for this_node_num in tqdm(range(len(phase_node_path_list))):
     plt.suptitle('Baseline 95% CI\n'\
             + "_".join(node_path_list[this_node_num].split('/')[-2:]))
     plt.show()
-
-    #fig, ax = visualize.gen_square_subplots(coherence_mean_bins.shape[0])
-    #for ax_num, this_ax in enumerate(ax.flatten()\
-    #        [:coherence_mean_bins.shape[0]]):
-    #    this_coherence = coherence_mean_bins[ax_num]
-    #    mean_val = np.mean(this_coherence,axis=-1)
-    #    std_val = np.std(this_coherence,axis=-1)
-    #    this_ax.plot(mean_val)
-    #    this_ax.fill_between(x = np.arange(this_coherence.shape[0]),
-    #            y1 = mean_val - 2*std_val,
-    #            y2 = mean_val + 2*std_val, alpha = 0.5)
-    #plt.show()
 
     #from scipy.stats import percentileofscore
     bin_num = 1000
@@ -244,16 +177,6 @@ for this_node_num in tqdm(range(len(phase_node_path_list))):
                 baseline_sub_mean_coherence[this_iter],
                 percentile_mat[this_iter[0]], score_mat[this_iter[0]])
 
-    #p_val_mat = np.vectorize(find_percentile_of)\
-    #        (baseline_sub_mean_coherence, percentile_val, score)
-
-    #p_val_mat = np.zeros((baseline_sub_mean_coherence.shape[:2]))
-    #for band_num in trange(p_val_mat.shape[0]):
-    #    for bin_num in range(p_val_mat.shape[1]):
-    #        p_val_mat[band_num, bin_num] = percentileofscore(\
-    #                baseline_sub_coherence[:,band_num,baseline_inds].flatten(),
-    #                baseline_sub_mean_coherence[band_num, bin_num])
-    
     alpha = 0.05
     visualize.imshow(1*((p_val_mat>(1-(alpha/2))) \
             + (p_val_mat < (alpha/2))));plt.colorbar()
@@ -273,13 +196,6 @@ for this_node_num in tqdm(range(len(phase_node_path_list))):
     region0_long, region1_long = region_phase_channels_long[0],\
                                 region_phase_channels_long[1]
 
-    # To make sure nothing went wrong in the reshaping
-    #coherence_array = np.abs(
-    #    np.mean(
-    #        np.exp(
-    #            -1.j*np.diff(
-    #                region_phase_channels_long,axis=0).squeeze()),axis=0))
-
     mismatch_coherence_array = np.zeros(\
             (bootstrap_samples,*phase_diff.shape[2:])) 
 
@@ -294,13 +210,6 @@ for this_node_num in tqdm(range(len(phase_node_path_list))):
     mismatch_coherence_array = np.array( Parallel(n_jobs = cpu_count() - 2)\
             (delayed(calc_mismatch_coherence)(region0_long, region1_long) \
             for x in trange(bootstrap_samples)))
-
-    #for repeat in trange(bootstrap_samples):
-    #    this_region0 = resample(region0_long)
-    #    this_region1 = resample(region1_long)
-    #    this_phase_diff = np.exp(-1.j*(this_region0-this_region1))
-    #    mismatch_coherence_array[repeat] = np.abs(np.mean(\
-    #            this_phase_diff,axis=0)).squeeze()
 
     # Test plot : Plot mean coherence with std for all bands
     fig, ax = visualize.gen_square_subplots(coherence_boot_array.shape[1],
@@ -324,52 +233,4 @@ for this_node_num in tqdm(range(len(phase_node_path_list))):
     plt.suptitle('Shuffle comparison\n'\
             + "_".join(node_path_list[this_node_num].split('/')[-2:]))
     plt.show()
-
-    # Generate null distribution of change in coherence
-    # by taking bins from both pre- and post-stimulus delivery
-    #mean_coherence_boot_array = np.mean(coherence_boot_array,axis=0)
-    #bootstrap_samples = 1000
-    #binned_coherence_array = np.mean(np.reshape(mean_coherence_boot_array,
-    #            (mean_coherence_boot_array.shape[0],-1, bin_size)),axis=-1)
-    #baseline_array = binned_coherence_array[:,:(baseline_t//bin_size)]
-    #stimulus_array = binned_coherence_array[:,(baseline_t//bin_size):]
-    #samples_per_epoch = np.min((baseline_array.shape[-1],
-    #                            stimulus_array.shape[-1]))
-    #null_dist_array = np.zeros((baseline_array.shape[0],
-    #                            bootstrap_samples))
-    ## Distribution of means of resampled distances
-    #for repeat in trange(bootstrap_samples):
-    #    null_dist_array[:,repeat] = np.mean(
-    #            resample(baseline_array.T, n_samples = 1) - \
-    #            resample(stimulus_array.T, n_samples = 1),
-    #            axis=0)
-
-# Test plot
-# Plot baseline subtracted coherence along with lines indicating
-# 95% confidence interval of the null distribution
-#coherence_boot_array = coherence_boot_array - \
-#        np.mean(\
-#            coherence_boot_array[...,t < baseline_t],axis=-1)[...,np.newaxis]
-#binned_coherence_boot_array = np.mean(np.reshape(coherence_boot_array,
-#    (*coherence_boot_array.shape[:2],-1,bin_size)),axis=-1)
-## Find confidence intervals for null distribution
-#ci_interval = 0.95
-#lower_bound, higher_bound = \
-#        np.percentile(null_dist_array,(1-ci_interval)/2, axis=-1),\
-#        np.percentile(null_dist_array,(1+ci_interval)/2, axis=-1)
-#
-#fig, ax = plt.subplots(1,coherence_boot_array.shape[1],sharey=True)
-#for ax_num, this_ax in enumerate(ax):
-#    this_coherence = binned_coherence_boot_array[:,ax_num]
-#    mean_val = np.mean(this_coherence,axis=0)
-#    std_val = np.std(this_coherence,axis=0)
-#    this_ax.plot(mean_val)
-#    this_ax.fill_between(\
-#            x = np.arange(binned_coherence_boot_array.shape[-1]),
-#            y1 = mean_val - 2*std_val,
-#            y2 = mean_val + 2*std_val, alpha = 0.5)
-#    this_ax.hlines((-lower_bound[ax_num],higher_bound[ax_num]),
-#            0, binned_coherence_boot_array.shape[-1], color = 'r')
-#    this_ax.set_aspect('auto')
-#plt.show()
 
