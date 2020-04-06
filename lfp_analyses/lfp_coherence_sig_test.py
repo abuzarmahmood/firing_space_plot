@@ -126,17 +126,6 @@ for this_node_num in tqdm(range(len(node_path_list))):
     bin_inds = [(x,x+bin_size) for x in bin_starts]
     t_binned = np.arange(0,max(t),bin_size)
 
-    #baseline_sub_coherence = coherence_boot_array - \
-    #    np.mean(coherence_boot_array[..., t < baseline_t],axis=-1)\
-    #    [...,np.newaxis]
-
-    #ci_interval = 0.95
-    #lower_bound, higher_bound = \
-    #        np.percentile(baseline_sub_coherence[...,baseline_inds],
-    #                100*(1-ci_interval)/2, axis=(0,-1)),\
-    #        np.percentile(baseline_sub_coherence[...,baseline_inds],
-    #                100*(1+ci_interval)/2, axis=(0,-1))
-
     ci_interval = 0.95
     lower_bound, higher_bound = \
             np.percentile(coherence_boot_array[...,baseline_inds],
@@ -158,17 +147,6 @@ for this_node_num in tqdm(range(len(node_path_list))):
                         bin_num))
     score_mat = np.zeros((coherence_boot_array.shape[1],
                         bin_num))
-    #percentile_mat = np.zeros((baseline_sub_coherence.shape[1],
-    #                    bin_num))
-    #score_mat = np.zeros((baseline_sub_coherence.shape[1],
-    #                    bin_num))
-
-    #for band_num in trange(baseline_sub_coherence.shape[1]):
-    #    baseline_dist = np.histogram(coherence_boot_array\
-    #            [:,band_num,baseline_inds].flatten(),bin_num)
-    #    percentile_mat[band_num] = baseline_dist[1][1:]
-    #    score_mat[band_num] = np.cumsum(baseline_dist[0])/np.sum(baseline_dist[0])
-
 
     for band_num in trange(coherence_boot_array.shape[1]):
         baseline_dist = np.histogram(coherence_boot_array\
@@ -178,13 +156,6 @@ for this_node_num in tqdm(range(len(node_path_list))):
 
     def find_percentile_of(num, values, score):
         return score[np.argmin((values - num)**2)]
-
-    #baseline_sub_mean_coherence = np.mean(baseline_sub_coherence,axis=0)
-    #p_val_mat = np.zeros((baseline_sub_mean_coherence.shape[:2]))
-    #for this_iter in tqdm(np.ndindex(p_val_mat.shape)):
-    #    p_val_mat[this_iter] = find_percentile_of(\
-    #            baseline_sub_mean_coherence[this_iter],
-    #            percentile_mat[this_iter[0]], score_mat[this_iter[0]])
 
     mean_coherence_array = np.mean(coherence_boot_array,axis=0)
     p_val_mat = np.zeros((mean_coherence_array.shape[:2]))
@@ -257,24 +228,6 @@ for this_node_num in tqdm(range(len(node_path_list))):
     fig.set_size_inches(16,8)
     fig.savefig(os.path.join(this_plot_dir,'coherence_baseline_CI'))
     plt.close(fig)
-
-    #fig, ax = visualize.gen_square_subplots(baseline_sub_coherence.shape[1])
-    #for ax_num, this_ax in enumerate(ax.flatten()\
-    #        [:baseline_sub_coherence.shape[1]]):
-    #    this_coherence = baseline_sub_coherence[:,ax_num]
-    #    mean_val = np.mean(this_coherence,axis=0)
-    #    std_val = np.std(this_coherence,axis=0)
-    #    this_ax.plot(mean_val)
-    #    this_ax.fill_between(x = np.arange(this_coherence.shape[-1]),
-    #            y1 = mean_val - 2*std_val,
-    #            y2 = mean_val + 2*std_val, alpha = 0.5)
-    #    this_ax.hlines((lower_bound[ax_num],higher_bound[ax_num]),
-    #            0, baseline_sub_coherence.shape[-1], color = 'r')
-    #    this_ax.set_title(freq_label_list[ax_num])
-    #plt.suptitle('Baseline 95% CI\n'\
-    #        + "_".join(node_path_list[this_node_num].split('/')[-2:]))
-    #fig.set_size_inches(8,10)
-    #fig.savefig(os.path.join(this_plot_dir,'baseline_sub_coherence'))
 
     # Plot 2
     # Marking significant deviations from baseline
