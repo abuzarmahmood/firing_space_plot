@@ -62,15 +62,15 @@ def butter_bandpass_filter(data, lowcut, highcut, fs, order=2):
 
 # Create file to store data + analyses in
 data_hdf5_name = 'AM_LFP_analyses.h5'
-data_folder = '/media/bigdata/Abuzar_Data/lfp_analysis'
+data_folder = '/media/fastdata/lfp_analyses'
 data_hdf5_path = os.path.join(data_folder, data_hdf5_name)
 log_file_name = os.path.join(data_folder, 'file_list.txt')
 
 # Create Phase node in data hdf5
-if not os.path.exists(data_hdf5_path):
-    hf5 = tables.open_file(data_hdf5_path,'w')
-    hf5.flush()
-    hf5.close()
+#if not os.path.exists(data_hdf5_path):
+#    hf5 = tables.open_file(data_hdf5_path,'w')
+#    hf5.flush()
+#    hf5.close()
 
 with tables.open_file(data_hdf5_path,'r+') as hf5:
     if '/bandpass_lfp' not in hf5:
@@ -177,14 +177,32 @@ for file_num in tqdm(range(len(file_list))):
                             fs = Fs) \
                                     for band in tqdm(band_freqs)])
 
+    hilbert_bandpassed_lfp = hilbert(lfp_bandpassed)
+    phase_array = np.angle(hilbert_bandpassed_lfp)
+    amplitude_array = np.abs(hilbert_bandpassed_lfp)
+
     # Write arrays to data HF5
     with tables.open_file(data_hdf5_path,'r+') as hf5:
         # Write STFT axis values (frequencies and time) under STFT node
         # This is to signify that all STFT arrays have the same size
 
         # If arrays already present then remove them and rewrite
-        remove_node('/bandpass_lfp/{}/{}/{}'.format(animal_name, date_str, 'bandpassed_lfp'),hf5) 
+        remove_node('/bandpass_lfp/{}/{}/{}'.\
+                format(animal_name, date_str, 'bandpassed_lfp_array'),hf5) 
+        remove_node('/bandpass_lfp/{}/{}/{}'.\
+                format(animal_name, date_str, 'hilbert_array'),hf5) 
+        remove_node('/bandpass_lfp/{}/{}/{}'.\
+                format(animal_name, date_str, 'phase_array'),hf5) 
+        remove_node('/bandpass_lfp/{}/{}/{}'.\
+                format(animal_name, date_str, 'amplitude_array'),hf5) 
+
         hf5.create_array('/bandpass_lfp/{}/{}'.format(animal_name,date_str),
-                'bandpassed_lfp_array',np.array(lfp_bandpassed))
+                'bandpassed_lfp_array', lfp_bandpassed)
+        hf5.create_array('/bandpass_lfp/{}/{}'.format(animal_name,date_str),
+                'hilbert_array', hilbert_bandpassed_lfp)
+        hf5.create_array('/bandpass_lfp/{}/{}'.format(animal_name,date_str),
+                'phase_array',phase_array)
+        hf5.create_array('/bandpass_lfp/{}/{}'.format(animal_name,date_str),
+                'amplitude_array', amplitude_array)
         hf5.flush()
 
