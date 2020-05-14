@@ -117,7 +117,8 @@ for this_node_num in tqdm(range(len(node_path_list))):
     # Difference from baseline
     ####################################### 
     # Pool baseline coherence and conduct tests on non-overlapping bins
-    t = np.arange(coherence_boot_array.shape[-1])
+    ## ** time_vec is already defined **
+    t = time_vec #np.arange(coherence_boot_array.shape[-1])
     baseline_t = 2000 #ms
     baseline_range = (1250,1750)
     baseline_inds = np.where((t>baseline_range[0])*(t<baseline_range[1]))[0]
@@ -139,7 +140,8 @@ for this_node_num in tqdm(range(len(node_path_list))):
     #       with count per sample equal to bin size
     # 2) Find p-value of mean-bin values using sampling distribution
 
-    freq_label_list = ["{}-{}".format(int(freq), int(freq+2)) \
+    diff_freq = np.unique(np.diff(freq_vec))
+    freq_label_list = ["{}-{}".format(int(freq), int(freq+diff_freq)) \
             for freq in freq_vec]
 
     bin_num = 1000
@@ -278,6 +280,16 @@ for this_node_num in tqdm(range(len(node_path_list))):
     for item in dir():
         if item not in initial_dir:
             del globals()[item]
+
+##################################################
+#    _                                    _       
+#   / \   __ _  __ _ _ __ ___  __ _  __ _| |_ ___ 
+#  / _ \ / _` |/ _` | '__/ _ \/ _` |/ _` | __/ _ \
+# / ___ \ (_| | (_| | | |  __/ (_| | (_| | ||  __/
+#/_/   \_\__, |\__, |_|  \___|\__, |\__,_|\__\___|
+#        |___/ |___/          |___/               
+##################################################
+
 
 ##################################################
 ## Aggregate all significant bins across animals

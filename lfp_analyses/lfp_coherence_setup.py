@@ -14,6 +14,7 @@ from itertools import product
 from joblib import Parallel, delayed
 import multiprocessing as mp
 import shutil
+from tqdm import tqdm, trange
 os.chdir('/media/bigdata/firing_space_plot/ephys_data')
 from ephys_data import ephys_data
 from visualize import *
@@ -29,22 +30,25 @@ def get_lfp_channels(hdf5_name):
     return parsed_lfp_channels
 
 # Define function to parse out only wanted frequencies in STFT
-def calc_stft(trial, max_freq,time_range_tuple,
-        Fs,signal_window,window_overlap):
+def calc_stft(trial, max_freq,time_range_tuple,\
+            Fs,signal_window,window_overlap):
     """
     trial : 1D array
     max_freq : where to lob off the transform
     time_range_tuple : (start,end) in seconds
     """
     f,t,this_stft = scipy.signal.stft(
-                scipy.signal.detrend(trial), 
-                fs=Fs, 
-                window='hanning', 
-                nperseg=signal_window, 
-                noverlap=signal_window-(signal_window-window_overlap)) 
+                scipy.signal.detrend(trial),
+                fs=Fs,
+                window='hanning',
+                nperseg=signal_window,
+                noverlap=signal_window-(signal_window-window_overlap))
     this_stft =  this_stft[np.where(f<max_freq)[0]]
-    this_stft = this_stft[:,np.where((t>=time_range_tuple[0])*(t<time_range_tuple[1]))[0]]
-    return f[f<max_freq],t[np.where((t>=time_range_tuple[0])*(t<time_range_tuple[1]))],this_stft
+    this_stft = this_stft[:,np.where((t>=time_range_tuple[0])*\
+                                            (t<time_range_tuple[1]))[0]]
+    fin_freq = f[f<max_freq]
+    fin_t = t[np.where((t>=time_range_tuple[0])*(t<time_range_tuple[1]))]
+    return  fin_freq, fin_t, this_stft
                         
 # Calculate absolute and phase
 def parallelize(func, iterator):
@@ -54,7 +58,9 @@ def parallelize(func, iterator):
 # Convert list to array
 def convert_to_array(iterator, iter_inds):
     temp_array  =\
-            np.empty(tuple((*(np.max(np.array(stft_iters),axis=0) + 1),*iterator[0].shape)),
+            np.empty(
+                tuple((*(np.max(np.array(stft_iters),axis=0) + 1),
+                        *iterator[0].shape)),
                     dtype=np.dtype(iterator[0].flatten()[0]))
     for iter_num, this_iter in tqdm(enumerate(iter_inds)):
         temp_array[this_iter] = iterator[iter_num]
@@ -75,16 +81,18 @@ def normalize_timeseries(array, time_vec, stim_time):
 # Define middle channels in board
 middle_channels = np.arange(8,24)
 
+##################################################
 # ___       _ _   _       _ _          _   _             
 #|_ _|_ __ (_) |_(_) __ _| (_)______ _| |_(_) ___  _ __  
 # | || '_ \| | __| |/ _` | | |_  / _` | __| |/ _ \| '_ \ 
 # | || | | | | |_| | (_| | | |/ / (_| | |_| | (_) | | | |
 #|___|_| |_|_|\__|_|\__,_|_|_/___\__,_|\__|_|\___/|_| |_|
 #                                                        
+##################################################
 
 # Create file to store data + analyses in
 data_hdf5_name = 'AM_LFP_analyses.h5'
-data_folder = '/media/bigdata/Abuzar_Data/lfp_analysis'
+data_folder = '/media/fastdata/lfp_analyses'
 data_hdf5_path = os.path.join(data_folder, data_hdf5_name)
 log_file_name = os.path.join(data_folder, 'file_list.txt')
 
@@ -98,7 +106,6 @@ with tables.open_file(data_hdf5_path,'r+') as hf5:
     if '/stft' not in hf5:
         hf5.create_group('/','stft')
         hf5.flush()
-
 
 # Ask user for all relevant files
 # If file_list already exists then ask the user if they want to use it
@@ -168,7 +175,7 @@ if len(unselected_choices) > 0:
                             'Enter node names',['Animal Name','Date'])
 
 # Extract data
-for file_num in range(len(file_list)):
+for file_num in trange(len(file_list)):
     animal_name = animal_name_list[file_num] 
     date_str = date_str_list[file_num]
 
@@ -180,8 +187,9 @@ for file_num in range(len(file_list)):
         hf5.flush()
 
     dat = ephys_data(os.path.dirname(file_list[file_num]))
-    dat.firing_rate_params = dict(zip(('step_size','window_size','dt'),
-                                        (25,250,1)))
+    dat.firing_rate_params = dict(zip(\
+        ('type', 'step_size','window_size','dt', 'baks_resolution', 'baks_dt'),
+        ('conv',1,250,1,1e-3,1e-3)))
     dat.extract_and_process()
 
     # Extract channel numbers for lfp
@@ -236,82 +244,26 @@ for file_num in range(len(file_list)):
         # If arrays already present then remove them and rewrite
         remove_node('/stft/freq_vec',hf5) 
         remove_node('/stft/time_vec',hf5) 
-        remove_node('/stft/{}/{}/{}'.format(animal_name, date_str, 'stft_array'),hf5) 
-        remove_node('/stft/{}/{}/{}'.format(animal_name, date_str, 'amplitude_array'),hf5) 
-        remove_node('/stft/{}/{}/{}'.format(animal_name, date_str, 'phase_array'),hf5) 
-        remove_node('/stft/{}/{}/{}'.format(animal_name, date_str, 'parsed_lfp_channels'),hf5) 
+        remove_node('/stft/{}/{}/{}'.format(animal_name, date_str, 
+                                                    'stft_array'),hf5) 
+        remove_node('/stft/{}/{}/{}'.format(animal_name, date_str, 
+                                                    'amplitude_array'),hf5) 
+        remove_node('/stft/{}/{}/{}'.format(animal_name, date_str, 
+                                                    'phase_array'),hf5) 
+        remove_node('/stft/{}/{}/{}'.format(animal_name, date_str, 
+                                                    'parsed_lfp_channels'),hf5) 
 
         hf5.create_array('/stft','freq_vec',freq_vec)
         hf5.create_array('/stft','time_vec',time_vec)
-        hf5.create_array('/stft/{}/{}'.format(animal_name,date_str),'stft_array',stft_array)
+        hf5.create_array('/stft/{}/{}'.format(animal_name,date_str),
+                                                    'stft_array',stft_array)
         hf5.create_array('/stft/{}/{}'.format(animal_name,date_str),
                 'amplitude_array',amplitude_array)
-        hf5.create_array('/stft/{}/{}'.format(animal_name,date_str),'phase_array',phase_array)
+        hf5.create_array('/stft/{}/{}'.format(animal_name,date_str),
+                                                    'phase_array',phase_array)
         hf5.create_array('/stft/{}/{}'.format(animal_name,date_str),
                 'parsed_lfp_channels',parsed_lfp_channels)
         hf5.flush()
 
-    del stft_array
+    del stft_array, phase_array, phase_array
         
-    # ____  _       _       
-    #|  _ \| | ___ | |_ ___ 
-    #| |_) | |/ _ \| __/ __|
-    #|  __/| | (_) | |_\__ \
-    #|_|   |_|\___/ \__|___/
-    #                       
-
-    plot_dir = os.path.join(data_folder,animal_name,date_str)
-    # If directory exists, delete and remake. Otherwise just remake
-    if os.path.exists(plot_dir):
-        shutil.rmtree(plot_dir)
-    os.makedirs(plot_dir)
-
-    # Plot firing rates for all neurons
-    region_label = [1 if any(x[0] == middle_channels) else 0 for x in dat.unit_descriptors]
-    firing_overview(dat.all_normalized_firing)#,subplot_labels = region_label);
-    fig = plt.gcf()
-    #for ax in fig.get_axes():
-    #    ax.axis('off')
-    fig.set_size_inches(10,8)
-    fig.savefig(os.path.join(plot_dir,'firing_rate_overview.png'))
-
-    # Plot raw LFP for all channels
-    # Calculate clims
-    #mean_val = np.mean(dat.all_lfp_array, axis = None)
-    #sd_val = np.std(dat.all_lfp_array, axis = None)
-    firing_overview(dat.all_lfp_array, 
-                        cmap = 'viridis',
-                        subplot_labels = middle_channels_bool, zscore_bool = True)
-    fig = plt.gcf()
-    #for ax in fig.get_axes():
-    #    ax.axis('off')
-    fig.set_size_inches(10,8)
-    fig.savefig(os.path.join(plot_dir,'raw_lfp_overview.png'))
-
-    # Plot mean spectrogram for all channels to make sure nothing is off
-    firing_overview(
-            data = np.array([normalize_timeseries(x,time_vec,2) \
-                    for x in np.mean(amplitude_array,axis=(0,2))]),
-            t_vec = time_vec,
-            y_values_vec = freq_vec,
-            subplot_labels = middle_channels_bool)
-    fig = plt.gcf()
-    #for ax in fig.get_axes():
-    #    ax.axis('off')
-    fig.set_size_inches(10,8)
-    fig.savefig(os.path.join(plot_dir,'spectrogram_overview.png'))
-
-    del amplitude_array
-
-    # Plot mean phase for all channels to make sure nothing is off
-    firing_overview(np.angle(np.mean(np.exp(phase_array*-1.j),axis=(0,2))), 
-            subplot_labels = middle_channels_bool)#, min_val = -np.pi, max_val = np.pi)
-    fig = plt.gcf()
-    #for ax in fig.get_axes():
-    #    ax.axis('off')
-    fig.set_size_inches(10,8)
-    fig.savefig(os.path.join(plot_dir,'phase_overview.png'))
-
-    del phase_array
-    plt.close('all')
-
