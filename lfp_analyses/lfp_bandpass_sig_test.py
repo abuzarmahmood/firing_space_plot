@@ -11,13 +11,25 @@ import numpy as np
 from scipy.signal import hilbert, butter, filtfilt,freqs 
 from tqdm import tqdm, trange
 from itertools import product
-from joblib import Parallel, delayed
-import multiprocessing as mp
+from joblib import Parallel, delayed, cpu_count
 import shutil
 os.chdir('/media/bigdata/firing_space_plot/ephys_data')
 from ephys_data import ephys_data
-from visualize import imshow, firing_overview
+from visualize import imshow, firing_overview, gen_square_subplots
 from operator import itemgetter
+
+##################################################
+## Define functions
+##################################################
+
+def remove_node(path_to_node, hf5):
+    if path_to_node in hf5:
+        hf5.remove_node(
+                os.path.dirname(path_to_node),os.path.basename(path_to_node))
+
+##################################################
+## Read in data 
+##################################################
 
 # Create file to store data + analyses in
 data_hdf5_name = 'AM_LFP_analyses.h5'
@@ -37,17 +49,6 @@ with tables.open_file(data_hdf5_path,'r') as hf5:
             if 'bandpassed_lfp_array' in x.__str__()]
     lfp_node_path_list.sort()
 
-    #lfp_node_list = [x for x in hf5.root.bandpass_lfp._f_walknodes() \
-    #        if 'bandpassed_lfp_array' in x.__str__()]
-    #print('Extracting phase info')
-    #lfp_array_list = [x[:] for x in tqdm(lfp_node_list)]
-    # Extract all nodes with phase array
-    #node_path_list = [os.path.dirname(x.__str__().split(" ")[0]) \
-    #                            for x in lfp_node_list]
-    # For each bandpass lfp extracted, find the channels used for STFT 
-    #stft_path_list = [os.path.join('/stft/',*x.split("/")[2:]) \
-    #                            for x in node_path_list]
-    
     # Check which nodes in STFT have 'relative_region_channel_nums'
     channel_path_list = \
             [x.__str__().split(" ")[0] \
@@ -90,106 +91,406 @@ for this_node_num in tqdm(range(len(fin_lfp_node_path_list))):
                 data_folder,*fin_lfp_name_date_str[this_node_num])
 
     with tables.open_file(data_hdf5_path,'r') as hf5:
-        #bandpass_lfp_array = hf5.get_node(
-        #        os.path.dirname(fin_lfp_node_path_list[this_node_num]),
-        #        'bandpassed_lfp_array')[:][:,:,fin_channel_nums[this_node_num]]
         phase_array = hf5.get_node(
                 os.path.dirname(fin_lfp_node_path_list[this_node_num]),
                 'phase_array')[:][:,:,fin_channel_nums[this_node_num]]
-        #amplitude_array = hf5.get_node(
-        #        os.path.dirname(fin_lfp_node_path_list[this_node_num]),
-        #        'amplitude_array')[:][:,:,fin_channel_nums[this_node_num]]
 
-    # Test that phase extraction was good
-    #phase_array_long = phase_array.swapaxes(1,2).\
-    #        reshape((phase_array.shape[0],
-    #                phase_array.shape[2],
-    #                -1,
-    #                phase_array.shape[-1]))
-    #firing_overview(phase_array_long[:,0])
-    #firing_overview(phase_array_long[:,1])
-    #plt.show()
+    # Bootstrap coherence values and calculate deviation from baseline
+    # as was done for STFT phase coherence
 
     # Calculate phase difference
-    #phase_diff_array = \
-    #        np.angle(np.exp(-1.j*np.diff(phase_array,axis=2))).squeeze()
-    phase_diff_array = np.diff(phase_array,axis=2).squeeze()
-    phase_diff_reshape = phase_diff_array.reshape(\
-            (phase_array.shape[0],-1,phase_diff_array.shape[-1]))
-    phase_coherence_array = np.abs(np.mean(np.exp(-1.j*phase_diff_reshape),axis=1))
+    phase_diff = np.diff(phase_array,axis=2).squeeze()
+    phase_diff_reshape = phase_diff.reshape(\
+            (phase_array.shape[0],-1,phase_diff.shape[-1]))
+    phase_coherence_array = \
+            np.abs(np.mean(np.exp(-1.j*phase_diff_reshape),axis=1))
     phase_bin_nums = 20
     phase_bins = np.linspace(-np.pi, np.pi, phase_bin_nums)
     phase_diff_hists = np.array([[np.histogram(time_bin,phase_bins)[0] \
             for time_bin in freq] \
             for freq in phase_diff_reshape.swapaxes(1,2)]).swapaxes(1,2) 
 
-    firing_overview(phase_diff_hists);plt.show()
-    imshow(phase_coherence_array);plt.show()
+    # Test plots
+    #firing_overview(phase_diff_hists);plt.show()
+    #imshow(phase_coherence_array);plt.show()
 
-    fig, ax = plt.subplots(phase_coherence_array.shape[0])
-    for data,this_ax in zip(phase_coherence_array,ax):
-        this_ax.plot(data)
-    plt.show()
-
-    # ** STILL TOO HARD TO LOOK AT...SCRAPPED!!!**
-    # For each band, plot phase for a given number of trials
-    #num_trials = 4
-    #choices = list(product(range(phase_array.shape[1]),
-    #                            range(phase_array.shape[3])))
-    #random_trial_choices = np.random.choice(range(len(choices)),num_trials) 
-    #random_trial_inds = [choices[i] for i in random_trial_choices]
-    #selected_trials = np.array([phase_array[:,ind[0],:,ind[1]] \
-    #        for ind in random_trial_inds])
-
-    #fig, ax = plt.subplots(*selected_trials.shape[:2])
-    #inds = list(np.ndindex(ax.shape))
-    #for this_ind, this_ax in zip(inds,ax.flatten()):
-    #    this_ax.imshow(selected_trials[this_ind],
-    #            interpolation='nearest', aspect='auto')
+    #fig, ax = plt.subplots(phase_coherence_array.shape[0])
+    #for data,this_ax in zip(phase_coherence_array,ax):
+    #    this_ax.plot(data)
     #plt.show()
 
+    ##################################################
+    # Estimate error in coherence calculation by bootstrapping
+    ##################################################
+    bootstrap_samples = 500
+    coherence_boot_array = np.zeros(\
+            (bootstrap_samples,
+                phase_diff_reshape.shape[0], 
+                phase_diff_reshape.shape[-1])) 
 
-# Extract only relevant channels from each file
-#relevant_band_ind = 2
-#time_range = np.arange(0,5000)
-#selected_lfp_channels = [session[:,:,channels] \
-#        for session,channels in zip(lfp_array_list,relative_channel_nums)]
-#
-#selected_lfp_band = [session[relevant_band_ind].swapaxes(0,1) \
-#                                    for session in selected_lfp_channels]
-#selected_lfp_band_long = [np.reshape(x,(x.shape[0],-1,x.shape[-1])) \
-#                                    for x in selected_lfp_band]
-#selected_lfp_band_long = [x[...,time_range] for x in selected_lfp_band_long]
-#
-## Calculate phase consistency for each as a check that channels
-## from the same region weren't selected
-#selected_lfp_phase = [np.angle(hilbert(x)) for x in selected_lfp_band_long]
-#selected_lfp_phase_consistency = [np.abs(np.mean(np.exp(-1.j*x),axis=1)) \
-#        for x in selected_lfp_phase]
-#
-## For each session, plot n number of random trials frm both regions overlayed
-#num_trials = 10
-#trial_inds = np.random.choice(
-#        np.arange(selected_lfp_band_long[0].shape[1]),num_trials,replace=False)
-#
-#for this_node_num in tqdm(range(len(lfp_node_list))):
-#    this_plot_dir = os.path.join(
-#                data_folder,*node_path_list[this_node_num].split('/')[2:])
-#
-#    fig, ax = plt.subplots(num_trials+1,2)
-#    ax[0,0].set_title('Bandpassed LFP Trace')
-#    ax[0,1].set_title('Corresponding Phase')
-#    for trial_count, trial_num in enumerate(trial_inds):
-#        ax[trial_count,0].plot(
-#                selected_lfp_band_long[this_node_num][:,trial_num].T)
-#        ax[trial_count,1].plot(
-#                np.angle(
-#                    hilbert(selected_lfp_band_long[this_node_num][:,trial_num]).T))
-#    ax[-1,0].plot(selected_lfp_phase_consistency[this_node_num].T)
-#    ax[-1,0].set_title('Phase consistency per channel')
-#    fig.set_size_inches(15,15)
-#    fig.suptitle('Frequency Band : {}'.format(band_freqs[relevant_band_ind]))
-#    #plt.show()
-#    fig.savefig(os.path.join(this_plot_dir,'random_trials_phase'))
-#    plt.close(fig)
-#
+    def generate_bootstrap_coherence(phase_diff_reshape):
+        this_phase_diff = phase_diff_reshape[:,\
+        np.random.choice(range(phase_diff_reshape.shape[1]),
+                                phase_diff_reshape.shape[1], replace = True)]
+        return np.abs(np.mean(np.exp(-1.j*this_phase_diff),axis=(1)))
+
+    coherence_boot_array = np.array(\
+        Parallel(n_jobs = cpu_count() - 2)\
+        (delayed(generate_bootstrap_coherence)(phase_diff_reshape)\
+                for repeat in trange(bootstrap_samples)))
+
+    #for repeat in trange(bootstrap_samples):
+    #    this_phase_diff = phase_diff_reshape[:,\
+    #    np.random.choice(range(phase_diff_reshape.shape[1]),
+    #                            phase_diff_reshape.shape[1], replace = True)]
+    #    coherence_boot_array[repeat] = \
+    #            np.abs(np.mean(np.exp(-1.j*this_phase_diff),axis=(1)))
+
+    ####################################### 
+    # Difference from baseline
+    ####################################### 
+    # Pool baseline coherence and conduct tests on non-overlapping bins
+    t = np.arange(coherence_boot_array.shape[-1])
+    baseline_t = 2000 #ms
+    baseline_range = (1000,1500)
+    baseline_inds = np.where((t>baseline_range[0])*(t<baseline_range[1]))[0]
+    bin_size = 100 #ms
+    bin_starts = np.arange(0, max(t) , bin_size)  
+    bin_inds = [(x,x+bin_size) for x in bin_starts]
+    t_binned = np.arange(0,max(t),bin_size)
+
+    ci_interval = 0.95
+    lower_bound, higher_bound = \
+            np.percentile(coherence_boot_array[...,baseline_inds],
+                    100*(1-ci_interval)/2, axis=(0,-1)),\
+            np.percentile(coherence_boot_array[...,baseline_inds],
+                    100*(1+ci_interval)/2, axis=(0,-1))
+
+    # Find bootstrapped deviation from mean baseline for baseline and
+    # use to test differences
+    # 1) Generate sampling distribution of baseline mean from baseline_sub array
+    #       with count per sample equal to bin size
+    # 2) Find p-value of mean-bin values using sampling distribution
+
+    freq_label_list = ["{}-{}".format(int(freq[0]), int(freq[1])) \
+            for freq in band_freqs]
+
+    bin_num = 1000
+    percentile_mat = np.zeros((coherence_boot_array.shape[1],
+                        bin_num))
+    score_mat = np.zeros((coherence_boot_array.shape[1],
+                        bin_num))
+
+    for band_num in trange(coherence_boot_array.shape[1]):
+        baseline_dist = np.histogram(coherence_boot_array\
+                [:,band_num,baseline_inds].flatten(),bin_num)
+        percentile_mat[band_num] = baseline_dist[1][1:]
+        score_mat[band_num] = np.cumsum(baseline_dist[0])/np.sum(baseline_dist[0])
+
+    def find_percentile_of(num, values, score):
+        return score[np.argmin((values - num)**2)]
+
+    mean_coherence_array = np.mean(coherence_boot_array,axis=0)
+    p_val_mat = np.zeros((mean_coherence_array.shape[:2]))
+    for this_iter in tqdm(np.ndindex(p_val_mat.shape)):
+        p_val_mat[this_iter] = find_percentile_of(\
+                mean_coherence_array[this_iter],
+                percentile_mat[this_iter[0]], score_mat[this_iter[0]])
+
+    ######################################## 
+    # Write p_val_mat to HDF5
+    ######################################## 
+    with tables.open_file(data_hdf5_path,'r+') as hf5:
+
+        remove_node(os.path.join(
+                os.path.dirname(fin_lfp_node_path_list[this_node_num]),
+                        'baseline_deviation_ecdf'),hf5)
+        hf5.create_array(
+                os.path.dirname(fin_lfp_node_path_list[this_node_num]), 
+                'baseline_deviation_ecdf', p_val_mat) 
+
+    ########################################
+    # ____  _       _       
+    #|  _ \| | ___ | |_ ___ 
+    #| |_) | |/ _ \| __/ __|
+    #|  __/| | (_) | |_\__ \
+    #|_|   |_|\___/ \__|___/
+    ########################################
+                           
+
+    # Plot 1
+    # Bootstrapped coherence with baseline 95% CI
+    # Mark deviations with different color
+
+    # Time limits for plotting
+    t_lims = [1000,4500]
+    stim_t = 2000
+    norm = matplotlib.colors.Normalize(0,1)
+    cmap_object= matplotlib.cm.ScalarMappable(cmap = 'viridis', norm = norm)
+    alpha = 0.05
+    min_time = 100
+    sig_pval_mat = 1*((p_val_mat>(1-(alpha/2))) \
+            + (p_val_mat < (alpha/2)))
+    t_vec = np.arange(p_val_mat.shape[-1])
+
+    fig, ax = gen_square_subplots(coherence_boot_array.shape[1])
+    for ax_num, this_ax in enumerate(ax.flatten()\
+            [:coherence_boot_array.shape[1]]):
+        diff_vals = np.diff(sig_pval_mat[ax_num])
+        change_inds = np.where(diff_vals!=0)[0]
+        if diff_vals[change_inds][0] == -1:
+            change_inds = np.concatenate([np.array(0)[np.newaxis],change_inds])    
+        if diff_vals[change_inds][-1] == 1:
+            change_inds = np.concatenate([change_inds, (max(t_vec)-1)[np.newaxis]])    
+        change_inds = change_inds.reshape((-1,2))
+        fin_change_inds = change_inds[np.diff(change_inds,axis=-1).flatten() > min_time]
+        fin_change_inds -= stim_t
+        # Remove any which are after end of plotting period
+        upper_change_lim = np.sum(fin_change_inds < t_lims[1] - stim_t,axis=-1)==2
+        lower_change_lim = np.sum(fin_change_inds > t_lims[0] - stim_t,axis=-1)==2
+        fin_inds = np.where(upper_change_lim * lower_change_lim)[0]
+        fin_change_inds = fin_change_inds[fin_inds]
+        this_coherence = coherence_boot_array[:,ax_num]
+        mean_val = np.mean(this_coherence,axis=0)
+        std_val = np.std(this_coherence,axis=0)
+        this_ax.plot(t_vec[t_lims[0]:t_lims[1]]-stim_t,mean_val[t_lims[0]:t_lims[1]])
+        this_ax.fill_between(\
+                x = t_vec[t_lims[0]:t_lims[1]] - stim_t,
+                y1 = mean_val[t_lims[0]:t_lims[1]] - 2*std_val[t_lims[0]:t_lims[1]],
+                y2 = mean_val[t_lims[0]:t_lims[1]] + 2*std_val[t_lims[0]:t_lims[1]], 
+                alpha = 0.5)
+        this_ax.hlines((lower_bound[ax_num],higher_bound[ax_num]),
+                t_lims[0] - stim_t, t_lims[1]-stim_t, color = 'r', alpha = 0.5)
+        for interval  in fin_change_inds:
+            this_ax.axvspan(interval[0],interval[1],facecolor='y',alpha = 0.5)
+        this_ax.set_title(freq_label_list[ax_num])
+        this_ax.set_ylabel('Coherence (mean +/- 95% CI)')
+        this_ax.set_xlabel('Time post-stimulus delivery (ms)')
+    plt.suptitle('Baseline 95% CI (Bandpass) \n'\
+            + "_".join(fin_lfp_node_path_list[this_node_num].split('/')[2:4]) + \
+            '\nalpha = {}, minimum significant window  = {}'.format(alpha,min_time))
+    fig.set_size_inches(16,8)
+    plt.tight_layout()
+    plt.subplots_adjust(top = 0.85, wspace = 0.15)
+    #plt.show()
+    fig.savefig(os.path.join(this_plot_dir,
+        '_'.join(fin_lfp_name_date_str[this_node_num])+'_bandpass_coherence_baseline_CI'))
+    plt.close(fig)
+
+    #norm = matplotlib.colors.Normalize(0,1)
+    #cmap_object= matplotlib.cm.ScalarMappable(cmap = 'viridis', norm = norm)
+    #alpha = 0.05
+    #sig_pval_mat = 1*((p_val_mat>(1-(alpha/2))) \
+    #        + (p_val_mat < (alpha/2)))
+    #fig, ax = gen_square_subplots(coherence_boot_array.shape[1])
+    #for ax_num, this_ax in enumerate(ax.flatten()\
+    #        [:coherence_boot_array.shape[1]]):
+    #    sig_inds = np.where(sig_pval_mat[ax_num])[0]
+    #    non_sig_inds = np.where(1-sig_pval_mat[ax_num])[0]
+    #    color_vec = np.ones(t_vec.shape)
+    #    color_vec[non_sig_inds] = 0
+    #    color_vec = cmap_object.to_rgba(color_vec)
+    #    this_coherence = coherence_boot_array[:,ax_num]
+    #    mean_val = np.mean(this_coherence,axis=0)
+    #    std_val = np.std(this_coherence,axis=0)
+    #    t_vec = np.arange(this_coherence.shape[-1])
+    #    this_ax.plot(t_vec,mean_val)
+    #    this_ax.fill_between(\
+    #            x = t_vec,
+    #            y1 = mean_val - 2*std_val,
+    #            y2 = mean_val + 2*std_val, 
+    #            alpha = 0.5)
+    #    #this_ax.plot(t_vec[sig_inds],mean_val[sig_inds])
+    #    #this_ax.fill_between(\
+    #    #        x = t_vec[sig_inds],
+    #    #        y1 = mean_val[sig_inds] - 2*std_val[sig_inds],
+    #    #        y2 = mean_val[sig_inds] + 2*std_val[sig_inds], 
+    #    #        alpha = 0.5)
+    #    this_ax.hlines((lower_bound[ax_num],higher_bound[ax_num]),
+    #            0, coherence_boot_array.shape[-1], color = 'r')
+    #    this_ax.set_title(freq_label_list[ax_num])
+    #plt.suptitle('Baseline 95% CI (Bandpass) \n'\
+    #        + "_".join(fin_lfp_node_path_list[this_node_num].split('/')[-2:]))
+    #fig.set_size_inches(16,8)
+    #fig.savefig(os.path.join(this_plot_dir,'bandpass_coherence_baseline_CI'))
+    #plt.close(fig)
+
+    # Plot 2
+    # Marking significant deviations from baseline
+    #fig = plt.figure()
+    #imshow(sig_pval_mat);plt.colorbar()
+    #this_ax = plt.gca()
+    #this_ax.set_yticks(range(len(freq_label_list)))
+    #this_ax.set_yticklabels(freq_label_list)
+    #this_ax.set_title('Signigicant difference from baseline (alpha = {})\n'\
+    #        .format(alpha)\
+    #        + "_".join(fin_lfp_node_path_list[this_node_num].split('/')[-2:]))
+    #plt.suptitle('Bandpass LFP')
+    #plt.sca(this_ax)
+    #fig.set_size_inches(16,8)
+    #fig.savefig(os.path.join(this_plot_dir,'bandpass_significant_coherence_baseline'))
+    #plt.close(fig)
+
+    # Plot 3
+    # Comparison of coherence with shuffle
+    #fig, ax = visualize.gen_square_subplots(coherence_boot_array.shape[1],
+    #        sharey=True,sharex=True)
+    #for ax_num, this_ax in enumerate(ax.flatten()[:coherence_boot_array.shape[1]]):
+    #    this_coherence = coherence_boot_array[:,ax_num]
+    #    this_mismatch_coherence = mismatch_coherence_array[:,ax_num]
+    #    mean_val = np.mean(this_coherence,axis=0)
+    #    std_val = np.std(this_coherence,axis=0)
+    #    mean_shuffle_val = np.mean(this_mismatch_coherence,axis=0)
+    #    std_shuffle_val  = np.std(this_mismatch_coherence,axis=0)
+    #    this_ax.plot(mean_val)
+    #    this_ax.fill_between(x = np.arange(coherence_boot_array.shape[-1]),
+    #            y1 = mean_val - 2*std_val,
+    #            y2 = mean_val + 2*std_val, alpha = 0.5)
+    #    this_ax.plot(mean_shuffle_val)
+    #    this_ax.fill_between(x = np.arange(coherence_boot_array.shape[-1]),
+    #            y1 = mean_shuffle_val - 2*std_shuffle_val,
+    #            y2 = mean_shuffle_val + 2*std_shuffle_val, alpha = 0.5)
+    #    this_ax.set_title(freq_label_list[ax_num])
+    #plt.suptitle('Shuffle comparison\n'\
+    #        + "_".join(node_path_list[this_node_num].split('/')[-2:]))
+    #fig.set_size_inches(16,8)
+    #fig.savefig(os.path.join(this_plot_dir,'coherence_shuffle_comparison'))
+    #plt.close(fig)
+
+##################################################
+#    _                                    _       
+#   / \   __ _  __ _ _ __ ___  __ _  __ _| |_ ___ 
+#  / _ \ / _` |/ _` | '__/ _ \/ _` |/ _` | __/ _ \
+# / ___ \ (_| | (_| | | |  __/ (_| | (_| | ||  __/
+#/_/   \_\__, |\__, |_|  \___|\__, |\__,_|\__\___|
+#        |___/ |___/          |___/               
+##################################################
+
+
+##################################################
+## Aggregate all significant bins across animals
+##################################################
+agg_plot_dir = os.path.join(data_folder,'aggregate_analysis')
+if not os.path.exists(agg_plot_dir):
+    os.makedirs(agg_plot_dir)
+
+baseline_deviation_ecdf= []
+with tables.open_file(data_hdf5_path,'r') as hf5:
+    for this_node_num in tqdm(range(len(fin_lfp_node_path_list))):
+        baseline_deviation_ecdf.append(\
+                hf5.get_node(\
+                    os.path.dirname(fin_lfp_node_path_list[this_node_num]),
+                                'baseline_deviation_ecdf')[:])
+
+t_range = np.arange(5000)
+baseline_deviation_ecdf = np.array(baseline_deviation_ecdf)[...,t_range]
+
+alpha = 0.05
+increase_array = 1*(baseline_deviation_ecdf>(1-(alpha/2)))
+decrease_array = 1*(baseline_deviation_ecdf < (alpha/2))
+mean_increase_array = np.mean(increase_array,axis=0)
+mean_decrease_array = np.mean(decrease_array,axis=0)
+significance_array = 1*((increase_array + decrease_array)>0)
+mean_signifince_array = np.mean(significance_array,axis=0)
+
+freq_label_list = ["{}-{}".format(int(freq[0]), int(freq[1])) \
+        for freq in band_freqs]
+
+# Plot 1
+# Significant coherence aggreageted over all sessions
+fig, ax = plt.subplots(3,1)
+plt.sca(ax[0])
+imshow(mean_increase_array);plt.colorbar()
+ax[0].set_yticks(range(len(freq_label_list)))
+ax[0].set_yticklabels(freq_label_list)
+ax[0].set_title('Increased coherence')
+plt.sca(ax[1])
+imshow(mean_decrease_array);plt.colorbar()
+ax[1].set_yticks(range(len(freq_label_list)))
+ax[1].set_yticklabels(freq_label_list)
+ax[1].set_title('Decreased coherence')
+plt.sca(ax[2])
+imshow(mean_signifince_array);plt.colorbar()
+ax[2].set_yticks(range(len(freq_label_list)))
+ax[2].set_yticklabels(freq_label_list)
+ax[2].set_title('All significant deviation')
+fig.set_size_inches(10,8)
+plt.suptitle('Aggregate significant deviations in coherence')
+plt.xlabel('Time (ms)')
+ax[1].set_ylabel('Frequency band (Hz)')
+plt.suptitle('Bandpass LFP')
+fig.savefig(os.path.join(agg_plot_dir,'bandpass_aggregate_coherence_significance'))
+plt.close(fig)
+
+# Plot 2
+# Significant coherence as line plots 
+y_ticks = np.arange(0,1.2,0.2)
+t = np.arange(significance_array.shape[-1])
+mean_sig = np.mean(significance_array,axis=0)
+fig, ax = plt.subplots(mean_signifince_array.shape[0], 1, sharey = True)
+
+for ax_num, this_ax in enumerate(ax):
+    this_ax.plot(t,mean_sig[ax_num])#, c='r', linewidth=3)
+    this_ax.set_title(freq_label_list[ax_num])
+    this_ax.set_yticks(y_ticks)
+    plt.suptitle('Bandpass LFP \n Aggregate Coherence Significance by band')
+
+ax[int(np.floor(len(ax)/2))].set_ylabel('Fraction of significant bins')
+ax[-1].set_xlabel('Time (ms)')
+fig.set_size_inches(12,8)
+fig.savefig(os.path.join(agg_plot_dir,'bandpass_aggregate_coherence_sig_band'))
+plt.close(fig)
+
+# Plot 3
+# Scaled Significant coherence as line plots 
+epochs = np.array([[2000,2250],[2250,2800],[2800,3250]])
+color_vec = ['pink','orange','blue']
+t = np.arange(significance_array.shape[-1])
+mean_sig = np.mean(significance_array,axis=0)
+fig, ax = plt.subplots(mean_signifince_array.shape[0], 1, sharex=True)
+for ax_num, this_ax in enumerate(ax):
+    this_ax.plot(t[t_lims[0]:t_lims[1]] - stim_t,
+            mean_sig[ax_num][t_lims[0]:t_lims[1]], c='k', linewidth=3)
+    this_ax.set_title(freq_label_list[ax_num])
+    for num,interval in enumerate(epochs):
+        this_ax.axvspan(interval[0] - stim_t,interval[1] - stim_t,
+                facecolor=color_vec[num],alpha = 0.5)
+    plt.suptitle('Bandpass LFP \n Aggregate Coherence Significance by band')
+ax[int(np.floor(len(ax)/2))].set_ylabel('Fraction of significant bins')
+ax[-1].set_xlabel('Time post-stimulus delivery  (ms)')
+fig.set_size_inches(8,12)
+fig.savefig(os.path.join(agg_plot_dir,
+    'bandpass_aggregate_coherence_sig_band_scaled'))
+plt.close(fig)
+
+# Plot 4
+# Smooth Scaled Significant coherence as line plots 
+def gauss_kern(size):
+    x = np.arange(-size,size+1)
+    kern = np.exp(-(x**2)/float(size))
+    return kern / sum(kern)
+def gauss_filt(vector, size):
+    kern = gauss_kern(size)
+    return np.convolve(vector, kern, mode='same')
+from scipy.signal import savgol_filter
+epochs = np.array([[2000,2250],[2250,2800],[2800,3250]])
+color_vec = ['pink','orange','blue']
+t = np.arange(significance_array.shape[-1])
+mean_sig = np.mean(significance_array,axis=0)
+#smooth_mean_sig = np.array([gauss_filt(x,50) for x in mean_sig])
+smooth_mean_sig = savgol_filter(mean_sig, 51, 1) 
+fig, ax = plt.subplots(mean_signifince_array.shape[0], 1, sharex=True)
+for ax_num, this_ax in enumerate(ax):
+    this_ax.plot(t[t_lims[0]:t_lims[1]] - stim_t,
+            smooth_mean_sig[ax_num][t_lims[0]:t_lims[1]], c='k', linewidth=3)
+    this_ax.set_title(freq_label_list[ax_num] + ' Hz')
+    for num,interval in enumerate(epochs):
+        this_ax.axvspan(interval[0] - stim_t, interval[1] - stim_t,
+                facecolor=color_vec[num],alpha = 0.5)
+    plt.suptitle('Bandpass LFP \n Aggregate Coherence Significance by band')
+ax[int(np.floor(len(ax)/2))].set_ylabel('Fraction of significant bins')
+ax[-1].set_xlabel('Time post-stimulus delivery (ms)')
+fig.set_size_inches(8,12)
+fig.savefig(os.path.join(agg_plot_dir,
+    'bandpass_aggregate_coherence_sig_band_scaled_smooth'))
+plt.close(fig)
