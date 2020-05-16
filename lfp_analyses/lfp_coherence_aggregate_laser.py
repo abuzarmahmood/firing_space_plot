@@ -67,6 +67,8 @@ data_hdf5_path = os.path.join(data_folder, data_hdf5_name)
 
 # Read all filenames and extract basenames
 log_file_name = os.path.join(data_folder, 'file_list.txt')
+#log_file_name = '/media/bigdata/firing_space_plot/don_grant_figs/laser_files.txt' 
+
 
 if os.path.exists(log_file_name):
     file_list = open(log_file_name,'r').readlines()
@@ -152,6 +154,7 @@ if not electrode_bool:
 # Define variables to be maintained across files
 initial_dir = dir() + ['initial_dir']
 
+
 #  ____      _                                  
 # / ___|___ | |__   ___ _ __ ___ _ __   ___ ___ 
 #| |   / _ \| '_ \ / _ \ '__/ _ \ '_ \ / __/ _ \
@@ -178,6 +181,13 @@ for this_node_num in tqdm(range(len(phase_node_path_list))):
     # The indices of the array belonging to each region
     channel_split_inds = [[num for num, x in enumerate(parsed_channels) \
             if x in vals] for key, vals in region_list[this_node_num].items()]
+
+    # If channels from more than 1 region aren't present
+    # we can't calculate coherence so skip
+    if not np.prod(np.stack(map(len, channel_split_inds)) > 0):
+        print('No channels for one region ... skipping')
+        continue
+
     # The actual channel numbers
     channel_num_split = [[parsed_channels[i] for i in region] \
             for region in channel_split_inds]
@@ -266,8 +276,18 @@ for this_node_num in tqdm(range(len(phase_node_path_list))):
     #        for time_bin in phase_diff_reshape.T]).swapaxes(0,1) 
 
     # Average Coherence across trials
+    # shape ::: laser x taste x freq x time 
     mean_taste_coherence = np.abs(np.mean(phase_diff_array,axis=2))
+    normalized_mean_taste_coherence = normalize_timeseries(mean_taste_coherence, time_vec, 2)
+    # shape ::: laser x freq x time 
     mean_coherence = np.mean(mean_taste_coherence,axis=1)
+    normalized_mean_coherence = normalize_timeseries(mean_coherence, time_vec, 2)
+
+    if data.laser_exists:
+        mean_taste_coherence_diff = np.squeeze(np.diff(mean_taste_coherence,axis=0))
+        mean_coherence_diff = np.squeeze(np.diff(mean_coherence,axis=0))
+        normalized_taste_diff =  np.squeeze(np.diff(normalized_mean_taste_coherence,axis=0))
+        normalized_mean_diff = np.squeeze(np.diff(normalized_mean_coherence,axis=0))
 
     ######################################## 
     ## Coherence from STFT
@@ -368,19 +388,23 @@ for this_node_num in tqdm(range(len(phase_node_path_list))):
     #min_err_spectrograms = np.median(min_err_amp_array, axis = (1,3)) 
     #norm_spectrograms = normalize_timeseries(min_err_spectrograms,time_vec,2) 
 
-    # Just use STFT extracted above for amplitude rather than separating
-    # by laser again
-    laser_spectrogram_array = np.abs(np.array([off_stft_array, on_stft_array]))
-    median_spectrogram_array = np.median(laser_spectrogram_array, axis = (1,3))
-    # shape ::: laser x region x freq x time
-    norm_spectrograms = normalize_timeseries(median_spectrogram_array,time_vec,2)
 
     # Calculate difference between laser conditions
     if data.laser_exists:
+        # Just use STFT extracted above for amplitude rather than separating
+        # by laser again
+        laser_spectrogram_array = np.abs(np.array([off_stft_array, on_stft_array]))
+        median_spectrogram_array = np.median(laser_spectrogram_array, axis = (1,3))
+        # shape ::: laser x region x freq x time
+        norm_spectrograms = normalize_timeseries(median_spectrogram_array,time_vec,2)
         #diff_spectrogram_array = np.squeeze(np.diff(median_spectrogram_array, axis = 0))
         #norm_median_diff_spec = normalize_timeseries(diff_spectrogram_array,
         #                                time_vec, stim_time = 2)
         norm_median_diff_spec = np.squeeze(np.diff(norm_spectrograms,axis=0)) 
+    else:
+        spectrogram_array = np.abs(selected_stft_array)
+        median_spectrogram_array = np.median(spectrogram_array, axis = (0,2))[np.newaxis]
+        norm_spectrograms = normalize_timeseries(median_spectrogram_array,time_vec,2)
 
     this_plot_dir = os.path.join(data_folder,*animal_name_date_list[this_node_num])
     plot_titles = list(product(['off','on'], 
@@ -391,16 +415,18 @@ for this_node_num in tqdm(range(len(phase_node_path_list))):
     # a) Normalized BLA Spectrogram(s)
     # b) Normalized GC Spectrogram(s)
     # If laser exists, difference between on and off conditions
-    vmin,vmax = np.min(norm_spectrograms),np.max(norm_spectrograms)
+    v_ranges = [(np.min(x),np.max(x)) for x in norm_spectrograms.swapaxes(0,1)]
     fig,ax = plt.subplots(norm_spectrograms.shape[0] + data.laser_exists * 1,
                                 norm_spectrograms.shape[1])
+    if ax.ndim < 2:
+        ax = ax[np.newaxis]
     iter_inds = np.stack(np.ndindex(norm_spectrograms.shape[:2]))
-    for ind in iter_inds:
+    for num,ind in enumerate(iter_inds):
         ax[tuple(ind)].contourf(time_vec, freq_vec, 
                 norm_spectrograms[tuple(ind)], 
-                cmap = 'jet', levels = 30, vmin = vmin, vmax = vmax)
-    for num,this_ax in enumerate(ax.flatten()):
-        this_ax.set_title(plot_titles[num])
+                cmap = 'jet', levels = 30, 
+                vmin = v_ranges[ind[1]][0], vmax = v_ranges[ind[1]][1])
+        ax[tuple(ind)].set_title(plot_titles[num])
     if data.laser_exists:
         ax[-1,0].contourf(time_vec, freq_vec, norm_median_diff_spec[0], 
                 cmap = 'jet', levels = 30)
@@ -425,87 +451,150 @@ for this_node_num in tqdm(range(len(phase_node_path_list))):
      
     # Plot 2
     # a) Phase coherence by taste and mean phase coherence
+    vmin, vmax = np.min(mean_taste_coherence), np.max(mean_taste_coherence)
     fig, ax = plt.subplots(mean_taste_coherence.shape[1] + 1,
-            mean_taste_coherence.shape[0])
-    for this_ax in range(len(ax)):
-        plt.sca(ax[this_ax])
-        plt.pcolormesh(time_vec, freq_vec, mean_taste_coherence[this_ax], 
-    ax5 = plt.subplot(4,1,3)
-    ax5.pcolormesh(time_vec, freq_vec, mean_coherence, 
-                                        cmap = 'jet',vmin=0,vmax=1)
-    ax5.set_title('Phase coherence'.format(min_err_channel_nums[0]))
-    ax6 = plt.subplot(4,1,4)
-    ax6.pcolormesh(time_vec, freq_vec, 
-            normalize_timeseries(mean_coherence, time_vec, 2),
-            cmap = 'jet')
-    ax6.set_title('Normalized Phase coherence'.format(min_err_channel_nums[0]))
-                                        cmap = 'jet', vmin=0,vmax=1)
-    fig.set_size_inches(8,10)
-    fig.suptitle("_".join(animal_date_list))
-    fig.savefig(os.path.join(this_plot_dir,'phase_coherence_taste'))
+            mean_taste_coherence.shape[0] + data.laser_exists * 1)
+    iter_inds = np.stack(np.ndindex(mean_taste_coherence.shape[1::-1]))
+    if ax.ndim < 2:
+        ax = ax[:,np.newaxis]
+    for ind in iter_inds:
+        ax[tuple(ind)].contourf(time_vec, freq_vec, 
+                mean_taste_coherence[tuple(ind[::-1])], 
+                cmap = 'jet', levels = 30, 
+                vmin = vmin, vmax = vmax)
+    for num, dat in enumerate(mean_coherence):
+        ax[-1,num].contourf(time_vec, freq_vec, dat, 
+                cmap = 'jet', levels = 30,
+                vmin = vmin, vmax = vmax)
+    ax[0,0].set_title('Laser off')
+    if data.laser_exists:
+        for num, dat in enumerate(mean_taste_coherence_diff):
+            ax[num,-1].contourf(time_vec, freq_vec, dat, 
+                cmap = 'jet', levels = 30)
+        ax[-1,-1].contourf(time_vec, freq_vec, mean_coherence_diff, 
+                cmap = 'jet', levels = 30)
+        ax[0,1].set_title('Laser On')
+        ax[0,-1].set_title('Laser difference')
+    for ind in range(ax.shape[1]):
+        ax[-1,ind].set_title('Mean Coherence')
+    fig.set_size_inches(10,10)
+    fig.suptitle("_".join(animal_name_date_list[this_node_num]) + '\nRaw Coherence')
+    fig.savefig(os.path.join(this_plot_dir,'raw_phase_coherence_taste'))
+    #plt.show()
+
+    #for this_ax in range(len(ax)):
+    #    plt.sca(ax[this_ax])
+    #    plt.pcolormesh(time_vec, freq_vec, mean_taste_coherence[this_ax], 
+
+    #ax5 = plt.subplot(4,1,3)
+    #ax5.pcolormesh(time_vec, freq_vec, mean_coherence, 
+    #                                    cmap = 'jet',vmin=0,vmax=1)
+    #ax5.set_title('Phase coherence'.format(min_err_channel_nums[0]))
+    #ax6 = plt.subplot(4,1,4)
+    #ax6.pcolormesh(time_vec, freq_vec, 
+    #        normalize_timeseries(mean_coherence, time_vec, 2),
+    #        cmap = 'jet')
+    #ax6.set_title('Normalized Phase coherence'.format(min_err_channel_nums[0]))
+    #                                    cmap = 'jet', vmin=0,vmax=1)
+    #fig.set_size_inches(8,10)
+    #fig.suptitle("_".join(animal_date_list))
+    #fig.savefig(os.path.join(this_plot_dir,'phase_coherence_taste'))
 
     # Plot 3
     # a) Normalized Phase coherence by taste
-    fig, ax = plt.subplots(4,1)
-    for this_ax in range(len(ax)):
-        plt.sca(ax[this_ax])
-        plt.pcolormesh(time_vec, freq_vec, 
-                normalize_timeseries(mean_taste_coherence[this_ax], time_vec, 2),
-                cmap = 'jet')
-    fig.set_size_inches(8,10)
-    fig.suptitle("_".join(animal_date_list))
+    vmin, vmax = \
+            np.min(normalized_mean_taste_coherence),\
+            np.max(normalized_mean_taste_coherence)
+    fig, ax = plt.subplots(mean_taste_coherence.shape[1] + 1,
+            mean_taste_coherence.shape[0] + data.laser_exists * 1)
+    if ax.ndim < 2:
+        ax = ax[:,np.newaxis]
+    iter_inds = np.stack(np.ndindex(mean_taste_coherence.shape[1::-1]))
+    for ind in iter_inds:
+        ax[tuple(ind)].contourf(time_vec, freq_vec, 
+                normalized_mean_taste_coherence[tuple(ind[::-1])], 
+                cmap = 'jet', levels = 30, 
+                vmin = vmin, vmax = vmax) 
+    for num, dat in enumerate(normalized_mean_coherence):
+        ax[-1,num].contourf(time_vec, freq_vec, dat, 
+                cmap = 'jet', levels = 30,
+                vmin = vmin, vmax = vmax) 
+    ax[0,0].set_title('Laser off')
+    if data.laser_exists:
+        for num, dat in enumerate(normalized_taste_diff):
+            ax[num,-1].contourf(time_vec, freq_vec, dat, 
+                cmap = 'jet', levels = 30)
+        ax[-1,-1].contourf(time_vec, freq_vec, normalized_mean_diff, 
+                cmap = 'jet', levels = 30)
+        ax[0,1].set_title('Laser On')
+        ax[0,-1].set_title('Laser difference')
+    for ind in range(ax.shape[1]):
+        ax[-1,ind].set_title('Mean Coherence')
+    fig.set_size_inches(10,10)
+    fig.suptitle("_".join(animal_name_date_list[this_node_num]) + '\nNormalized Coherence')
     fig.savefig(os.path.join(this_plot_dir,'normalized_phase_coherence_taste'))
+    #plt.show()
+
+    #fig, a = plt.subplots(4,1)
+    #for this_ax in range(len(ax)):
+    #    plt.sca(ax[this_ax])
+    #    plt.pcolormesh(time_vec, freq_vec, 
+    #            normalize_timeseries(mean_taste_coherence[this_ax], time_vec, 2),
+    #            cmap = 'jet')
+    #fig.set_size_inches(8,10)
+    #fig.suptitle("_".join(animal_date_list))
+    #fig.savefig(os.path.join(this_plot_dir,'normalized_phase_coherence_taste'))
 
     # Plot 4
     # Histograms of phase difference by bands
-    firing_overview(phase_diff_hists.swapaxes(1,2),
-            time_vec,phase_bins[1:],subplot_labels = freq_vec)
-    fig = plt.gcf()
-    fig.set_size_inches(10,8)
-    fig.suptitle("_".join(animal_date_list))
-    fig.savefig(os.path.join(this_plot_dir,'phase_diff_histograms'))
+    #firing_overview(phase_diff_hists.swapaxes(1,2),
+    #        time_vec,phase_bins[1:],subplot_labels = freq_vec)
+    #fig = plt.gcf()
+    #fig.set_size_inches(10,8)
+    #fig.suptitle("_".join(animal_date_list))
+    #fig.savefig(os.path.join(this_plot_dir,'phase_diff_histograms'))
 
-    # Plot 5
-    # b) Phase consistency by taste 
-    # And mean phase consistency
-    fig, ax = plt.subplots(4,1)
-    for this_ax in range(len(ax)):
-        plt.sca(ax[this_ax])
-        plt.pcolormesh(time_vec, freq_vec, taste_phase_consistency[0][this_ax], 
-                                            cmap = 'jet')
-    fig.set_size_inches(8,10)
-    fig.suptitle("_".join(animal_date_list))
-    fig.savefig(os.path.join(this_plot_dir,'phase_consistency_RG0'))
+    ## Plot 5
+    ## b) Phase consistency by taste 
+    ## And mean phase consistency
+    #fig, ax = plt.subplots(4,1)
+    #for this_ax in range(len(ax)):
+    #    plt.sca(ax[this_ax])
+    #    plt.pcolormesh(time_vec, freq_vec, taste_phase_consistency[0][this_ax], 
+    #                                        cmap = 'jet')
+    #fig.set_size_inches(8,10)
+    #fig.suptitle("_".join(animal_date_list))
+    #fig.savefig(os.path.join(this_plot_dir,'phase_consistency_RG0'))
 
-    # Plot 6
-    # b) Phase consistency by taste 
-    fig, ax = plt.subplots(4,1)
-    for this_ax in range(len(ax)):
-        plt.sca(ax[this_ax])
-        plt.pcolormesh(time_vec, freq_vec, taste_phase_consistency[1][this_ax], 
-                                            cmap = 'jet')
-    fig.set_size_inches(8,10)
-    fig.suptitle("_".join(animal_date_list))
-    fig.savefig(os.path.join(this_plot_dir,'phase_consistency_RG1'))
+    ## Plot 6
+    ## b) Phase consistency by taste 
+    #fig, ax = plt.subplots(4,1)
+    #for this_ax in range(len(ax)):
+    #    plt.sca(ax[this_ax])
+    #    plt.pcolormesh(time_vec, freq_vec, taste_phase_consistency[1][this_ax], 
+    #                                        cmap = 'jet')
+    #fig.set_size_inches(8,10)
+    #fig.suptitle("_".join(animal_date_list))
+    #fig.savefig(os.path.join(this_plot_dir,'phase_consistency_RG1'))
 
     # Plot 7
     # a-d) Coherence per taste using STFT
     # e) Average STFT coherence
-    fig, ax = plt.subplots(5,1)
-    for this_ax in range(len(ax)-1):
-        plt.sca(ax[this_ax])
-        plt.pcolormesh(time_vec, freq_vec, 
-                normalize_timeseries(stft_coherence[this_ax],time_vec,2), 
-                                            cmap = 'jet')
-                #stft_coherence[this_ax], cmap = 'jet')
-    plt.sca(ax[-1])
-    plt.pcolormesh(time_vec, freq_vec, 
-                normalize_timeseries(np.mean(stft_coherence,axis=0),time_vec,2), 
-                                            cmap = 'jet')
-                #np.mean(stft_coherence,axis=0), cmap = 'jet')
-    fig.set_size_inches(8,10)
-    fig.suptitle("_".join(animal_date_list))
-    fig.savefig(os.path.join(this_plot_dir,'STFT_Coherence'))
+    #fig, ax = plt.subplots(5,1)
+    #for this_ax in range(len(ax)-1):
+    #    plt.sca(ax[this_ax])
+    #    plt.pcolormesh(time_vec, freq_vec, 
+    #            normalize_timeseries(stft_coherence[this_ax],time_vec,2), 
+    #                                        cmap = 'jet')
+    #            #stft_coherence[this_ax], cmap = 'jet')
+    #plt.sca(ax[-1])
+    #plt.pcolormesh(time_vec, freq_vec, 
+    #            normalize_timeseries(np.mean(stft_coherence,axis=0),time_vec,2), 
+    #                                        cmap = 'jet')
+    #            #np.mean(stft_coherence,axis=0), cmap = 'jet')
+    #fig.set_size_inches(8,10)
+    #fig.suptitle("_".join(animal_date_list))
+    #fig.savefig(os.path.join(this_plot_dir,'STFT_Coherence'))
 
     plt.close('all')
 
