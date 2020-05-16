@@ -199,22 +199,6 @@ for this_node_num in tqdm(range(len(phase_node_path_list))):
     data = ephys_data(data_dir = dirname_list[this_node_num]) 
     data.check_laser()
 
-    #data.firing_rate_params = dict(zip(\
-    #    ('type', 'step_size','window_size','dt', 'baks_resolution', 'baks_dt'),
-    #    ('conv',25,250,1,25e-3,1e-3)))
-
-    #middle_channels_bool = np.array(\
-    #        [True if channel in middle_channels else False \
-    #        for channel in parsed_channels ])
-    #phase_array_split = [phase_array[middle_channels_bool], 
-    #                    phase_array[~middle_channels_bool]]
-    #channel_num_split = \
-    #                [parsed_channels[middle_channels_bool], 
-    #                parsed_channels[~middle_channels_bool]]
-    #relative_channel_num_split = \
-    #                [np.arange(len(parsed_channels))[middle_channels_bool], 
-    #                np.arange(len(parsed_channels))[~middle_channels_bool]]
-
     # Find channel with phase closest to mean phase across all channels
     mean_phase_across_channels = [np.mean(x,axis=0) for x in phase_array_split]
     mean_error = [np.mean(np.abs(this_phase_array - \
@@ -270,10 +254,6 @@ for this_node_num in tqdm(range(len(phase_node_path_list))):
             [[ np.histogram2d(freq.flatten(), time_inds,
                             bins = (phase_bins, time_bins))[0] \
             for freq in tqdm(cond)] for cond in phase_diff_reshape])
-
-    #phase_diff_hists = np.array([[np.histogram(freq,phase_bins)[0] \
-    #        for freq in time_bin] \
-    #        for time_bin in phase_diff_reshape.T]).swapaxes(0,1) 
 
     # Average Coherence across trials
     # shape ::: laser x taste x freq x time 
@@ -354,41 +334,6 @@ for this_node_num in tqdm(range(len(phase_node_path_list))):
     #|_|   |_|\___/ \__|___/
     #                       
 
-    # Plot 1
-    # a) Spectrograms of chosen channels
-    # b) Mean Phase consistency 
-    # c) Mean Coherence
-
-    # Pull out stft amplitude from file
-    #with tables.open_file(data_hdf5_path,'r+') as hf5:
-    #    amplitude_array  = hf5.get_node(\
-    #            node_path_list[this_node_num],'amplitude_array')[:] 
-
-    #amplitude_array_split = [amplitude_array[:,x] \
-    #            for x in channel_split_inds]
-    #median_channel_amplitude_array = np.array([np.median(x,axis=1) \
-    #            for x in amplitude_array_split])
-
-    # Extract relevant channels
-    #min_err_chan_amp = np.array([np.squeeze(amplitude_array[:,chan]) \
-    #            for chan in min_err_channel_nums])
-
-    ## If lase is present, separate out trials by laser
-    #if data.laser_exists:
-    #    on_amplitude = np.array([min_err_chan_amp[:,taste,inds] \
-    #                    for taste,inds in enumerate(laser_inds)])
-    #    off_amplitude = np.array([min_err_chan_amp[:,taste,~inds] \
-    #                    for taste,inds in enumerate(laser_inds)])
-    #    # shape ::: laser x taste x region x trial x freq x time
-    #    min_err_amp_array = np.array([off_amplitude, on_amplitude])
-    #else:
-    #    min_err_amp_array = min_err_chan_amp[np.newaxis]
-
-    ## shape ::: laser x region x freq x time
-    #min_err_spectrograms = np.median(min_err_amp_array, axis = (1,3)) 
-    #norm_spectrograms = normalize_timeseries(min_err_spectrograms,time_vec,2) 
-
-
     # Calculate difference between laser conditions
     if data.laser_exists:
         # Just use STFT extracted above for amplitude rather than separating
@@ -397,9 +342,6 @@ for this_node_num in tqdm(range(len(phase_node_path_list))):
         median_spectrogram_array = np.median(laser_spectrogram_array, axis = (1,3))
         # shape ::: laser x region x freq x time
         norm_spectrograms = normalize_timeseries(median_spectrogram_array,time_vec,2)
-        #diff_spectrogram_array = np.squeeze(np.diff(median_spectrogram_array, axis = 0))
-        #norm_median_diff_spec = normalize_timeseries(diff_spectrogram_array,
-        #                                time_vec, stim_time = 2)
         norm_median_diff_spec = np.squeeze(np.diff(norm_spectrograms,axis=0)) 
     else:
         spectrogram_array = np.abs(selected_stft_array)
@@ -438,17 +380,6 @@ for this_node_num in tqdm(range(len(phase_node_path_list))):
     fig.set_size_inches(8,10)
     fig.savefig(os.path.join(this_plot_dir,'mean_spectrograms'))
 
-    #ax.pcolormesh(time_vec, freq_vec, norm_spectrograms[0], cmap = 'jet')
-    #ax0.set_title('Channel {}\nSpectrogram'.format(min_err_channel_nums[0]))
-    #ax1.pcolormesh(time_vec, freq_vec, norm_spectrograms[1], cmap = 'jet')
-    #ax1.set_title('Channel {}\nSpectrogram'.format(min_err_channel_nums[1]))
-    #ax3.pcolormesh(time_vec, freq_vec, mean_phase_consistency[0], 
-    #                                    cmap = 'jet',vmin=0,vmax=1)
-    #ax3.set_title('Phase consistency'.format(min_err_channel_nums[0]))
-    #ax4.pcolormesh(time_vec, freq_vec, mean_phase_consistency[1], 
-    #                                    cmap = 'jet',vmin=0,vmax=1)
-    #ax4.set_title('Phase consistency'.format(min_err_channel_nums[1]))
-     
     # Plot 2
     # a) Phase coherence by taste and mean phase coherence
     vmin, vmax = np.min(mean_taste_coherence), np.max(mean_taste_coherence)
@@ -481,24 +412,6 @@ for this_node_num in tqdm(range(len(phase_node_path_list))):
     fig.suptitle("_".join(animal_name_date_list[this_node_num]) + '\nRaw Coherence')
     fig.savefig(os.path.join(this_plot_dir,'raw_phase_coherence_taste'))
     #plt.show()
-
-    #for this_ax in range(len(ax)):
-    #    plt.sca(ax[this_ax])
-    #    plt.pcolormesh(time_vec, freq_vec, mean_taste_coherence[this_ax], 
-
-    #ax5 = plt.subplot(4,1,3)
-    #ax5.pcolormesh(time_vec, freq_vec, mean_coherence, 
-    #                                    cmap = 'jet',vmin=0,vmax=1)
-    #ax5.set_title('Phase coherence'.format(min_err_channel_nums[0]))
-    #ax6 = plt.subplot(4,1,4)
-    #ax6.pcolormesh(time_vec, freq_vec, 
-    #        normalize_timeseries(mean_coherence, time_vec, 2),
-    #        cmap = 'jet')
-    #ax6.set_title('Normalized Phase coherence'.format(min_err_channel_nums[0]))
-    #                                    cmap = 'jet', vmin=0,vmax=1)
-    #fig.set_size_inches(8,10)
-    #fig.suptitle("_".join(animal_date_list))
-    #fig.savefig(os.path.join(this_plot_dir,'phase_coherence_taste'))
 
     # Plot 3
     # a) Normalized Phase coherence by taste
@@ -535,16 +448,6 @@ for this_node_num in tqdm(range(len(phase_node_path_list))):
     fig.savefig(os.path.join(this_plot_dir,'normalized_phase_coherence_taste'))
     #plt.show()
 
-    #fig, a = plt.subplots(4,1)
-    #for this_ax in range(len(ax)):
-    #    plt.sca(ax[this_ax])
-    #    plt.pcolormesh(time_vec, freq_vec, 
-    #            normalize_timeseries(mean_taste_coherence[this_ax], time_vec, 2),
-    #            cmap = 'jet')
-    #fig.set_size_inches(8,10)
-    #fig.suptitle("_".join(animal_date_list))
-    #fig.savefig(os.path.join(this_plot_dir,'normalized_phase_coherence_taste'))
-
     # Plot 4
     # Histograms of phase difference by bands
     #firing_overview(phase_diff_hists.swapaxes(1,2),
@@ -554,20 +457,8 @@ for this_node_num in tqdm(range(len(phase_node_path_list))):
     #fig.suptitle("_".join(animal_date_list))
     #fig.savefig(os.path.join(this_plot_dir,'phase_diff_histograms'))
 
-    ## Plot 5
-    ## b) Phase consistency by taste 
-    ## And mean phase consistency
-    #fig, ax = plt.subplots(4,1)
-    #for this_ax in range(len(ax)):
-    #    plt.sca(ax[this_ax])
-    #    plt.pcolormesh(time_vec, freq_vec, taste_phase_consistency[0][this_ax], 
-    #                                        cmap = 'jet')
-    #fig.set_size_inches(8,10)
-    #fig.suptitle("_".join(animal_date_list))
-    #fig.savefig(os.path.join(this_plot_dir,'phase_consistency_RG0'))
-
     ## Plot 6
-    ## b) Phase consistency by taste 
+    ## b) Phase consistency by taste for both regions 
     #fig, ax = plt.subplots(4,1)
     #for this_ax in range(len(ax)):
     #    plt.sca(ax[this_ax])
