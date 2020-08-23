@@ -29,7 +29,9 @@ bat_frame.sort_values(group_names, inplace=True)
 result_columns = group_names.copy()
 result_columns.append('LICKS')
 summary_dat = bat_frame[result_columns].groupby(group_names).describe()
-summary_dat[[('LICKS','count'), ('LICKS','mean')]].sort_values(['Animal','SOLUTION','Notes'])
+sorted_frame = summary_dat[[('LICKS','count'), ('LICKS','mean')]]\
+        .sort_values(['Animal','SOLUTION','Notes'])
+sorted_frame.to_csv('sorted_frame.csv')
 
 # Plot
 wanted_animals = ['AM25','AM26']
