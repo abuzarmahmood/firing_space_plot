@@ -10,19 +10,6 @@ import datetime
 import numpy as np
 GPIO.setmode(GPIO.BOARD)
 
-taste_out = 31
-intan_taste = 24
-laser_out = 12
-intan_laser = 8
-taste_ports = [taste_out, intan_taste]
-laser_ports = [laser_out, intan_laser]
-opentime = 0.25
-laser_duration = 2.5
-# Set the outports to outputs
-for i in [taste_out, intan_taste, laser_out, intan_laser]:
-        GPIO.setup(i, GPIO.OUT)
-        GPIO.output(i, 0)
-
 def trigger_action(taste_ports, laser_ports, opentime, laser_duration):
     """
     lists of ports for taste and laser
@@ -67,6 +54,7 @@ class nosepoke_thread(Thread):
         self.cue_on = cue_on
         self.cue_off = cue_off
         self.stopped = 0
+        self.thread_exit = 0
 
         self.iti = np.float(iti)
         self.iti_delta = datetime.timedelta(seconds = iti)
@@ -90,6 +78,8 @@ class nosepoke_thread(Thread):
                 temp_read = GPIO.input(self.nosepoke_gpio)
                 if not temp_read: # Assuming 1 indicates poke
                     self.action_check()
+            elif self.thread_exit:
+                return
 
     def action_check(self):
         """
@@ -115,24 +105,31 @@ class nosepoke_thread(Thread):
     def release_stop(self):
         self.stopped = 0
 
+    def exit_thread(self):
+        self.thread_exit = 1
+
 class cue_thread(Thread): 
     def __init__(self, threadID, name, cue_gpio, cue_freq):
         Thread.__init__(self)
         self.threadID = threadID
         self.name = name
-        GPIO.setup(cue_gpio, GPIO.OUT) 
         self.cue_gpio = cue_gpio
+        GPIO.setup(cue_gpio, GPIO.OUT) 
+        GPIO.output(self.cue_gpio, 0)
         self.cue_freq = np.float(cue_freq)
-        self.stopped = 0
+        self.cue_stopped = 0
+        self.thread_exit = 0
 
     def cue_protocol(self):
         print("Starting cue protocol")
         while True:
             time.sleep(1/self.cue_freq)
             GPIO.output(self.cue_gpio, 0)
-            if not self.stopped:
+            if not self.cue_stopped:
                 time.sleep(1/self.cue_freq)
                 GPIO.output(self.cue_gpio, 1)
+            elif self.thread_exit:
+                return
 
     def run(self):
         print "Starting " + self.name
@@ -141,27 +138,72 @@ class cue_thread(Thread):
         print "Exiting " + self.name
 
     def set_stop(self):
-        self.stopped = 1
+        self.cue_stopped = 1
 
     def release_stop(self):
-        self.stopped = 0
+        self.cue_stopped = 0
+
+    def exit_thread(self):
+        self.thread_exit = 1
+        GPIO.output(self.cue_gpio, 0)
 
 ########################################
 # Initiate run
 ########################################
-trigger_action(taste_ports, laser_ports, opentime, laser_duration)
+
+if __name__ == "__main__":
+    taste_out = 31
+    intan_taste = 24
+    laser_out = 12
+    intan_laser = 8
+    taste_ports = [taste_out, intan_taste]
+    laser_ports = [laser_out, intan_laser]
+    #opentime = 0.25
+
+    def set_opentime(dur = None):
+        global opentime
+        if dur is None:
+            dur = input('Please enter opentime (sec) : ')
+        opentime = dur
+    laser_duration = 2.5
+
+    # Set the outports to outputs
+    for i in [taste_out, intan_taste, laser_out, intan_laser]:
+        GPIO.setup(i, GPIO.OUT)
+        GPIO.output(i, 0)
 
 
-light = 36
-poke_sample_freq = 100
-cue_freq = 10
-beam = 11
-cue_thread1 = cue_thread(1, 'cue_thread', light, cue_freq)
-cue_thread1.start()
+    light = 36
+    poke_sample_freq = 100
+    cue_freq = 10
+    beam = 11
+    timeout_dur = 3
 
-poke_thread = nosepoke_thread(2, 'poke_thread', beam,poke_sample_freq,1,1,10,
-            cue_thread1.release_stop, cue_thread1.set_stop)
-poke_thread.start()
+    set_opentime()
 
-poke_thread.set_stop()
-cue_thread1.set_stop()
+    def create_threads():
+        global cue_thread1, poke_thread
+        cue_thread1 = cue_thread(1, 'cue_thread', light, cue_freq)
+        poke_thread = nosepoke_thread(2, 'poke_thread', beam,poke_sample_freq,1,1,timeout_dur,
+                cue_thread1.release_stop, cue_thread1.set_stop)
+
+    def start_threads():
+        cue_thread1.start()
+        poke_thread.start()
+
+    def pause_threads():
+        poke_thread.set_stop()
+        time.sleep(2)
+        cue_thread1.set_stop()
+        time.sleep(2)
+        cue_thread1.set_stop()
+
+    def unpause_threads():
+        poke_thread.release_stop()
+        cue_thread1.release_stop()
+
+    def exit_threads():
+        pause_threads()
+        poke_thread.exit_thread()
+        cue_thread1.exit_thread()
+
