@@ -60,6 +60,7 @@ class nosepoke_thread(Thread):
         self.iti_delta = datetime.timedelta(seconds = iti)
         self.latest_trigger_time = 0
         self.wait_till = datetime.datetime.now()
+        self.counts = 0
 
     def run(self):
         print "Starting " + self.name
@@ -93,6 +94,9 @@ class nosepoke_thread(Thread):
             self.latest_trigger_time = current_time
             self.wait_till = current_time + self.iti_delta
             trigger_action(taste_ports, laser_ports, opentime, laser_duration)
+            self.counts += 1
+            print(f"Successful pokes : {self.count}, "\
+                    "{current_time.strftime('%S:%M:%S')}")
             #print("ACTION COMPLETED")
         return
 
