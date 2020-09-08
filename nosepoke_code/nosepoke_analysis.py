@@ -53,3 +53,23 @@ poke_durations = np.diff(poke_bounds).flatten()
 # Calculate inter-poke intervals
 # Will likely have to plot log(t) for comparison
 interpoke_intervals = np.diff(list(zip(poke_down[:-1],poke_up[1:]))).flatten()
+
+# For every 10s period, mark burst as:
+# 1) Either 5+ pokes in 10s
+# 2) 90% of the 10s window was spent poking 
+window_kern = np.ones(10*100)
+only_poke_entry = np.diff(digin_array[-1])
+only_poke_entry[only_poke_entry<0] = 0
+poke_condition = np.convolve(only_poke_entry,window_kern,'valid') >= 5
+continuous_condition = \
+        (np.convolve(digin_array[-1][:-1], window_kern,'valid')/len(window_kern)) >= 0.9 
+bout_bool = (poke_condition + continuous_condition) > 0
+
+cut_digin_array = digin_array[-1,len(window_kern):]
+time_vec = np.arange(len(cut_digin_array))/100
+fig, ax = plt.subplots(3,1, sharex=True)
+ax[0].plot(time_vec, cut_digin_array)
+ax[1].plot(time_vec,poke_condition)
+ax[1].plot(time_vec,continuous_condition)
+ax[2].plot(time_vec,bout_bool)
+plt.show()
