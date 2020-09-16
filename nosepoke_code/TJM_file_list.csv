@@ -1,0 +1,6 @@
+animal_name,expt_day,path
+TJM2,H2O1,/media/bigdata/Tom_Data/TJM2/TJM2_H2O1_200828_173613
+TJM2,H2O2,/media/bigdata/Tom_Data/TJM2/TJM2_H202_200829_180307
+TJM2,H2O3,/media/bigdata/Tom_Data/TJM2/TJM2_H203_200830_122043
+TJM2,Train,/media/bigdata/Tom_Data/TJM2/TJM2_Sucrose_Test_200831_190137
+TJM2,Test,/media/bigdata/Tom_Data/TJM2/TJM2_Sucrose_RealTest_200901_175403
