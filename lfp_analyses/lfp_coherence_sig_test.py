@@ -186,11 +186,12 @@ for this_node_num in tqdm(range(len(node_path_list))):
     region0_long, region1_long = region_phase_channels_long[0],\
                                 region_phase_channels_long[1]
 
-    mismatch_coherence_array = np.zeros(\
-            (bootstrap_samples,*phase_diff.shape[2:])) 
+    #mismatch_coherence_array = np.zeros(\
+    #        (bootstrap_samples,*phase_diff.shape[2:])) 
 
     def calc_mismatch_coherence(region0_long, region1_long):
-        this_region0 = resample(region0_long)
+        # Just have to resample one region
+        this_region0 = region0_long
         this_region1 = resample(region1_long)
         this_phase_diff = np.exp(-1.j*(this_region0-this_region1))
         coherence = np.abs(np.mean(\

@@ -1,5 +1,6 @@
 """
 Check fraction of taste responsive neurons in BLA vs GC
+README and file_list in /media/fastdata/taste_response_analysis
 """
 
 

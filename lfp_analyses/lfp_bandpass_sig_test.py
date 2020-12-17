@@ -13,10 +13,10 @@ from tqdm import tqdm, trange
 from itertools import product
 from joblib import Parallel, delayed, cpu_count
 import shutil
+from sklearn.utils import resample
 os.chdir('/media/bigdata/firing_space_plot/ephys_data')
 from ephys_data import ephys_data
 from visualize import imshow, firing_overview, gen_square_subplots
-from operator import itemgetter
 
 ##################################################
 ## Define functions
@@ -60,6 +60,7 @@ with tables.open_file(data_hdf5_path,'r') as hf5:
                             for this_path in channel_path_list]
 
 # Check which files have both bandpassed lfp and stft
+# This is needed so the channels used for STFT coherence can also be used here
 lfp_name_date_str = [x.split('/')[2:4] for x in lfp_node_path_list]
 channel_name_date_str = [x.split('/')[2:4] for x in channel_path_list]
 common_files = [file for file in lfp_name_date_str if file in channel_name_date_str]
@@ -99,6 +100,7 @@ for this_node_num in tqdm(range(len(fin_lfp_node_path_list))):
     # as was done for STFT phase coherence
 
     # Calculate phase difference
+    # shape ::: bands x taste x region x trial x time
     phase_diff = np.diff(phase_array,axis=2).squeeze()
     phase_diff_reshape = phase_diff.reshape(\
             (phase_array.shape[0],-1,phase_diff.shape[-1]))
@@ -145,6 +147,33 @@ for this_node_num in tqdm(range(len(fin_lfp_node_path_list))):
     #                            phase_diff_reshape.shape[1], replace = True)]
     #    coherence_boot_array[repeat] = \
     #            np.abs(np.mean(np.exp(-1.j*this_phase_diff),axis=(1)))
+
+    ####################################### 
+    # Shuffled coherence 
+    ####################################### 
+    phase_array_long = phase_array.swapaxes(1,2)
+    phase_array_long = phase_array_long.reshape(
+            (*phase_array_long.shape[:2],-1,phase_array_long.shape[-1]))
+    
+    region0_long, region1_long = phase_array_long[:,0].swapaxes(0,1),\
+                                phase_array_long[:,1].swapaxes(0,1)
+
+    # shape ::: samples x bands x time
+    #mismatch_coherence_array = np.zeros(\
+    #        (bootstrap_samples, phase_diff.shape[0], phase_diff.shape[-1])) 
+
+    def calc_mismatch_coherence(region0_long, region1_long):
+        # Just have to resample one region
+        this_region0 = region0_long
+        this_region1 = resample(region1_long)
+        this_phase_diff = np.exp(-1.j*(this_region0-this_region1))
+        coherence = np.abs(np.mean(\
+                this_phase_diff,axis=0)).squeeze()
+        return coherence
+
+    mismatch_coherence_array = np.array( Parallel(n_jobs = cpu_count() - 2)\
+            (delayed(calc_mismatch_coherence)(region0_long, region1_long) \
+            for x in trange(bootstrap_samples)))
 
     ####################################### 
     # Difference from baseline
@@ -222,6 +251,8 @@ for this_node_num in tqdm(range(len(fin_lfp_node_path_list))):
     # Bootstrapped coherence with baseline 95% CI
     # Mark deviations with different color
 
+    # Also add shuffle for comparison
+
     # Time limits for plotting
     t_lims = [1000,4500]
     stim_t = 2000
@@ -263,6 +294,16 @@ for this_node_num in tqdm(range(len(fin_lfp_node_path_list))):
                 t_lims[0] - stim_t, t_lims[1]-stim_t, color = 'r', alpha = 0.5)
         for interval  in fin_change_inds:
             this_ax.axvspan(interval[0],interval[1],facecolor='y',alpha = 0.5)
+        this_mismatch_coherence = mismatch_coherence_array[:,ax_num]
+        mean_shuffle_val = np.mean(this_mismatch_coherence,axis=0)
+        std_shuffle_val  = np.std(this_mismatch_coherence,axis=0)
+        this_ax.plot(t_vec[t_lims[0]:t_lims[1]]-stim_t, 
+                mean_shuffle_val[t_lims[0]:t_lims[1]])
+        this_ax.fill_between(x = t_vec[t_lims[0]:t_lims[1]]-stim_t,
+                y1 = mean_shuffle_val[t_lims[0]:t_lims[1]] - \
+                        2*std_shuffle_val[t_lims[0]:t_lims[1]],
+                y2 = mean_shuffle_val[t_lims[0]:t_lims[1]] + \
+                        2*std_shuffle_val[t_lims[0]:t_lims[1]], alpha = 0.5)
         this_ax.set_title(freq_label_list[ax_num])
         this_ax.set_ylabel('Coherence (mean +/- 95% CI)')
         this_ax.set_xlabel('Time post-stimulus delivery (ms)')
@@ -272,64 +313,9 @@ for this_node_num in tqdm(range(len(fin_lfp_node_path_list))):
     fig.set_size_inches(16,8)
     plt.tight_layout()
     plt.subplots_adjust(top = 0.85, wspace = 0.15)
-    #plt.show()
     fig.savefig(os.path.join(this_plot_dir,
         '_'.join(fin_lfp_name_date_str[this_node_num])+'_bandpass_coherence_baseline_CI'))
     plt.close(fig)
-
-    #norm = matplotlib.colors.Normalize(0,1)
-    #cmap_object= matplotlib.cm.ScalarMappable(cmap = 'viridis', norm = norm)
-    #alpha = 0.05
-    #sig_pval_mat = 1*((p_val_mat>(1-(alpha/2))) \
-    #        + (p_val_mat < (alpha/2)))
-    #fig, ax = gen_square_subplots(coherence_boot_array.shape[1])
-    #for ax_num, this_ax in enumerate(ax.flatten()\
-    #        [:coherence_boot_array.shape[1]]):
-    #    sig_inds = np.where(sig_pval_mat[ax_num])[0]
-    #    non_sig_inds = np.where(1-sig_pval_mat[ax_num])[0]
-    #    color_vec = np.ones(t_vec.shape)
-    #    color_vec[non_sig_inds] = 0
-    #    color_vec = cmap_object.to_rgba(color_vec)
-    #    this_coherence = coherence_boot_array[:,ax_num]
-    #    mean_val = np.mean(this_coherence,axis=0)
-    #    std_val = np.std(this_coherence,axis=0)
-    #    t_vec = np.arange(this_coherence.shape[-1])
-    #    this_ax.plot(t_vec,mean_val)
-    #    this_ax.fill_between(\
-    #            x = t_vec,
-    #            y1 = mean_val - 2*std_val,
-    #            y2 = mean_val + 2*std_val, 
-    #            alpha = 0.5)
-    #    #this_ax.plot(t_vec[sig_inds],mean_val[sig_inds])
-    #    #this_ax.fill_between(\
-    #    #        x = t_vec[sig_inds],
-    #    #        y1 = mean_val[sig_inds] - 2*std_val[sig_inds],
-    #    #        y2 = mean_val[sig_inds] + 2*std_val[sig_inds], 
-    #    #        alpha = 0.5)
-    #    this_ax.hlines((lower_bound[ax_num],higher_bound[ax_num]),
-    #            0, coherence_boot_array.shape[-1], color = 'r')
-    #    this_ax.set_title(freq_label_list[ax_num])
-    #plt.suptitle('Baseline 95% CI (Bandpass) \n'\
-    #        + "_".join(fin_lfp_node_path_list[this_node_num].split('/')[-2:]))
-    #fig.set_size_inches(16,8)
-    #fig.savefig(os.path.join(this_plot_dir,'bandpass_coherence_baseline_CI'))
-    #plt.close(fig)
-
-    # Plot 2
-    # Marking significant deviations from baseline
-    #fig = plt.figure()
-    #imshow(sig_pval_mat);plt.colorbar()
-    #this_ax = plt.gca()
-    #this_ax.set_yticks(range(len(freq_label_list)))
-    #this_ax.set_yticklabels(freq_label_list)
-    #this_ax.set_title('Signigicant difference from baseline (alpha = {})\n'\
-    #        .format(alpha)\
-    #        + "_".join(fin_lfp_node_path_list[this_node_num].split('/')[-2:]))
-    #plt.suptitle('Bandpass LFP')
-    #plt.sca(this_ax)
-    #fig.set_size_inches(16,8)
-    #fig.savefig(os.path.join(this_plot_dir,'bandpass_significant_coherence_baseline'))
-    #plt.close(fig)
 
     # Plot 3
     # Comparison of coherence with shuffle
@@ -354,6 +340,8 @@ for this_node_num in tqdm(range(len(fin_lfp_node_path_list))):
     #plt.suptitle('Shuffle comparison\n'\
     #        + "_".join(node_path_list[this_node_num].split('/')[-2:]))
     #fig.set_size_inches(16,8)
+    #plt.show()
+
     #fig.savefig(os.path.join(this_plot_dir,'coherence_shuffle_comparison'))
     #plt.close(fig)
 

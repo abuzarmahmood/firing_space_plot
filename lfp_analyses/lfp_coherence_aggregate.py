@@ -34,7 +34,8 @@ from scipy.stats import zscore
 
 def remove_node(path_to_node, hf5):
     if path_to_node in hf5:
-        hf5.remove_node(os.path.dirname(path_to_node),os.path.basename(path_to_node))
+        hf5.remove_node(
+                os.path.dirname(path_to_node),os.path.basename(path_to_node))
 
 def normalize_timeseries(array, time_vec, stim_time):
     mean_baseline = np.mean(array[:,time_vec<stim_time],axis=1)[:,np.newaxis]
@@ -73,14 +74,29 @@ with tables.open_file(data_hdf5_path,'r') as hf5:
     freq_vec = hf5.get_node('/stft','freq_vec')[:]
     time_vec = hf5.get_node('/stft','time_vec')[:]
 
-    phase_node_path_list = [x.__str__().split(" ")[0] for x in hf5.root.stft._f_walknodes() \
+    phase_node_path_list = \
+            [x.__str__().split(" ")[0] for x in hf5.root.stft._f_walknodes() \
             if 'phase_array' in x.__str__()]
-    print('Extracting phase info')
+    phase_node_path_list.sort()
+
     #phase_array_list = [x[:] for x in tqdm(phase_node_list)]
     # Extract all nodes with phase array
     node_path_list = [os.path.dirname(x) for x in phase_node_path_list]
+
+    # Ask user to select files to perform anaysis on
+    selected_files = easygui.multchoicebox(\
+            msg = 'Please select files to run analysis on',
+            choices = ['{}) '.format(num)+x[6:] \
+                    for num,x in enumerate(node_path_list)])
+    selected_file_inds = [int(x.split(')')[0]) for x in selected_files]
+
+    phase_node_path_list = [phase_node_path_list[i] for i in selected_file_inds]
+    node_path_list = [node_path_list[i] for i in selected_file_inds]
+
     # Pull parsed_lfp_channel from each array
-    parsed_channel_list  = [hf5.get_node(path,'parsed_lfp_channels')[:] for path in node_path_list]
+    parsed_channel_list  = \
+            [hf5.get_node(path,'parsed_lfp_channels')[:] \
+            for path in node_path_list]
 
 # Define variables to be maintained across files
 initial_dir = dir() + ['initial_dir']
@@ -102,15 +118,19 @@ for this_node_num in tqdm(range(len(phase_node_path_list))):
     ## Coherence from Phase Difference
     ######################################## 
     with tables.open_file(data_hdf5_path,'r') as hf5:
-        phase_array = hf5.get_node(node_path_list[this_node_num],'phase_array')[:].swapaxes(0,1)
+        phase_array = hf5.get_node(node_path_list[this_node_num],
+                                'phase_array')[:].swapaxes(0,1)
     parsed_channels = parsed_channel_list[this_node_num]
-    middle_channels_bool = np.array([True if channel in middle_channels else False \
+    middle_channels_bool = np.array(\
+            [True if channel in middle_channels else False \
             for channel in parsed_channels ])
-    phase_array_split = [phase_array[middle_channels_bool], phase_array[~middle_channels_bool]]
+    phase_array_split = [phase_array[middle_channels_bool], 
+                        phase_array[~middle_channels_bool]]
     channel_num_split = \
-            [parsed_channels[middle_channels_bool], parsed_channels[~middle_channels_bool]]
+                    [parsed_channels[middle_channels_bool], 
+                    parsed_channels[~middle_channels_bool]]
     relative_channel_num_split = \
-            [np.arange(len(parsed_channels))[middle_channels_bool], 
+                    [np.arange(len(parsed_channels))[middle_channels_bool], 
                     np.arange(len(parsed_channels))[~middle_channels_bool]]
     del phase_array
 
@@ -129,11 +149,11 @@ for this_node_num in tqdm(range(len(phase_node_path_list))):
     # These are the relative numbers for the selected channels
     # To be used with indexing
     min_err_channel_nums = [this_channel_vec[np.argmin(this_error)] \
-            for this_channel_vec,this_error in zip(relative_channel_num_split,mean_error)] 
+                            for this_channel_vec,this_error in \
+                            zip(relative_channel_num_split,mean_error)] 
 
     # For visualization purposes reshape both phase arrays
     # to have trials along a single axis
-    ##phase_diff = np.exp(-1.j*min_err_phase[0]) - np.exp(-1.j*min_err_phase[1])
     phase_diff = np.exp(1.j*(min_err_phase[0] - min_err_phase[1]))
 
     # Plot phase diff as histogram time-series for each band to confirm coherence
@@ -172,17 +192,23 @@ for this_node_num in tqdm(range(len(phase_node_path_list))):
     with tables.open_file(data_hdf5_path,'r+') as hf5:
         # region_phase_channels are the phases of the chosen channels
         # relative_region_channel_nums are the indices of the channels used
-        remove_node(os.path.join(node_path_list[this_node_num],'region_phase_channels'),hf5)
-        remove_node(os.path.join(node_path_list[this_node_num],'relative_region_channel_nums'),hf5)
-        #remove_node(os.path.join(node_path_list[this_node_num],'phase_difference_array'),hf5)
-        #remove_node(os.path.join(node_path_list[this_node_num],'mean_coherence_array'),hf5)
+        remove_node(os.path.join(
+                node_path_list[this_node_num],'region_phase_channels'),hf5)
+        remove_node(os.path.join(
+                node_path_list[this_node_num],'relative_region_channel_nums'),hf5)
+        remove_node(os.path.join(
+                node_path_list[this_node_num],'phase_difference_array'),hf5)
+        remove_node(os.path.join(
+                node_path_list[this_node_num],'mean_coherence_array'),hf5)
 
         hf5.create_array(node_path_list[this_node_num], 'region_phase_channels', 
              np.array(min_err_phase))
         hf5.create_array(node_path_list[this_node_num], 'relative_region_channel_nums', 
              np.array(min_err_channel_nums))
-        #hf5.create_array(node_path_list[this_node_num], 'phase_difference_array', phase_diff)
-        #hf5.create_array(node_path_list[this_node_num], 'mean_coherence_array', mean_coherence)
+        hf5.create_array(node_path_list[this_node_num], 
+                            'phase_difference_array', phase_diff)
+        hf5.create_array(node_path_list[this_node_num], 
+                            'mean_coherence_array', mean_coherence)
 
     # Phase consistency for BLA and GC
     phase_vectors = [np.exp(phase*1.j) for phase in min_err_phase]
@@ -205,15 +231,21 @@ for this_node_num in tqdm(range(len(phase_node_path_list))):
 
     # Pull out stft amplitude from file
     with tables.open_file(data_hdf5_path,'r+') as hf5:
-        amplitude_array  = hf5.get_node(node_path_list[this_node_num],'amplitude_array')[:] 
+        amplitude_array  = hf5.get_node(\
+                node_path_list[this_node_num],'amplitude_array')[:] 
 
-    amplitude_array_split = [amplitude_array[:,x] for x in relative_channel_num_split]
-    mean_channel_amplitude_array = np.array([np.mean(x,axis=1) for x in amplitude_array_split])
+    amplitude_array_split = [amplitude_array[:,x] \
+                for x in relative_channel_num_split]
+    mean_channel_amplitude_array = np.array([np.mean(x,axis=1) \
+                for x in amplitude_array_split])
 
     # Extract relevant channels
-    min_err_chan_amp = [np.squeeze(amplitude_array[:,chan]) for chan in min_err_channel_nums]
-    min_err_spectrograms = [np.mean(dat, axis = (0,1)) for dat in min_err_chan_amp]
-    norm_spectrograms = [normalize_timeseries(dat,time_vec,2) for dat in min_err_spectrograms]
+    min_err_chan_amp = [np.squeeze(amplitude_array[:,chan]) \
+                for chan in min_err_channel_nums]
+    min_err_spectrograms = [np.mean(dat, axis = (0,1)) \
+                for dat in min_err_chan_amp]
+    norm_spectrograms = [normalize_timeseries(dat,time_vec,2) \
+                for dat in min_err_spectrograms]
 
     animal_date_list = node_path_list[this_node_num].split('/')[2:]
     this_plot_dir = os.path.join(
@@ -235,12 +267,15 @@ for this_node_num in tqdm(range(len(phase_node_path_list))):
     ax1.set_title('Channel {}\nSpectrogram'.format(min_err_channel_nums[1]))
     ax3 = plt.subplot(4,2,3)
     ax4 = plt.subplot(4,2,4)
-    ax3.pcolormesh(time_vec, freq_vec, mean_phase_consistency[0], cmap = 'jet',vmin=0,vmax=1)
+    ax3.pcolormesh(time_vec, freq_vec, mean_phase_consistency[0], 
+                                        cmap = 'jet',vmin=0,vmax=1)
     ax3.set_title('Phase consistency'.format(min_err_channel_nums[0]))
-    ax4.pcolormesh(time_vec, freq_vec, mean_phase_consistency[1], cmap = 'jet',vmin=0,vmax=1)
+    ax4.pcolormesh(time_vec, freq_vec, mean_phase_consistency[1], 
+                                        cmap = 'jet',vmin=0,vmax=1)
     ax4.set_title('Phase consistency'.format(min_err_channel_nums[1]))
     ax5 = plt.subplot(4,1,3)
-    ax5.pcolormesh(time_vec, freq_vec, mean_coherence, cmap = 'jet',vmin=0,vmax=1)
+    ax5.pcolormesh(time_vec, freq_vec, mean_coherence, 
+                                        cmap = 'jet',vmin=0,vmax=1)
     ax5.set_title('Phase coherence'.format(min_err_channel_nums[0]))
     ax6 = plt.subplot(4,1,4)
     ax6.pcolormesh(time_vec, freq_vec, 
@@ -256,8 +291,8 @@ for this_node_num in tqdm(range(len(phase_node_path_list))):
     fig, ax = plt.subplots(4,1)
     for this_ax in range(len(ax)):
         plt.sca(ax[this_ax])
-        plt.pcolormesh(time_vec, freq_vec, mean_taste_coherence[this_ax], cmap = 'jet',
-                vmin=0,vmax=1)
+        plt.pcolormesh(time_vec, freq_vec, mean_taste_coherence[this_ax], 
+                                        cmap = 'jet', vmin=0,vmax=1)
     fig.set_size_inches(8,10)
     fig.suptitle("_".join(animal_date_list))
     fig.savefig(os.path.join(this_plot_dir,'phase_coherence_taste'))
@@ -288,7 +323,8 @@ for this_node_num in tqdm(range(len(phase_node_path_list))):
     fig, ax = plt.subplots(4,1)
     for this_ax in range(len(ax)):
         plt.sca(ax[this_ax])
-        plt.pcolormesh(time_vec, freq_vec, taste_phase_consistency[0][this_ax], cmap = 'jet')
+        plt.pcolormesh(time_vec, freq_vec, taste_phase_consistency[0][this_ax], 
+                                            cmap = 'jet')
     fig.set_size_inches(8,10)
     fig.suptitle("_".join(animal_date_list))
     fig.savefig(os.path.join(this_plot_dir,'phase_consistency_RG0'))
@@ -298,7 +334,8 @@ for this_node_num in tqdm(range(len(phase_node_path_list))):
     fig, ax = plt.subplots(4,1)
     for this_ax in range(len(ax)):
         plt.sca(ax[this_ax])
-        plt.pcolormesh(time_vec, freq_vec, taste_phase_consistency[1][this_ax], cmap = 'jet')
+        plt.pcolormesh(time_vec, freq_vec, taste_phase_consistency[1][this_ax], 
+                                            cmap = 'jet')
     fig.set_size_inches(8,10)
     fig.suptitle("_".join(animal_date_list))
     fig.savefig(os.path.join(this_plot_dir,'phase_consistency_RG1'))
@@ -310,11 +347,13 @@ for this_node_num in tqdm(range(len(phase_node_path_list))):
     for this_ax in range(len(ax)-1):
         plt.sca(ax[this_ax])
         plt.pcolormesh(time_vec, freq_vec, 
-                normalize_timeseries(stft_coherence[this_ax],time_vec,2), cmap = 'jet')
+                normalize_timeseries(stft_coherence[this_ax],time_vec,2), 
+                                            cmap = 'jet')
                 #stft_coherence[this_ax], cmap = 'jet')
     plt.sca(ax[-1])
     plt.pcolormesh(time_vec, freq_vec, 
-                normalize_timeseries(np.mean(stft_coherence,axis=0),time_vec,2), cmap = 'jet')
+                normalize_timeseries(np.mean(stft_coherence,axis=0),time_vec,2), 
+                                            cmap = 'jet')
                 #np.mean(stft_coherence,axis=0), cmap = 'jet')
     fig.set_size_inches(8,10)
     fig.suptitle("_".join(animal_date_list))
@@ -336,107 +375,107 @@ for this_node_num in tqdm(range(len(phase_node_path_list))):
 # / ___ \ (_| | (_| | | |  __/ (_| | (_| | ||  __/
 #/_/   \_\__, |\__, |_|  \___|\__, |\__,_|\__\___|
 #        |___/ |___/          |___/               
-
-##################################################
-# Calculate mean coherence for all sessions
-##################################################
-print('Calculating aggreate coherence measures')
-
-with tables.open_file(data_hdf5_path,'r') as hf5:
-    final_phases = [hf5.get_node(os.path.join(this_path,'region_phase_channels')) \
-            for this_path in node_path_list] 
-    phase_diffs = [np.exp(1.j*(x[0] - x[1])) for x in tqdm(final_phases)]
-
-    # Concatenate trials from all tastes to make shuffling easier
-    final_phases_long = [np.reshape(phases, tuple((phases.shape[0],-1, *phases.shape[3:]))) \
-            for phases in final_phases] 
-
-coherence_array = np.array([np.abs(np.mean(x,axis=(0,1))) for x in phase_diffs])
-mean_aggregate_coherence = np.mean(coherence_array,axis=0)
-
-# Calculate mean and std of coherence for bands
-# Remove first freq band from array
-fin_coherence_array = coherence_array[:,1:].swapaxes(0,1)
-coherence_list = np.split(fin_coherence_array,6,axis=0)
-freq_list = np.split(freq_vec[1:],6)
-coherence_means = [np.mean(x,axis=(0,1)) for x in coherence_list]
-coherence_std = [np.std(x,axis=(0,1)) for x in coherence_list]
-
-##################################################
-# Calculate trial shuffled coherence
-##################################################
-
-#final_phase_vectors_long = [np.exp(x*-1.j) for x in final_phases_long]
-
-# Check reshaping (phase consistency should still be present)
-#phase_consistency_long = [np.abs(np.mean(np.exp(phases*-1.j),axis=1)) \
-#        for phases in final_phases_long]
-#plt.imshow(phase_consistency_long[1][0],interpolation='nearest', 
-#               aspect='auto',origin='lower',cmap='jet',vmin=0,vmax=1);plt.show()
-
-# For each set, resample 1000 trials, find coherence and store
-# Doing it this way might bog down the system (but we'll cross that bridge
-# when we get to it :p)
-
-def parallelize(func, iterator):
-    return Parallel(n_jobs = mp.cpu_count()-2)\
-            (delayed(func)(this_iter) for this_iter in tqdm(iterator))
-
-def resample_trials(array):
-    temp_array = np.array([phases[resample(np.arange(phases.shape[0]), \
-            n_samples = 1000, random_state = 0)] for phases in array])
-    return temp_array
-
-def calc_phase_diff(array):
-    return np.squeeze(np.exp(-1.j*np.diff(array,axis=0)))
-
-# Convert at this stage so converting after resampling doesn't take too long
-phase_vectors_resampled = parallelize(resample_trials, final_phases_long) 
-#plt.imshow(phase_vectors_resampled[1][1][:,1],interpolation='nearest', 
-#           aspect='auto',origin='lower',cmap='jet');plt.show()
-
-shuffled_phase_diff = [calc_phase_diff(x) for x in tqdm(phase_vectors_resampled)]
-
-mean_shuffle_coherence = [np.abs(np.mean(x,axis=0)) for x in shuffled_phase_diff]
-mean_aggregate_shuffle_coherence = np.mean(np.array(mean_shuffle_coherence),axis=0)
-#plt.imshow(np.mean(np.array(mean_shuffle_coherence),axis=0),interpolation='nearest', 
-#           aspect='auto',origin='lower',cmap='jet',vmin=0,vmax=1);plt.show()
-
-
-##################################################
-# Save outputs are plots
-##################################################
-agg_plot_dir = os.path.join(data_folder,'aggregate_analysis')
-if not os.path.exists(agg_plot_dir):
-    os.makedirs(agg_plot_dir)
-
-#normalized_mean_coherence = normalize_timeseries(mean_aggregate_coherence,time_vec,2)
-#normalized_shuffle_coherence = normalize_timeseries(mean_aggregate_shuffle_coherence,time_vec,2)
-
-fig,ax = plt.subplots(3,1)
-ax[0].pcolormesh(time_vec, freq_vec, zscore(mean_aggregate_coherence,axis=-1), 
-#ax[0].pcolormesh(time_vec, freq_vec, mean_aggregate_coherence, 
-        cmap = 'viridis')#,vmin = 0, vmax=1)
-ax[0].set_title('Normalized Original coherence')
-ax[1].pcolormesh(time_vec, freq_vec, zscore(mean_aggregate_shuffle_coherence,axis=-1), 
-#ax[1].pcolormesh(time_vec, freq_vec, mean_aggregate_shuffle_coherence, 
-        cmap = 'viridis')#,vmin = 0, vmax=1)
-ax[1].set_title('Normalized Trial-shuffled coherence')
-ax[2].pcolormesh(time_vec, freq_vec, 
-        mean_aggregate_coherence - mean_aggregate_shuffle_coherence, 
-        cmap = 'jet',vmin = 0, vmax=1)
-ax[2].set_title('Shuffle-subtracted coherence')
-fig.set_size_inches(8,10)
-fig.savefig(os.path.join(agg_plot_dir,'mean_phase_coherence'))
-
-fig, ax = plt.subplots(len(coherence_means),sharey=True,sharex=True)
-for this_ax, this_mean, this_std, this_freq in \
-        zip(ax, coherence_means, coherence_std, freq_list):
-    this_ax.fill_between(time_vec, this_mean - 2*this_std, this_mean+ 2*this_std)
-    this_ax.plot(time_vec, this_mean, color='r')
-    this_ax.set_title('Frequencies : {}'.format(this_freq))
-fig.set_size_inches(8,10)
-fig.savefig(os.path.join(agg_plot_dir,'bandwise_phase_coherence'))
-
-plt.close('all')
-
+#
+###################################################
+## Calculate mean coherence for all sessions
+###################################################
+#print('Calculating aggreate coherence measures')
+#
+#with tables.open_file(data_hdf5_path,'r') as hf5:
+#    final_phases = [hf5.get_node(os.path.join(this_path,'region_phase_channels')) \
+#            for this_path in node_path_list] 
+#    phase_diffs = [np.exp(1.j*(x[0] - x[1])) for x in tqdm(final_phases)]
+#
+#    # Concatenate trials from all tastes to make shuffling easier
+#    final_phases_long = [np.reshape(phases, tuple((phases.shape[0],-1, *phases.shape[3:]))) \
+#            for phases in final_phases] 
+#
+#coherence_array = np.array([np.abs(np.mean(x,axis=(0,1))) for x in phase_diffs])
+#mean_aggregate_coherence = np.mean(coherence_array,axis=0)
+#
+## Calculate mean and std of coherence for bands
+## Remove first freq band from array
+#fin_coherence_array = coherence_array[:,1:].swapaxes(0,1)
+#coherence_list = np.split(fin_coherence_array,6,axis=0)
+#freq_list = np.split(freq_vec[1:],6)
+#coherence_means = [np.mean(x,axis=(0,1)) for x in coherence_list]
+#coherence_std = [np.std(x,axis=(0,1)) for x in coherence_list]
+#
+###################################################
+## Calculate trial shuffled coherence
+###################################################
+#
+##final_phase_vectors_long = [np.exp(x*-1.j) for x in final_phases_long]
+#
+## Check reshaping (phase consistency should still be present)
+##phase_consistency_long = [np.abs(np.mean(np.exp(phases*-1.j),axis=1)) \
+##        for phases in final_phases_long]
+##plt.imshow(phase_consistency_long[1][0],interpolation='nearest', 
+##               aspect='auto',origin='lower',cmap='jet',vmin=0,vmax=1);plt.show()
+#
+## For each set, resample 1000 trials, find coherence and store
+## Doing it this way might bog down the system (but we'll cross that bridge
+## when we get to it :p)
+#
+#def parallelize(func, iterator):
+#    return Parallel(n_jobs = mp.cpu_count()-2)\
+#            (delayed(func)(this_iter) for this_iter in tqdm(iterator))
+#
+#def resample_trials(array):
+#    temp_array = np.array([phases[resample(np.arange(phases.shape[0]), \
+#            n_samples = 1000, random_state = 0)] for phases in array])
+#    return temp_array
+#
+#def calc_phase_diff(array):
+#    return np.squeeze(np.exp(-1.j*np.diff(array,axis=0)))
+#
+## Convert at this stage so converting after resampling doesn't take too long
+#phase_vectors_resampled = parallelize(resample_trials, final_phases_long) 
+##plt.imshow(phase_vectors_resampled[1][1][:,1],interpolation='nearest', 
+##           aspect='auto',origin='lower',cmap='jet');plt.show()
+#
+#shuffled_phase_diff = [calc_phase_diff(x) for x in tqdm(phase_vectors_resampled)]
+#
+#mean_shuffle_coherence = [np.abs(np.mean(x,axis=0)) for x in shuffled_phase_diff]
+#mean_aggregate_shuffle_coherence = np.mean(np.array(mean_shuffle_coherence),axis=0)
+##plt.imshow(np.mean(np.array(mean_shuffle_coherence),axis=0),interpolation='nearest', 
+##           aspect='auto',origin='lower',cmap='jet',vmin=0,vmax=1);plt.show()
+#
+#
+###################################################
+## Save outputs are plots
+###################################################
+#agg_plot_dir = os.path.join(data_folder,'aggregate_analysis')
+#if not os.path.exists(agg_plot_dir):
+#    os.makedirs(agg_plot_dir)
+#
+##normalized_mean_coherence = normalize_timeseries(mean_aggregate_coherence,time_vec,2)
+##normalized_shuffle_coherence = normalize_timeseries(mean_aggregate_shuffle_coherence,time_vec,2)
+#
+#fig,ax = plt.subplots(3,1)
+#ax[0].pcolormesh(time_vec, freq_vec, zscore(mean_aggregate_coherence,axis=-1), 
+##ax[0].pcolormesh(time_vec, freq_vec, mean_aggregate_coherence, 
+#        cmap = 'viridis')#,vmin = 0, vmax=1)
+#ax[0].set_title('Normalized Original coherence')
+#ax[1].pcolormesh(time_vec, freq_vec, zscore(mean_aggregate_shuffle_coherence,axis=-1), 
+##ax[1].pcolormesh(time_vec, freq_vec, mean_aggregate_shuffle_coherence, 
+#        cmap = 'viridis')#,vmin = 0, vmax=1)
+#ax[1].set_title('Normalized Trial-shuffled coherence')
+#ax[2].pcolormesh(time_vec, freq_vec, 
+#        mean_aggregate_coherence - mean_aggregate_shuffle_coherence, 
+#        cmap = 'jet',vmin = 0, vmax=1)
+#ax[2].set_title('Shuffle-subtracted coherence')
+#fig.set_size_inches(8,10)
+#fig.savefig(os.path.join(agg_plot_dir,'mean_phase_coherence'))
+#
+#fig, ax = plt.subplots(len(coherence_means),sharey=True,sharex=True)
+#for this_ax, this_mean, this_std, this_freq in \
+#        zip(ax, coherence_means, coherence_std, freq_list):
+#    this_ax.fill_between(time_vec, this_mean - 2*this_std, this_mean+ 2*this_std)
+#    this_ax.plot(time_vec, this_mean, color='r')
+#    this_ax.set_title('Frequencies : {}'.format(this_freq))
+#fig.set_size_inches(8,10)
+#fig.savefig(os.path.join(agg_plot_dir,'bandwise_phase_coherence'))
+#
+#plt.close('all')
+#

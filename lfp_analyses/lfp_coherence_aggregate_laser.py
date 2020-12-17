@@ -377,7 +377,10 @@ for this_node_num in tqdm(range(len(phase_node_path_list))):
         ax[-1,0].set_title(list(region_list[this_node_num].keys())[0] + '_diff')
         ax[-1,1].set_title(list(region_list[this_node_num].keys())[1] + '_diff')
     fig.suptitle("_".join(animal_name_date_list[this_node_num]) + '\nSpectrograms')
-    fig.set_size_inches(8,10)
+    if data.laser_exists:
+        fig.set_size_inches(8,10)
+    else:
+        fig.set_size_inches(8,3.5)
     fig.savefig(os.path.join(this_plot_dir,'mean_spectrograms'))
 
     # Plot 2
