@@ -6,7 +6,6 @@ matplotlib.use('Qt5Agg')
 import tables
 import easygui
 import scipy
-from scipy.signal import spectrogram
 import numpy as np
 from scipy.signal import hilbert, butter, filtfilt,freqs 
 from tqdm import tqdm, trange
@@ -35,7 +34,8 @@ def calc_stft(trial, max_freq,time_range_tuple,\
     """
     trial : 1D array
     max_freq : where to lob off the transform
-    time_range_tuple : (start,end) in seconds
+    time_range_tuple : (start,end) in seconds, time_lims of spectrogram
+                            from start of trial snippet`
     """
     f,t,this_stft = scipy.signal.stft(
                 scipy.signal.detrend(trial),
@@ -59,7 +59,7 @@ def parallelize(func, iterator):
 def convert_to_array(iterator, iter_inds):
     temp_array  =\
             np.empty(
-                tuple((*(np.max(np.array(stft_iters),axis=0) + 1),
+                tuple((*(np.max(np.array(iter_inds),axis=0) + 1),
                         *iterator[0].shape)),
                     dtype=np.dtype(iterator[0].flatten()[0]))
     for iter_num, this_iter in tqdm(enumerate(iter_inds)):

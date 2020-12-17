@@ -230,11 +230,16 @@ bla_bin_firing_frame.groupby(['laser','neuron','taste','trial','bin'])\
 
 # Perform ANOVA on each neuron individually
 # 3 Way ANOVA : Taste, laser, time
-gc_anova_list = [
-    gc_bin_firing_frame.loc[gc_bin_firing_frame.neuron == nrn,:]\
-            .anova(dv = 'firing', \
-             between = ['taste','laser','bin'])\
-            for nrn in tqdm(gc_bin_firing_frame.neuron.unique())]
+#gc_anova_list = [
+#    gc_bin_firing_frame.loc[gc_bin_firing_frame.neuron == nrn,:]\
+#            .anova(dv = 'firing', \
+#             between = ['taste','laser','bin'])\
+#            for nrn in tqdm(gc_bin_firing_frame.neuron.unique())]
+
+gc_neuron_group_list = gc_bin_firing_frame.groupby(['neuron'])
+gc_anova_list = [this_dat[1].anova( dv = 'firing',
+                        between = ['taste','laser','bin']) \
+                for this_dat in tqdm(gc_neuron_group_list)]
 
 bla_anova_list = [
     bla_bin_firing_frame.loc[bla_bin_firing_frame.neuron == nrn,:]\
@@ -250,6 +255,24 @@ gc_sig_laser = [True if x['p-unc'][1]<p_val_tresh else False for x in gc_anova_p
 bla_sig_laser = [True if x['p-unc'][1]<p_val_tresh else False for x in bla_anova_p_list]
 gc_sig_taste = [True if x['p-unc'][0]<p_val_tresh else False for x in gc_anova_p_list]
 bla_sig_taste = [True if x['p-unc'][0]<p_val_tresh else False for x in bla_anova_p_list]
+
+##################################################
+# Find how many tastes changes per neuron
+##################################################
+# Perform an anova per neuron, per taste
+# If there is a significant difference, find average of all trials and compare
+# between laser and non-laser conditions
+
+gc_taste_group_list = gc_bin_firing_frame.groupby(['neuron','taste'])
+gc_taste_anova_list = [this_dat[1].anova(dv = 'firing',
+                                between = ['laser','bin'])
+            for this_dat in tqdm(gc_taste_group_list)]
+gc_taste_anova_p_list = [x[['Source','p-unc']][:1] for x in gc_taste_anova_list]
+gc_taste_sig_laser = [True if x['p-unc'][0]<p_val_tresh else False for x in gc_taste_anova_p_list]
+
+##################################################
+# Find how many neurons showed an increase, decrease or both
+##################################################
 
 # Generate venn diagrams to visualize taste discriminatoriness
 # and laser affectedness

@@ -105,9 +105,6 @@ def extract_poke_stats(digin_array, fin_sampling_rate):
 file_csv_path = '/media/bigdata/Tom_Data/TJM_file_list.csv'
 file_frame = pd.read_csv(file_csv_path)
 
-# Find files
-#dir_name = '/media/bigdata/Tom_Data/TJM2/TJM2_H2O1_200828_173613'
-
 data_cols =[ "animal_name", "expt_day",  "total_pokes", "successful_pokes",
         "total_poke_time","total_bout_time"]
 data_df = pd.DataFrame(columns = data_cols)
@@ -134,13 +131,3 @@ for file_ind,path in enumerate(file_frame.path):
                 "total_poke_time" : total_poke_time,
                 "total_bout_time" : total_bout_time}
     data_df = data_df.append(data_dict, ignore_index = True)
-
-
-#cut_digin_array = digin_array[-1,len(window_kern):]
-#time_vec = np.arange(len(cut_digin_array))/100
-#fig, ax = plt.subplots(3,1, sharex=True)
-#ax[0].plot(time_vec, cut_digin_array)
-#ax[1].plot(time_vec,poke_condition)
-#ax[1].plot(time_vec,continuous_condition)
-#ax[2].plot(time_vec,bout_bool)
-#plt.show()

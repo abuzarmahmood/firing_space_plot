@@ -6,13 +6,11 @@ matplotlib.use('Qt5Agg')
 import tables
 import easygui
 import scipy
-from scipy.signal import spectrogram
 import numpy as np
 from scipy.signal import hilbert, butter, filtfilt,freqs 
 from tqdm import tqdm, trange
 from itertools import product
-from joblib import Parallel, delayed
-import multiprocessing as mp
+from joblib import Parallel, delayed, cpu_count
 import shutil
 os.chdir('/media/bigdata/firing_space_plot/ephys_data')
 from ephys_data import ephys_data
@@ -30,10 +28,13 @@ def get_lfp_channels(hdf5_name):
         parsed_lfp_channels = hf5.root.Parsed_LFP_channels[:]
     return parsed_lfp_channels
 
-# Calculate absolute and phase
 def parallelize(func, iterator):
-    return Parallel(n_jobs = mp.cpu_count()-2)\
+    return Parallel(n_jobs = cpu_count()-2)\
             (delayed(func)(this_iter) for this_iter in tqdm(iterator))
+
+def parallel_over_first_dim(func, array):
+    return np.array( Parallel(n_jobs = cpu_count() - 2)\
+            (delayed(func)(this_iter) for this_iter in tqdm(array)))
 
 def remove_node(path_to_node, hf5):
     if path_to_node in hf5:
@@ -139,10 +140,17 @@ if len(unselected_choices) > 0:
                         '\n{}'.format(os.path.basename(file_list[file_num])),
                             'Enter node names',['Animal Name','Date'])
 
+#min_freq = 1
+#max_freq = 25
+#bandwidth = 2
+#
+#band_freqs = [(i,i+bandwidth) \
+#        for i in np.arange(min_freq,max_freq-bandwidth, bandwidth)]
+
 band_freqs = [(1,4),
                 (4,7),
                 (7,12),
-                (12,25)]
+                (12,20)]
 
 with tables.open_file(data_hdf5_path,'r+') as hf5:
     if '/bandpass_lfp/frequency_bands' in hf5:
@@ -177,9 +185,24 @@ for file_num in tqdm(range(len(file_list))):
                             fs = Fs) \
                                     for band in tqdm(band_freqs)])
 
-    hilbert_bandpassed_lfp = hilbert(lfp_bandpassed)
-    phase_array = np.angle(hilbert_bandpassed_lfp)
-    amplitude_array = np.abs(hilbert_bandpassed_lfp)
+    #def butter_bandpass_parallel(band):
+    #    return butter_bandpass_filter(
+    #                            data = dat.lfp_array, 
+    #                            lowcut = band[0],
+    #                            highcut = band[1],
+    #                            fs = Fs)
+
+    #lfp_bandpassed = parallel_over_first_dim(
+    #                                butter_bandpass_parallel, 
+    #                                lfp_bandpassed) 
+
+    hilbert_bandpassed_lfp = parallel_over_first_dim(hilbert, lfp_bandpassed) 
+    phase_array = parallel_over_first_dim(np.angle, hilbert_bandpassed_lfp) 
+    amplitude_array = parallel_over_first_dim(np.abs, hilbert_bandpassed_lfp) 
+
+    #hilbert_bandpassed_lfp = hilbert(lfp_bandpassed)
+    #phase_array = np.angle(hilbert_bandpassed_lfp)
+    #amplitude_array = np.abs(hilbert_bandpassed_lfp)
 
     # Write arrays to data HF5
     with tables.open_file(data_hdf5_path,'r+') as hf5:
@@ -205,4 +228,6 @@ for file_num in tqdm(range(len(file_list))):
         hf5.create_array('/bandpass_lfp/{}/{}'.format(animal_name,date_str),
                 'amplitude_array', amplitude_array)
         hf5.flush()
+
+    del lfp_bandpassed, hilbert_bandpassed_lfp, phase_array, amplitude_array
 
