@@ -17,27 +17,34 @@ brain regions
     region to contextualize what inter-region xcorr represents
 4) Inter-region XCorr within time windows
 """
+########################################
+# ____       _               
+#/ ___|  ___| |_ _   _ _ __  
+#\___ \ / _ \ __| | | | '_ \ 
+# ___) |  __/ |_| |_| | |_) |
+#|____/ \___|\__|\__,_| .__/ 
+#                     |_|    
+########################################
 
-# import stuff
+########################################
+# Import modules
+########################################
 
 import os
+import sys
 import scipy.stats as stats
 import numpy as np
-from matplotlib import pyplot as plt
-plt.set_cmap('viridis')
-from matplotlib.lines import Line2D
 from tqdm import tqdm
-from pingouin import mwu,kruskal, read_dataset
 import pandas as pd
-import seaborn as sns
+#import seaborn as sns
 import tables
 from joblib import Parallel, delayed, cpu_count
 import itertools as it
 import ast
 
-os.chdir('/media/bigdata/firing_space_plot/ephys_data')
+sys.path.append('/media/bigdata/firing_space_plot/ephys_data')
 from ephys_data import ephys_data
-import visualize
+#import visualize
 
 ########################################
 ## Define Functions
@@ -109,7 +116,8 @@ def gen_df_bin(array, label):
 #                                               
 ################################################### 
 
-data_dir = '/media/bigdata/Abuzar_Data/AM12/AM12_4Tastes_191106_085215/'
+#data_dir = '/media/bigdata/Abuzar_Data/AM12/AM12_4Tastes_191106_085215/'
+data_dir = sys.argv[1]
 dat = ephys_data(data_dir)
 dat.get_lfp_electrodes()
 dat.get_stft()
@@ -318,66 +326,3 @@ if (not present_bool) or recalculate_transform:
         eval(frame_name).to_hdf(dat.hdf5_name,  
                 os.path.join(save_path, frame_name))
         #hf5.create_array(save_path,this_save_name,eval(this_array_name))
-
-
-##################################################
-# ____  _       _   _   _             
-#|  _ \| | ___ | |_| |_(_)_ __   __ _ 
-#| |_) | |/ _ \| __| __| | '_ \ / _` |
-#|  __/| | (_) | |_| |_| | | | | (_| |
-#|_|   |_|\___/ \__|\__|_|_| |_|\__, |
-#                               |___/ 
-##################################################
-#
-#bins = None
-#alpha = 0.8
-#plthist = lambda x, bins, label, alpha : \
-#    plt.hist(x.flatten(), bins = bins, label = label, alpha = alpha, density = False)
-#plthist(mean_inter_region_xcorr,bins, 'inter', alpha)
-#plthist(mean_shuffled_inter_region_xcorr,bins, 'shuffle', alpha)
-#plthist(mean_intra_region_xcorr[1],None, dat.region_names[1], alpha)
-#plthist(shuffled_mean_intra_region_xcorr[1],None, 
-#                dat.region_names[1] + 'shuffled', alpha)
-#plthist(mean_intra_region_xcorr[0],None, dat.region_names[0], alpha)
-#plthist(shuffled_mean_intra_region_xcorr[0],None, 
-#                dat.region_names[0] + 'shuffled', alpha)
-#plt.legend()
-#plt.show()
-#
-## Convert arrays to dataframes to plot with seaborn
-#def gen_df(array, label):
-#    inds = np.array(list(np.ndindex(array.shape)))
-#    return pd.DataFrame({
-#            'label' : [label] * inds.shape[0],
-#            'freq' : dat.freq_vec[inds[:,1]],
-#            'xcorr' : array.flatten()})
-#
-#plot_frame = pd.concat([\
-#            gen_df(mean_inter_region_xcorr, 'inter'),
-#            gen_df(mean_shuffled_inter_region_xcorr, 'shuffle'),
-#            gen_df(mean_intra_region_xcorr[0], dat.region_names[0]),
-#            gen_df(mean_intra_region_xcorr[1], dat.region_names[1]),
-#            gen_df(shuffled_mean_intra_region_xcorr[0], 
-#                            dat.region_names[0] + 'shuffled'),
-#            gen_df(shuffled_mean_intra_region_xcorr[1], 
-#                            dat.region_names[1] + 'shuffled')])
-#
-##sns.boxplot(x='freq',y='xcorr',hue='label',data=plot_frame)
-#sns.relplot(x='freq',y='xcorr',hue='label',data=plot_frame, kind = 'line', ci='sd')
-#plt.show()
-#
-#def gen_df_bin(array, label):
-#    inds = np.array(list(np.ndindex(array.shape)))
-#    return pd.DataFrame({
-#            'label' : [label] * inds.shape[0],
-#            'bin' : inds[:,0],
-#            'freq' : dat.freq_vec[inds[:,2]],
-#            'xcorr' : array.flatten()})
-#
-#plot_frame = pd.concat([\
-#            gen_df_bin(mean_binned_inter_xcorr, 'inter'),
-#            gen_df_bin(mean_shuffled_binned_inter_xcorr, 'shuffle')])
-#
-#sns.relplot(x='freq',y='xcorr',hue='label',col = 'bin', 
-#                    data=plot_frame, kind = 'line', ci='sd',col_wrap=4, markers = 'x')
-#plt.show()
