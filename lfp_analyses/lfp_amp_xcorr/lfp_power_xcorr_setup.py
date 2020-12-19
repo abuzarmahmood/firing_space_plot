@@ -16,6 +16,8 @@ brain regions
 3) XCorr b/w all pairs of electrodes within the same
     region to contextualize what inter-region xcorr represents
 4) Inter-region XCorr within time windows
+5) Taste-specific inter-region XCorr
+    - Both binned and whole trial
 """
 ########################################
 # ____       _               
@@ -93,7 +95,8 @@ def gen_df(array, label):
     return pd.DataFrame({
             'label' : [label] * inds.shape[0],
             'pair' : inds[:,0],
-            'trial' : inds[:,1],
+            'taste' : inds[:,1],
+            'trial' : inds[:,2],
             'freq' : dat.freq_vec[inds[:,-1]],
             'xcorr' : array.flatten()})
 
@@ -103,8 +106,9 @@ def gen_df_bin(array, label):
             'label' : [label] * inds.shape[0],
             'bin' : inds[:,0],
             'pair' : inds[:,1],
-            'trial' : inds[:,2],
-            'freq' : dat.freq_vec[inds[:,3]],
+            'taste' : inds[:,2],
+            'trial' : inds[:,3],
+            'freq' : dat.freq_vec[inds[:,-1]],
             'xcorr' : array.flatten()})
 
 ################################################### 
@@ -199,12 +203,10 @@ transformed_array = transformed_array[...,time_lims[0]:time_lims[1]]
 # Perform zero-lag cross-correlation on single trials and shuffled trials
 # Use normalized cross-correlation to remove amplitude effects
 
-transformed_array_long = transformed_array.reshape(\
-        (transformed_array.shape[0],-1,*transformed_array.shape[3:]))
 split_amplitude_list = \
-        [transformed_array_long[region] for region in dat.lfp_region_electrodes]
+        [transformed_array[region] for region in dat.lfp_region_electrodes]
 
-recalculate_xcorr = False
+recalculate_xcorr = True
 # If not there, or recalculate flag True, then calculate
 
 with tables.open_file(dat.hdf5_name,'r+') as hf5:
@@ -234,14 +236,11 @@ if (not present_bool) or recalculate_transform:
                         for ind in pair_inds])
     shuffled_inter_region_xcorr = np.array([\
                     norm_zero_lag_xcorr(\
-                        np.random.permutation(temp_split_amp_list[0][ind[0]]),
+                        temp_split_amp_list[0][ind[0]]\
+                            [:,np.random.permutation(\
+                                        np.arange(temp_split_amp_list[0].shape[2]))],
                         temp_split_amp_list[1][ind[1]]) \
                     for ind in pair_inds])
-
-
-    #mean_inter_region_xcorr = np.mean(inter_region_xcorr,axis=1)
-    #mean_shuffled_inter_region_xcorr = \
-    #        np.mean(shuffled_inter_region_xcorr,axis=1)
 
     ########################################
     ## Binned Inter-Region
@@ -256,14 +255,12 @@ if (not present_bool) or recalculate_transform:
                         for ind in pair_inds]\
                         for this_bin in zip(*binned_amp)])
     shuffled_binned_inter_region_xcorr = np.array([[\
-            norm_zero_lag_xcorr(np.random.permutation(this_bin[0][ind[0]]),
+            norm_zero_lag_xcorr(this_bin[0][ind[0]]\
+                            [:,np.random.permutation(\
+                                        np.arange(temp_split_amp_list[0].shape[2]))],
                                 this_bin[1][ind[1]]) \
                         for ind in pair_inds]\
                         for this_bin in zip(*binned_amp)])
-
-    #mean_binned_inter_xcorr = np.mean(binned_inter_region_xcorr,axis=2)
-    #mean_shuffled_binned_inter_xcorr = \
-    #        np.mean(shuffled_binned_inter_region_xcorr,axis=2)
 
 
     ########################################
@@ -279,14 +276,34 @@ if (not present_bool) or recalculate_transform:
             for this_pair_list, region in zip(pair_list, split_amplitude_list)]
     shuffled_intra_region_xcorr_list = [np.array([\
             norm_zero_lag_xcorr(\
-                np.random.permutation(region[ind[0]]),region[ind[1]]) \
+                   region[ind[0]]
+                        [:,np.random.permutation(\
+                                    np.arange(temp_split_amp_list[0].shape[2]))],
+                    region[ind[1]]) \
             for ind in this_pair_list]) \
             for this_pair_list, region in zip(pair_list, split_amplitude_list)]
 
-    #mean_intra_region_xcorr = \
-    #        [np.mean(x,axis=(1)) for x in intra_region_xcorr_list]
-    #shuffled_mean_intra_region_xcorr = \
-    #        [np.mean(x,axis=(1)) for x in shuffled_intra_region_xcorr_list]
+    ########################################
+    ## Binned Within Region
+    ########################################
+    # I wonder if these would be more readable as for-loops :p
+    # Remake binned_amp so it's not using the region sorted temp_split_amp_list
+    binned_amp = [np.split(x,splits,axis=-1) for x in split_amplitude_list]
+    binned_intra_region_xcorr_list = [ np.array([[\
+            norm_zero_lag_xcorr(this_bin[ind[0]],
+                                this_bin[ind[1]]) \
+                        for ind in this_pair_list]\
+                        for this_bin in this_region]) \
+                        for this_pair_list, this_region in zip(pair_list,binned_amp)]
+
+    shuffled_binned_intra_region_xcorr_list = [np.array([[\
+            norm_zero_lag_xcorr(this_bin[ind[0]]\
+                            [:,np.random.permutation(\
+                                        np.arange(split_amplitude_list[0].shape[2]))],
+                                this_bin[ind[1]]) \
+                        for ind in this_pair_list]\
+                        for this_bin in this_region]) \
+                        for this_pair_list, this_region in zip(pair_list,binned_amp)]
 
 
     ########################################
@@ -312,17 +329,24 @@ if (not present_bool) or recalculate_transform:
             [gen_df(x,'shuffled_intra_'+region_name) for x,region_name \
                     in zip(shuffled_intra_region_xcorr_list, dat.region_names)])
 
+    binned_intra_region_frame = pd.concat(
+            [gen_df_bin(x,'intra_'+region_name) for x,region_name in \
+                zip(binned_intra_region_xcorr_list, dat.region_names)] + \
+            [gen_df_bin(x,'shuffled_intra_'+region_name) for x,region_name \
+                in zip(shuffled_binned_intra_region_xcorr_list, dat.region_names)])
+
     with tables.open_file(dat.hdf5_name,'r+') as hf5:
         for frame_name in ['inter_region_frame',
                             'binned_inter_region_frame',
-                            'intra_region_frame']:
+                            'intra_region_frame',
+                            'binned_intra_region_frame']:
             # Will only remove if array already there
             remove_node(os.path.join(save_path, frame_name),hf5, recursive=True)
 
     for frame_name in ['inter_region_frame',
                         'binned_inter_region_frame',
-                        'intra_region_frame']:
+                        'intra_region_frame',
+                        'binned_intra_region_frame']:
         # Save transformed array to HDF5
         eval(frame_name).to_hdf(dat.hdf5_name,  
                 os.path.join(save_path, frame_name))
-        #hf5.create_array(save_path,this_save_name,eval(this_array_name))

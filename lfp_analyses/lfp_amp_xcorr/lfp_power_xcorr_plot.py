@@ -70,7 +70,8 @@ median_amplitude = np.median(dat.amplitude_array,axis=(0,2))
 save_path = '/stft/analyses/amplitude_xcorr'
 for frame_name in ['inter_region_frame',
                     'binned_inter_region_frame',
-                    'intra_region_frame']:
+                    'intra_region_frame',
+                    'binned_intra_region_frame']:
     # Save transformed array to HDF5
     globals()[frame_name] = pd.read_hdf(dat.hdf5_name,  
             os.path.join(save_path, frame_name))
@@ -106,7 +107,6 @@ concat_frame = pd.concat([inter_region_frame,intra_region_frame])
 plot_frame = concat_frame.groupby(['label','pair','freq']).mean().\
                             reset_index()
 
-#sns.swarmplot(x='freq',y='xcorr',hue='label',data=plot_frame)
 title_str = fin_name + "\nLFP AMP XCorr (mean +/- SD)" 
 sns.relplot(x='freq',y='xcorr',hue='label',data=plot_frame, 
         kind = 'line', ci='sd',  markers = True, style = 'label')
@@ -115,11 +115,25 @@ fig = plt.gcf()
 fig.savefig(os.path.join(fin_plot_dir,fin_name+'_LFP_AMP_XCorr'),dpi=300)
 #plt.show()
 
+## Taste-specific
+plot_frame = concat_frame.\
+                        groupby(['label','pair','freq','taste']).mean().\
+                        reset_inde()
+
+title_str = fin_name + "\nLFP AMP Taste XCorr (mean +/- SD)" 
+sns.relplot(x='freq',y='xcorr',hue='label',data=plot_frame, 
+        kind = 'line', ci='sd',  markers = True, style = 'label',col='taste')
+plt.suptitle(title_str)
+fig = plt.gcf()
+fig.savefig(os.path.join(fin_plot_dir,fin_name+'_LFP_AMP_Taste_XCorr'),dpi=300)
+#plt.show()
+
 ########################################
 ## Binned Corr Plots
 ########################################
 # Hardcoded for now but fix in future
-plot_frame = binned_inter_region_frame.\
+concat_frame = pd.concat([binned_inter_region_frame,binned_intra_region_frame])
+plot_frame = concat_frame.\
         groupby(['bin','label','pair','freq']).mean().reset_index()
 bin_width = 250
 bin_starts = np.arange(np.max(plot_frame.bin)+1)*bin_width
@@ -134,3 +148,19 @@ plt.suptitle(title_str)
 plt.tight_layout()
 fig = plt.gcf()
 fig.savefig(os.path.join(fin_plot_dir,fin_name+'_Binned_LFP_AMP_XCorr'),dpi=300)
+#plt.show()
+
+## Taste-specific
+plot_frame = binned_inter_region_frame.\
+        groupby(['bin','label','pair','freq','taste']).mean().reset_index()
+plot_frame['bin_lims'] = [bin_lims[x] for x in plot_frame['bin'].values]
+
+sns.relplot(x='freq',y='xcorr',hue='label',col = 'bin_lims',row = 'taste', 
+                    data=plot_frame, kind = 'line', 
+                    ci='sd', markers = True, style = 'label')
+title_str = fin_name + "\nBinned LFP AMP Taste XCorr (mean +/- SD)" 
+plt.suptitle(title_str)
+plt.tight_layout()
+fig = plt.gcf()
+fig.savefig(os.path.join(fin_plot_dir,fin_name+'_Binned_LFP_AMP_Taste_XCorr'),dpi=300)
+#plt.show()
