@@ -130,14 +130,18 @@ if not present_bool:
     pair_inds = list(zip(*np.where(np.tril(all_pairs))))
 
     sum_spikes = [np.sum(x,axis=-1) for x in temp_region_spikes]
+    # Try detrending with 1st order difference before corr
+    diff_sum_spikes = [np.diff(region,axis=1) for region in sum_spikes]
+    # Zscore along trial axis to normalize values across neurons
+    diff_sum_spikes = [stats.zscore(region,axis=1) for region in diff_sum_spikes]
 
     # Perform correlation over all pairs for each taste separately
     # Compare values to corresponding shuffles
     repeats = 1000
 
     def calc_corrs(this_ind):
-        this_pair = np.array([sum_spikes[0][this_ind[0]], 
-                                sum_spikes[1][this_ind[1]]])
+        this_pair = np.array([diff_sum_spikes[0][this_ind[0]], 
+                                diff_sum_spikes[1][this_ind[1]]])
         #corrs = np.abs([spearmanr(this_taste)[0] for this_taste in this_pair.T])
         out = \
                 list(zip(*[spearmanr(this_taste) for this_taste in this_pair.T]))
@@ -158,29 +162,28 @@ if not present_bool:
 
         # Shuffle trials in pairs (adjacent trials) to remove
         # correlations created by long-term state changes
-        stringent_shuffle_inds = np.arange(this_pair[0].shape[0]).\
-                                    reshape(-1,2)[:,::-1].flatten()
-        out =  [spearmanr(this_taste[stringent_shuffle_inds,0], this_taste[:,1]) \
-                            for this_taste in this_pair.T]
-        trans_out = list(zip(*out))
-        stringent_shuffled_corrs, stringent_shuffled_p_vals = \
-                [np.array(x) for x in trans_out]
+        #stringent_shuffle_inds = np.arange(this_pair[0].shape[0]).\
+        #                            reshape(-1,2)[:,::-1].flatten()
+        #out =  [spearmanr(this_taste[stringent_shuffle_inds,0], this_taste[:,1]) \
+        #                    for this_taste in this_pair.T]
+        #trans_out = list(zip(*out))
+        #stringent_shuffled_corrs, stringent_shuffled_p_vals = \
+        #        [np.array(x) for x in trans_out]
 
-        return corrs, p_vals, shuffled_corrs, shuffled_p_vals, percentile_list,\
-                    stringent_shuffled_corrs, stringent_shuffled_p_vals
+        return corrs, p_vals, shuffled_corrs, shuffled_p_vals, percentile_list#,\
+                    #stringent_shuffled_corrs, stringent_shuffled_p_vals
 
     # Check corrs are significant individually aswell
     out = parallelize(calc_corrs,pair_inds)
     [corr_array, p_val_array, 
-            shuffled_corrs, shuffled_p_vals,
-            percentile_array, 
-            stringent_shuffled_corrs, stringent_shuffled_p_vals] = \
-                [np.array(x) for x in list(zip(*out))]
+    shuffled_corrs, shuffled_p_vals, percentile_array] = \
+            [np.array(x) for x in list(zip(*out))]
+            #stringent_shuffled_corrs, stringent_shuffled_p_vals] = \
 
     names = ['corr_array', 'p_val_array', 
             'shuffled_corrs', 'shuffled_p_vals',
-            'percentile_array', 
-            'stringent_shuffled_corrs', 'stringent_shuffled_p_vals'] 
+            'percentile_array']#, 
+            #'stringent_shuffled_corrs', 'stringent_shuffled_p_vals'] 
 
     # Remove any nans
     # Assuming nans are shared across arrays
@@ -199,62 +202,6 @@ if not present_bool:
     #mean_shuffled_corrs = np.mean(shuffled_corrs,axis=1)
     #mean_shuffled_p_vals = np.mean(shuffled_p_vals,axis=1)
 
-    #======================================== 
-    # Detrended Corr
-    #======================================== 
-    # Stringent shuffling working but not that great
-    # While it does catch trends, it also removes pairs with actual corrs
-    # Which makes sense
-    # Try detrending with 1st order difference before corr
-    diff_sum_spikes = [np.diff(region,axis=1) for region in sum_spikes]
-
-    def calc_diff_corrs(this_ind):
-        this_pair = np.array([diff_sum_spikes[0][this_ind[0]], 
-                                diff_sum_spikes[1][this_ind[1]]])
-        #corrs = np.abs([spearmanr(this_taste)[0] for this_taste in this_pair.T])
-        out = \
-                list(zip(*[spearmanr(this_taste) for this_taste in this_pair.T]))
-        corrs, p_vals = [np.array(x) for x in out] 
-
-        # Random ok for now but replace with STRINGENT shuffle
-        #shuffled_corrs = np.abs(np.array(\
-        #out =  \
-        #                [[spearmanr(np.random.permutation(this_taste[:,0]), 
-        #                        this_taste[:,1]) \
-        #                    for this_taste in this_pair.T]\
-        #                    for x in np.arange(repeats)]
-        #trans_out = [list(zip(*x)) for x in out]
-        #shuffled_corrs, shuffled_p_vals = [np.array(x) for x in list(zip(*trans_out))]
-        #percentile_list = [percentileofscore(shuffle,actual) \
-        #                        for shuffle, actual in \
-        #                        zip(shuffled_corrs.T,corrs)]        
-
-        ## Shuffle trials in pairs (adjacent trials) to remove
-        ## correlations created by long-term state changes
-        #stringent_shuffle_inds = np.arange(this_pair[0].shape[0]).\
-        #                            reshape(-1,2)[:,::-1].flatten()
-        #out =  [spearmanr(this_taste[stringent_shuffle_inds,0], this_taste[:,1]) \
-        #                    for this_taste in this_pair.T]
-        #trans_out = list(zip(*out))
-        #stringent_shuffled_corrs, stringent_shuffled_p_vals = \
-        #        [np.array(x) for x in trans_out]
-
-        #return corrs, p_vals, shuffled_corrs, shuffled_p_vals, percentile_list,\
-        #            stringent_shuffled_corrs, stringent_shuffled_p_vals
-        return corrs, p_vals
-
-    diff_out = parallelize(calc_diff_corrs,pair_inds)
-    [diff_corr_array, diff_p_val_array] = \
-                [np.array(x) for x in list(zip(*diff_out))]
-
-    # Remove any nans
-    # Assuming nans are shared across arrays
-    # Take out entire pair if nan is present
-    nan_inds = np.where(np.isnan(diff_corr_array))[0]
-    keep_inds = [x for x in np.arange(diff_corr_array.shape[0])] 
-
-    diff_corr_array = diff_corr_array[keep_inds]
-    diff_p_val_array = diff_p_val_array[keep_inds]
 
     ##################################################
     # ____  _       _   _   _             
@@ -318,7 +265,9 @@ if not present_bool:
             + str(np.format_float_scientific(chi_test[1],3)))
     plt.xlabel('Percentile of Corr Relative to respective shuffle distribution')
     plt.ylabel('Frequency')
-    fig.savefig(os.path.join(fin_plot_dir,fin_name+'_random_shuffle_percentiles'),dpi=300)
+    fig.savefig(os.path.join(\
+            fin_plot_dir,fin_name+'_random_shuffle_percentiles'),
+            dpi=300)
     plt.close(fig)
     #plt.show()
 
@@ -332,12 +281,13 @@ if not present_bool:
     # Find MAX corr
     corr_mat_inds = np.where(corr_array == np.max(corr_array,axis=None))
     nrn_inds = pair_inds[corr_mat_inds[0][0]]
-    this_pair = np.array([sum_spikes[0][nrn_inds[0],...,corr_mat_inds[1][0]], 
-                            sum_spikes[1][nrn_inds[1],...,corr_mat_inds[1][0]]])
+    this_pair = np.array([diff_sum_spikes[0][nrn_inds[0],...,corr_mat_inds[1][0]], 
+                            diff_sum_spikes[1][nrn_inds[1],...,corr_mat_inds[1][0]]])
 
-    shuffled_pair = np.array([[np.random.permutation(this_pair[0]),this_pair[1]]\
-                for x in np.arange(repeats)])
-    shuffled_pair = np.reshape(np.moveaxis(shuffled_pair,0,-1),(shuffled_pair.shape[1],-1))
+    #shuffled_pair = np.array([[np.random.permutation(this_pair[0]),this_pair[1]]\
+    #            for x in np.arange(repeats)])
+    #shuffled_pair = np.reshape(\
+    #        np.moveaxis(shuffled_pair,0,-1),(shuffled_pair.shape[1],-1))
 
     fig, ax = plt.subplots(2,2)
     fig.suptitle('Firing Rate Scatterplots')
@@ -345,23 +295,28 @@ if not present_bool:
                             '\nTaste :' + str(corr_mat_inds[1][0]))
     ax[1,0].set_title('Shuffle') 
     ax[0,0].scatter(this_pair[0],this_pair[1])
-    ax[1,0].scatter(shuffled_pair[0],shuffled_pair[1]);
+    #ax[1,0].scatter(shuffled_pair[0],shuffled_pair[1]);
+    ax[1,0].plot(this_pair[0]);
+    ax[1,0].plot(this_pair[1]);
 
     # Find MIN corr
     corr_mat_inds = np.where(corr_array == np.min(corr_array,axis=None))
     nrn_inds = pair_inds[corr_mat_inds[0][0]]
-    this_pair = np.array([sum_spikes[0][nrn_inds[0],...,corr_mat_inds[1][0]], 
-                            sum_spikes[1][nrn_inds[1],...,corr_mat_inds[1][0]]])
+    this_pair = np.array([diff_sum_spikes[0][nrn_inds[0],...,corr_mat_inds[1][0]], 
+                            diff_sum_spikes[1][nrn_inds[1],...,corr_mat_inds[1][0]]])
 
-    shuffled_pair = np.array([[np.random.permutation(this_pair[0]),this_pair[1]]\
-                for x in np.arange(repeats)])
-    shuffled_pair = np.reshape(np.moveaxis(shuffled_pair,0,-1),(shuffled_pair.shape[1],-1))
+    #shuffled_pair = np.array([[np.random.permutation(this_pair[0]),this_pair[1]]\
+    #            for x in np.arange(repeats)])
+    #shuffled_pair = np.reshape(\
+    #        np.moveaxis(shuffled_pair,0,-1),(shuffled_pair.shape[1],-1))
 
     ax[0,1].set_title('Actual Data - Pair : ' + str(nrn_inds) +\
                             '\nTaste :' + str(corr_mat_inds[1][0]))
     ax[1,1].set_title('Shuffle') 
     ax[0,1].scatter(this_pair[0],this_pair[1])
-    ax[1,1].scatter(shuffled_pair[0],shuffled_pair[1]);
+    #ax[1,0].scatter(shuffled_pair[0],shuffled_pair[1]);
+    ax[1,1].plot(this_pair[0]);
+    ax[1,1].plot(this_pair[1]);
 
     for this_ax in ax.flatten():
         this_ax.set_xlabel('Nrn 1 Firing')
@@ -375,127 +330,68 @@ if not present_bool:
     ##################################################
 
     sig_array = p_val_array <= alpha
-    stringent_shuffle_sig_array = stringent_shuffled_p_vals <= alpha
-    overlay_array = sig_array*stringent_shuffle_sig_array 
-    net_sig_array = sig_array.copy()
-    net_sig_array[np.where(overlay_array)] = 0
+    #stringent_shuffle_sig_array = stringent_shuffled_p_vals <= alpha
+    #overlay_array = sig_array*stringent_shuffle_sig_array 
+    #net_sig_array = sig_array.copy()
+    #net_sig_array[np.where(overlay_array)] = 0
 
-    # Net mean significant fraction
-    net_mean_sig_frac = np.mean((sig_array*1) - overlay_array,axis=None)
+    ## Net mean significant fraction
+    #net_mean_sig_frac = np.mean((sig_array*1) - overlay_array,axis=None)
 
     #========================================
     # Side-by-side significance matrices
-    titles = ['Actual','Stringent_Shuffle','Intersection']
-    fig,ax = plt.subplots(1,3)
-    for num,(this_ax, this_dat) in enumerate(zip(
-                        ax,[sig_array, stringent_shuffle_sig_array, overlay_array])):
-        this_ax.imshow(this_dat, aspect='auto')
-        this_ax.set_title(titles[num] + "\n{} Total".format(this_dat.sum()))
-    ax[0].set_xlabel('Taste')
-    ax[0].set_ylabel('All Neuron Pair Combinations')
+    #titles = ['Actual','Stringent_Shuffle','Intersection']
+    #fig,ax = plt.subplots(1,3)
+    #for num,(this_ax, this_dat) in enumerate(zip(
+    #                    ax,[sig_array, stringent_shuffle_sig_array, overlay_array])):
+    #    this_ax.imshow(this_dat, aspect='auto')
+    #    this_ax.set_title(titles[num] + "\n{} Total".format(this_dat.sum()))
+    fig,ax = plt.subplots(1,1)
+    ax.imshow(sig_array,origin='lower',aspect='auto')
+    ax.set_xlabel('Taste')
+    ax.set_ylabel('All Neuron Pair Combinations')
+    #ax[0].set_xlabel('Taste')
+    #ax[0].set_ylabel('All Neuron Pair Combinations')
     plt.suptitle('Noise Correlation Significance\n{:.2f} % net significant corrs'\
-                            .format(net_mean_sig_frac * 100))
+                            .format(np.mean(sig_array,axis=None) * 100))
+                            #.format(net_mean_sig_frac * 100))
     plt.tight_layout(rect=[0, 0.0, 1, 0.9])
-    fig.savefig(os.path.join(fin_plot_dir,fin_name+'_sig_arrays'),dpi=300)
+    fig.savefig(os.path.join(fin_plot_dir,fin_name+'_sig_array'),dpi=300)
 
     #========================================
     # histogram of corr percentile relative to stringent shuffle
-    cat_array = np.concatenate([corr_array.flatten(),
-                            stringent_shuffled_corrs.flatten()],
-                            axis = -1)
-    min_val = np.min(cat_array)
-    max_val = np.max(cat_array)
-    bins = np.linspace(min_val,max_val,percentile_array.size//20)
-    freq_hist = np.histogram(corr_array.flatten(),bins)
-    stringent_shuffle_freq_hist = \
-            np.histogram(stringent_shuffled_corrs.flatten(),bins)
-    chi_test = chisquare(freq_hist[0],stringent_shuffle_freq_hist[0])
+    #cat_array = np.concatenate([corr_array.flatten(),
+    #                        stringent_shuffled_corrs.flatten()],
+    #                        axis = -1)
+    #min_val = np.min(cat_array)
+    #max_val = np.max(cat_array)
+    #bins = np.linspace(min_val,max_val,percentile_array.size//20)
+    #freq_hist = np.histogram(corr_array.flatten(),bins)
+    #stringent_shuffle_freq_hist = \
+    #        np.histogram(stringent_shuffled_corrs.flatten(),bins)
+    #chi_test = chisquare(freq_hist[0],stringent_shuffle_freq_hist[0])
 
-    fig = plt.figure()
-    plt.hist(corr_array.flatten(),label='Actual')
-    plt.hist(stringent_shuffled_corrs.flatten(), label = 'Shuffled')
-    plt.legend()
-    plt.suptitle('Actual vs Stringent Shuffled corrs\n'\
-            + 'Chi-sq p_val= ' + str(np.format_float_scientific(chi_test[1],3)))
-    plt.xlabel('Spearman R value')
-    plt.ylabel('Frequency')
-    fig.savefig(os.path.join(fin_plot_dir,fin_name+'_corr_hist_comparison'),dpi=300)
-    #plt.show()
+    #fig = plt.figure()
+    #plt.hist(corr_array.flatten(),label='Actual')
+    #plt.hist(stringent_shuffled_corrs.flatten(), label = 'Shuffled')
+    #plt.legend()
+    #plt.suptitle('Actual vs Stringent Shuffled corrs\n'\
+    #        + 'Chi-sq p_val= ' + str(np.format_float_scientific(chi_test[1],3)))
+    #plt.xlabel('Spearman R value')
+    #plt.ylabel('Frequency')
+    #fig.savefig(os.path.join(fin_plot_dir,fin_name+'_corr_hist_comparison'),dpi=300)
+    ##plt.show()
 
     #========================================
     # For significant correlations, plot summed spikes in chornological order
     # to see whether there is a clear trend
-    sig_nrns = inds[np.where(net_sig_array)[0]]
-    sig_tastes = np.where(net_sig_array)[1]
+    sig_nrns = inds[np.where(sig_array)[0]]
+    sig_tastes = np.where(sig_array)[1]
     sig_comparisons = np.concatenate([sig_nrns,sig_tastes[:,np.newaxis]],axis=-1)
 
     # How many pairs in one plot
     # This will double because of line and corr plots
     plot_thresh = 8
-
-    num_figs = int(np.ceil(sig_comparisons.shape[0]/plot_thresh))
-
-    for this_fig_num in np.arange(num_figs):
-        fig,ax = visualize.gen_square_subplots(int(plot_thresh*2))
-        ax_inds = np.array(list(np.ndindex(ax.shape)))
-        #fig,ax = plt.subplots(len(sig_comparisons),2)
-        for num, this_comp in enumerate(sig_comparisons\
-                [(this_fig_num*plot_thresh):((this_fig_num+1)*plot_thresh)]):
-            #ax[num,0].plot(sum_spikes[0][this_comp[0],:,this_comp[-1]])
-            #ax[num,0].plot(sum_spikes[1][this_comp[1],:,this_comp[-1]])
-            #ax[num,-1].scatter(sum_spikes[0][this_comp[0],:,this_comp[-1]],
-            #            diff_sum_spikes[1][this_comp[1],:,this_comp[-1]])
-            region0 = sum_spikes[0][this_comp[0],:,this_comp[-1]]
-            region1 = sum_spikes[1][this_comp[1],:,this_comp[-1]]
-            line_plot_ind = tuple(np.split(ax_inds[2*num],2))
-            scatter_plot_ind = tuple(np.split(ax_inds[2*num+1],2))
-            ax[line_plot_ind][0].plot(region0)
-            ax[line_plot_ind][0].plot(region1)
-            ax[scatter_plot_ind][0].scatter(region0,region1,s=5)
-            #this_ax.title(str(this_comp[:2]))
-        plt.suptitle('Net significant comparisons')
-        fig.savefig(os.path.join(\
-                fin_plot_dir,fin_name+'_net_sig_comps_{}'.format(this_fig_num)),
-                dpi=300)
-        plt.close(fig)
-    #plt.show()
-
-    # Create same plots with pairs that were affected by stringent shuffling
-    sig_nrns = inds[np.where(overlay_array)[0]]
-    sig_tastes = np.where(overlay_array)[1]
-    sig_comparisons = np.concatenate([sig_nrns,sig_tastes[:,np.newaxis]],axis=-1)
-
-    fig,ax = visualize.gen_square_subplots(int(len(sig_comparisons)*2))
-    ax_inds = np.array(list(np.ndindex(ax.shape)))
-    #fig,ax = plt.subplots(len(sig_comparisons),2)
-    for num, this_comp in enumerate(sig_comparisons):
-        #ax[num,0].plot(sum_spikes[0][this_comp[0],:,this_comp[-1]])
-        #ax[num,0].plot(sum_spikes[1][this_comp[1],:,this_comp[-1]])
-        #ax[num,-1].scatter(sum_spikes[0][this_comp[0],:,this_comp[-1]],
-        #            sum_spikes[1][this_comp[1],:,this_comp[-1]])
-        region0 = sum_spikes[0][this_comp[0],:,this_comp[-1]]
-        region1 = sum_spikes[1][this_comp[1],:,this_comp[-1]]
-        line_plot_ind = tuple(np.split(ax_inds[2*num],2))
-        scatter_plot_ind = tuple(np.split(ax_inds[2*num+1],2))
-        ax[line_plot_ind][0].plot(region0)
-        ax[line_plot_ind][0].plot(region1)
-        ax[scatter_plot_ind][0].scatter(region0,region1, s=5)
-    plt.suptitle('Shuffle damagable comparisons')
-    fig.savefig(os.path.join(fin_plot_dir,fin_name+'_shuffle_damage_comps'),dpi=300)
-    plt.close(fig)
-    #plt.show()
-
-    #========================================
-    # Detrended corrs
-    # For significant correlations, plot summed spikes in chornological order
-    # to see whether there is a clear trend
-    # Plot multiple figures if number of pairs cross threshold
-
-
-    diff_sig_array = diff_p_val_array <= alpha
-    sig_nrns = inds[np.where(diff_sig_array)[0]]
-    sig_tastes = np.where(diff_sig_array)[1]
-    sig_comparisons = np.concatenate([sig_nrns,sig_tastes[:,np.newaxis]],axis=-1)
 
     num_figs = int(np.ceil(sig_comparisons.shape[0]/plot_thresh))
 
@@ -517,9 +413,34 @@ if not present_bool:
             ax[line_plot_ind][0].plot(region1)
             ax[scatter_plot_ind][0].scatter(region0,region1,s=5)
             #this_ax.title(str(this_comp[:2]))
-        plt.suptitle('Detrended Net significant comparisons')
+        plt.suptitle('Net significant comparisons')
         fig.savefig(os.path.join(\
-                fin_plot_dir,fin_name+'_diff_sig_comps_{}'.format(this_fig_num)),
+                fin_plot_dir,fin_name+'_net_sig_comps_{}'.format(this_fig_num)),
                 dpi=300)
         plt.close(fig)
     #plt.show()
+
+    # Create same plots with pairs that were affected by stringent shuffling
+    #sig_nrns = inds[np.where(overlay_array)[0]]
+    #sig_tastes = np.where(overlay_array)[1]
+    #sig_comparisons = np.concatenate([sig_nrns,sig_tastes[:,np.newaxis]],axis=-1)
+
+    #fig,ax = visualize.gen_square_subplots(int(len(sig_comparisons)*2))
+    #ax_inds = np.array(list(np.ndindex(ax.shape)))
+    ##fig,ax = plt.subplots(len(sig_comparisons),2)
+    #for num, this_comp in enumerate(sig_comparisons):
+    #    #ax[num,0].plot(sum_spikes[0][this_comp[0],:,this_comp[-1]])
+    #    #ax[num,0].plot(sum_spikes[1][this_comp[1],:,this_comp[-1]])
+    #    #ax[num,-1].scatter(sum_spikes[0][this_comp[0],:,this_comp[-1]],
+    #    #            sum_spikes[1][this_comp[1],:,this_comp[-1]])
+    #    region0 = diff_sum_spikes[0][this_comp[0],:,this_comp[-1]]
+    #    region1 = diff_sum_spikes[1][this_comp[1],:,this_comp[-1]]
+    #    line_plot_ind = tuple(np.split(ax_inds[2*num],2))
+    #    scatter_plot_ind = tuple(np.split(ax_inds[2*num+1],2))
+    #    ax[line_plot_ind][0].plot(region0)
+    #    ax[line_plot_ind][0].plot(region1)
+    #    ax[scatter_plot_ind][0].scatter(region0,region1, s=5)
+    #plt.suptitle('Shuffle damagable comparisons')
+    #fig.savefig(os.path.join(fin_plot_dir,fin_name+'_shuffle_damage_comps'),dpi=300)
+    #plt.close(fig)
+    ##plt.show()
