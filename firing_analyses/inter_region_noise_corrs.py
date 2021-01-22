@@ -192,27 +192,55 @@ if not present_bool:
     for array_name,array in zip(names,out):
         globals()[array_name] = np.array(array) 
 
+    def gen_df(corr_array, p_val_array, percentiles, pair_list, label):
+        inds = np.array(list(np.ndindex(corr_array.shape)))
+        if percentiles is None:
+            percentiles = np.array([np.nan]*inds.shape[0])
+        return pd.DataFrame({
+                'label' : [label] * inds.shape[0],
+                'pair_ind' : inds[:,0],
+                'pair' : [pair_list[x] for x in inds[:,0]],
+                'taste' : inds[:,1],
+                'corr' : corr_array.flatten(),
+                'p_vals' : p_val_array.flatten(),
+                'percentiles' : percentiles.flatten()})
+
+    inter_region_frame = gen_df(corr_array,
+                                p_val_array,
+                                percentile_array,
+                                pair_inds,
+                                'inter_region')
+
+    inter_region_shuffle_frame = gen_df(shuffled_corrs,
+                                    shuffled_p_vals,
+                                    None,
+                                    pair_inds,
+                                    'shuffled_inter_region')
+
+    concat_inter_region_frame = pd.concat([inter_region_frame,
+                                    inter_region_shuffle_frame])
+
     # Remove any nans
     # Assuming nans are shared across arrays
     # Take out entire pair if nan is present
     # ** Removing nans from the array would mean we can
     # ** no longer lookup the raw data using the indices
-    nan_inds = np.where(np.isnan(corr_array))[0]
-    keep_inds = [x for x in np.arange(corr_array.shape[0]) \
-                        if x not in nan_inds]
-    for array in names:
-        globals()[array] = eval(array)[keep_inds]
+    #nan_inds = np.where(np.isnan(corr_array))[0]
+    #keep_inds = [x for x in np.arange(corr_array.shape[0]) \
+    #                    if x not in nan_inds]
+    #for array in names:
+    #    globals()[array] = eval(array)[keep_inds]
 
-    this_save_path = os.path.join(save_path,'inter_region')
+    #this_save_path = os.path.join(save_path,'inter_region')
 
-    with tables.open_file(dat.hdf5_name,'r+') as hf5:
-        if this_save_path not in hf5:
-            hf5.create_group(os.path.dirname(this_save_path),
-                    os.path.basename(this_save_path),
-                    createparents = True)
-        for array in names:
-            remove_node(os.path.join(this_save_path, array),hf5) 
-            hf5.create_array(this_save_path, array, eval(array))
+    #with tables.open_file(dat.hdf5_name,'r+') as hf5:
+    #    if this_save_path not in hf5:
+    #        hf5.create_group(os.path.dirname(this_save_path),
+    #                os.path.basename(this_save_path),
+    #                createparents = True)
+    #    for array in names:
+    #        remove_node(os.path.join(this_save_path, array),hf5) 
+    #        hf5.create_array(this_save_path, array, eval(array))
 
     ##################################################
     ## INTRA-Region Whole Trial
@@ -231,24 +259,36 @@ if not present_bool:
     out0 = [np.array(x) for x in out0]
     out1 = [np.array(x) for x in out1]
 
+    intra_region_frame = pd.concat([\
+        gen_df(this_dat[0],this_dat[1],this_dat[-1],this_inds,region_name) \
+        for this_dat,this_inds,region_name in \
+        zip([out0,out1],pair_list,sorted_region_names)])
+
+    shuffle_intra_region_frame = pd.concat([\
+        gen_df(this_dat[2],this_dat[3],None,this_inds,'shuffle_'+region_name) \
+        for this_dat,this_inds,region_name in \
+        zip([out0,out1],pair_list,sorted_region_names)])
+
+    concat_intra_region_frame = pd.concat([intra_region_frame, shuffle_intra_region_frame])
+
     # Cannot merge output for both region because number of comparisons
     # is different
     
-    with tables.open_file(dat.hdf5_name,'r+') as hf5:
-        if this_save_path not in hf5:
-            hf5.create_group(os.path.dirname(this_save_path),
-                    os.path.basename(this_save_path),
-                    createparents = True)
+    #with tables.open_file(dat.hdf5_name,'r+') as hf5:
+    #    if this_save_path not in hf5:
+    #        hf5.create_group(os.path.dirname(this_save_path),
+    #                os.path.basename(this_save_path),
+    #                createparents = True)
 
-        remove_node(os.path.join(this_save_path, 'sorted_region_names'),hf5) 
-        hf5.create_array(this_save_path,'sorted_region_names', 
-                [str(sorted_region_names)])
+    #    remove_node(os.path.join(this_save_path, 'sorted_region_names'),hf5) 
+    #    hf5.create_array(this_save_path,'sorted_region_names', 
+    #            [str(sorted_region_names)])
 
-        for num,data in enumerate([out0,out1]):
-            for array_name,array in zip(names,data):
-                fin_array_name = array_name + "_region{}".format(num)
-                remove_node(os.path.join(this_save_path, fin_array_name),hf5) 
-                hf5.create_array(this_save_path, fin_array_name, array)
+    #    for num,data in enumerate([out0,out1]):
+    #        for array_name,array in zip(names,data):
+    #            fin_array_name = array_name + "_region{}".format(num)
+    #            remove_node(os.path.join(this_save_path, fin_array_name),hf5) 
+    #            hf5.create_array(this_save_path, fin_array_name, array)
 
 
     ##################################################
