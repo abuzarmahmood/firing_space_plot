@@ -52,15 +52,55 @@ sys.path.append('/media/bigdata/firing_space_plot/ephys_data')
 from ephys_data import ephys_data
 import visualize
 
-def parallelize(func, iterator):
+def parallelize(func, fixed_args, iterator):
     return Parallel(n_jobs = cpu_count()-2)\
-            (delayed(func)(this_iter) for this_iter in tqdm(iterator))
+            (delayed(func)(*fixed_args,this_iter) for this_iter in tqdm(iterator))
 
 def remove_node(path_to_node, hf5, recursive = False):
     if path_to_node in hf5:
         hf5.remove_node(os.path.dirname(path_to_node),
                     os.path.basename(path_to_node), 
                     recursive = recursive)
+
+#========================================#
+## Corr calculation functions
+#========================================#
+
+def calc_corrs(array1,array2,ind_tuple, repeats = 1000):
+    """
+    Calculate correlations and shuffled correlations between given arrays
+    inputs ::
+        array1,array2 : nrns x trials
+        ind_tuple : tuple for indexing neurons from array1 and array2
+    """
+    corr, p_val  = spearmanr(array1[ind_tuple[0]],array2[ind_tuple[1]])
+    out = [spearmanr(\
+                        np.random.permutation(array1[ind_tuple[0]]),
+                        array2[ind_tuple[1]]) \
+                for x in np.arange(repeats)]
+    shuffled_corrs, shuffled_p_vals = np.array(out).T
+    percentile = percentileofscore(shuffled_corrs,corr)
+
+    return corr, p_val, shuffled_corrs, shuffled_p_vals, percentile
+
+def taste_calc_corrs(array1,array2,ind_tuple):
+    """
+    Convenience function wrapping calc_corrs to extend to arrays with
+    a taste dimension
+    inputs ::
+        array1,array2 : taste x nrns x trials
+        ind_tuple : tuple for indexing neurons from array1 and array2
+    """
+    outs = list(zip(*[calc_corrs(this1,this2,ind_tuple) \
+                    for this1,this2 in zip(array1,array2)]))
+    corrs, p_vals, shuffled_corrs, shuffled_p_vals, percentiles = outs
+    return  corrs, p_vals, shuffled_corrs, shuffled_p_vals, percentiles
+
+#def parallel_inter_calc_corrs(ind_tuple):
+#    return taste_calc_corrs(*diff_sum_spikes,ind_tuple)
+#
+#def parallel_inter_calc_corrs(ind_tuple):
+#    return taste_calc_corrs(*diff_sum_spikes,ind_tuple)
 
 ################################################### 
 # _                    _   ____        _        
@@ -111,11 +151,10 @@ with tables.open_file(dat.hdf5_name,'r+') as hf5:
 present_bool = False
 if not present_bool: 
 
-    
+    ##################################################
+    # Pre-processing
+    ##################################################
 
-    ##################################################
-    ## Inter-Region Whole Trial
-    ##################################################
     time_lims = [2000,4000]
     temp_spikes = spikes[...,time_lims[0]:time_lims[1]]
     region_spikes = [temp_spikes.swapaxes(0,2)[region_inds]\
@@ -123,6 +162,7 @@ if not present_bool:
 
     unit_count = [len(x) for x in region_spikes]
     wanted_order = np.argsort(unit_count)[::-1]
+    sorted_region_names = [dat.region_names[x] for x in wanted_order]
     temp_region_spikes = [region_spikes[x] for x in wanted_order]
     sorted_unit_count = [len(x) for x in temp_region_spikes]
     all_pairs = np.arange(1,1+sorted_unit_count[0])[:,np.newaxis].\
@@ -136,44 +176,14 @@ if not present_bool:
     diff_sum_spikes = [stats.zscore(region,axis=1) for region in diff_sum_spikes]
     diff_sum_spikes = [np.moveaxis(x,-1,0) for x in diff_sum_spikes]
 
+    ##################################################
+    ## Inter-Region Whole Trial
+    ##################################################
+
     # Perform correlation over all pairs for each taste separately
     # Compare values to corresponding shuffles
-    repeats = 1000
 
-    def calc_corrs(array1,array2,ind_tuple):
-        """
-        Calculate correlations and shuffled correlations between given arrays
-        inputs ::
-            array1,array2 : nrns x trials
-            ind_tuple : tuple for indexing neurons from array1 and array2
-        """
-        corr, p_val  = spearmanr(array1[ind_tuple[0]],array2[ind_tuple[1]])
-        out = [spearmanr(\
-                            np.random.permutation(array1[ind_tuple[0]]),
-                            array2[ind_tuple[1]]) \
-                    for x in np.arange(repeats)]
-        shuffled_corrs, shuffled_p_vals = np.array(out).T
-        percentile = percentileofscore(shuffled_corrs,corr)
-
-        return corr, p_val, shuffled_corrs, shuffled_p_vals, percentile
-
-    def taste_calc_corrs(array1,array2,ind_tuple):
-        """
-        Convenience function wrapping calc_corrs to extend to arrays with
-        a taste dimension
-        inputs ::
-            array1,array2 : taste x nrns x trials
-            ind_tuple : tuple for indexing neurons from array1 and array2
-        """
-        outs = list(zip(*[calc_corrs(this1,this2,ind_tuple) \
-                        for this1,this2 in zip(array1,array2)]))
-        corrs, p_vals, shuffled_corrs, shuffled_p_vals, percentiles = outs
-        return  corrs, p_vals, shuffled_corrs, shuffled_p_vals, percentiles
-
-    def parallel_calc_corrs(ind_tuple):
-        return taste_calc_corrs(*diff_sum_spikes,ind_tuple)
-
-    out = list(zip(*parallelize(parallel_calc_corrs,pair_inds)))
+    out = list(zip(*parallelize(taste_calc_corrs,diff_sum_spikes,pair_inds)))
 
     names = ['corr_array', 'p_val_array', 
             'shuffled_corrs', 'shuffled_p_vals',
@@ -185,51 +195,60 @@ if not present_bool:
     # Remove any nans
     # Assuming nans are shared across arrays
     # Take out entire pair if nan is present
+    # ** Removing nans from the array would mean we can
+    # ** no longer lookup the raw data using the indices
     nan_inds = np.where(np.isnan(corr_array))[0]
     keep_inds = [x for x in np.arange(corr_array.shape[0]) \
                         if x not in nan_inds]
     for array in names:
         globals()[array] = eval(array)[keep_inds]
 
+    this_save_path = os.path.join(save_path,'inter_region')
+
     with tables.open_file(dat.hdf5_name,'r+') as hf5:
+        if this_save_path not in hf5:
+            hf5.create_group(os.path.dirname(this_save_path),
+                    os.path.basename(this_save_path),
+                    createparents = True)
         for array in names:
-            remove_node(os.path.join(save_path, array),hf5) 
-            hf5.create_array(save_path, array, eval(array))
+            remove_node(os.path.join(this_save_path, array),hf5) 
+            hf5.create_array(this_save_path, array, eval(array))
 
-    #corr_array, p_vals, shuffled_corrs, shuffled_p_vals, percentiles = \
-    #        [np.array(x) for x in out]
+    ##################################################
+    ## INTRA-Region Whole Trial
+    ##################################################
 
-    #def calc_corrs(this_ind):
-    #    this_pair = np.array([diff_sum_spikes[0][this_ind[0]], 
-    #                            diff_sum_spikes[1][this_ind[1]]])
+    this_save_path = os.path.join(save_path,'intra_region')
 
-    #    out = \
-    #            list(zip(*[spearmanr(this_taste) for this_taste in this_pair.T]))
-    #    corrs, p_vals = [np.array(x) for x in out] 
+    pair_list = [list(it.combinations(np.arange(x.shape[1]),2)) \
+                            for x in diff_sum_spikes]
 
-    #    # Random ok for now but replace with STRINGENT shuffle
-    #    out =  \
-    #                    [[spearmanr(np.random.permutation(this_taste[:,0]), 
-    #                            this_taste[:,1]) \
-    #                        for this_taste in this_pair.T]\
-    #                        for x in np.arange(repeats)]
-    #    #trans_out = [list(zip(*x)) for x in out]
-    #    shuffled_corrs, shuffled_p_vals = [np.array(x) for x in list(zip(*trans_out))]
-    #    percentile_list = [percentileofscore(shuffle,actual) \
-    #                            for shuffle, actual in \
-    #                            zip(shuffled_corrs.T,corrs)]        
+    out0 = list(zip(*parallelize(taste_calc_corrs,\
+                        [diff_sum_spikes[0],diff_sum_spikes[0]],pair_list[0])))
+    out1 = list(zip(*parallelize(taste_calc_corrs,\
+                        [diff_sum_spikes[1],diff_sum_spikes[1]],pair_list[1])))
 
-    #    return corrs, p_vals, shuffled_corrs, shuffled_p_vals, percentile_list
+    out0 = [np.array(x) for x in out0]
+    out1 = [np.array(x) for x in out1]
 
-    # Check corrs are significant individually aswell
+    # Cannot merge output for both region because number of comparisons
+    # is different
+    
+    with tables.open_file(dat.hdf5_name,'r+') as hf5:
+        if this_save_path not in hf5:
+            hf5.create_group(os.path.dirname(this_save_path),
+                    os.path.basename(this_save_path),
+                    createparents = True)
 
-    #out = parallelize(calc_corrs,pair_inds)
-    #[corr_array, p_val_array, 
-    #shuffled_corrs, shuffled_p_vals, percentile_array] = \
-    #        [np.array(x) for x in list(zip(*out))]
-    #        #stringent_shuffled_corrs, stringent_shuffled_p_vals] = \
+        remove_node(os.path.join(this_save_path, 'sorted_region_names'),hf5) 
+        hf5.create_array(this_save_path,'sorted_region_names', 
+                [str(sorted_region_names)])
 
-
+        for num,data in enumerate([out0,out1]):
+            for array_name,array in zip(names,data):
+                fin_array_name = array_name + "_region{}".format(num)
+                remove_node(os.path.join(this_save_path, fin_array_name),hf5) 
+                hf5.create_array(this_save_path, fin_array_name, array)
 
 
     ##################################################
@@ -254,7 +273,6 @@ if not present_bool:
     for this_mat_ind,this_val in zip(mat_inds[:,0],(p_val_array<alpha).flatten()):
         sig_hist_array[inds[this_mat_ind,0], inds[this_mat_ind,1]] += \
                                         this_val
-    sorted_region_names = [dat.region_names[x] for x in wanted_order]
 
     fig = plt.figure()
     plt.imshow(sig_hist_array,aspect='auto',cmap='viridis');
