@@ -46,7 +46,7 @@ from visualize import firing_overview, gen_square_subplots
 
 plot_dir = '/media/bigdata/firing_space_plot/lfp_analyses/lfp_amp_xcorr/Plots'
 
-#data_dir = '/media/bigdata/Abuzar_Data/AM12/AM12_4Tastes_191106_085215/'
+#data_dir = '/media/bigdata/Abuzar_Data/AM11/AM11_4Tastes_191030_114043_copy'
 data_dir = sys.argv[1]
 if data_dir[-1] != '/':
     data_dir += '/'
@@ -69,9 +69,11 @@ median_amplitude = np.median(dat.amplitude_array,axis=(0,2))
 ########################################
 save_path = '/stft/analyses/amplitude_xcorr'
 for frame_name in ['inter_region_frame',
-                    'binned_inter_region_frame',
-                    'intra_region_frame',
-                    'binned_intra_region_frame']:
+                            'binned_inter_region_frame',
+                            'intra_region_frame',
+                            'binned_intra_region_frame',
+                            'base_inter_region_frame',
+                            'base_intra_region_frame']:
     # Save transformed array to HDF5
     globals()[frame_name] = pd.read_hdf(dat.hdf5_name,  
             os.path.join(save_path, frame_name))
@@ -103,12 +105,16 @@ for region,region_name in zip(dat.lfp_region_electrodes,dat.region_names):
 ## Whole Trial XCorr Plots
 ########################################
 
-concat_frame = pd.concat([inter_region_frame,intra_region_frame])
-plot_frame = concat_frame.groupby(['label','pair','freq']).mean().\
+concat_frame = pd.concat([inter_region_frame,intra_region_frame,
+                        base_inter_region_frame, base_intra_region_frame])
+# Make new column to distinguish baseline from post-stim
+concat_frame['baseline'] = concat_frame.label.str.contains('base')
+
+plot_frame = concat_frame.groupby(['label','baseline','pair','freq']).mean().\
                             reset_index()
 
 title_str = fin_name + "\nLFP AMP XCorr (mean +/- SD)" 
-sns.relplot(x='freq',y='xcorr',hue='label',data=plot_frame, 
+sns.relplot(x='freq',y='xcorr',hue='label', col = 'baseline',data=plot_frame, 
         kind = 'line', ci='sd',  markers = True, style = 'label')
 plt.suptitle(title_str)
 fig = plt.gcf()
@@ -117,12 +123,12 @@ fig.savefig(os.path.join(fin_plot_dir,fin_name+'_LFP_AMP_XCorr'),dpi=300)
 
 ## Taste-specific
 plot_frame = concat_frame.\
-                        groupby(['label','pair','freq','taste']).mean().\
-                        reset_inde()
+                        groupby(['label','baseline','pair','freq','taste']).mean().\
+                        reset_index()
 
 title_str = fin_name + "\nLFP AMP Taste XCorr (mean +/- SD)" 
 sns.relplot(x='freq',y='xcorr',hue='label',data=plot_frame, 
-        kind = 'line', ci='sd',  markers = True, style = 'label',col='taste')
+        kind = 'line', ci='sd',  markers = True, style = 'label',col='taste', row='baseline')
 plt.suptitle(title_str)
 fig = plt.gcf()
 fig.savefig(os.path.join(fin_plot_dir,fin_name+'_LFP_AMP_Taste_XCorr'),dpi=300)

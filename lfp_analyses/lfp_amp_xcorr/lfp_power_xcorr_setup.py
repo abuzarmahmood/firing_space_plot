@@ -124,7 +124,6 @@ def gen_df_bin(array, label):
 data_dir = sys.argv[1]
 dat = ephys_data(data_dir)
 dat.get_lfp_electrodes()
-dat.get_stft()
 
 #median_amplitude = np.median(dat.amplitude_array,axis=(0,2))
 #visualize.firing_overview(stats.zscore(median_amplitude,axis=-1));plt.show()
@@ -158,15 +157,30 @@ with tables.open_file(dat.hdf5_name,'r+') as hf5:
     #============================== 
     if os.path.join(save_path, 'transformed_amplitude_array') not in hf5 \
                             or recalculate_transform:
-        # Only pull STFT if transformation needs to be calculated
-        amplitude_array = dat.amplitude_array.swapaxes(0,1)
+        perform_transormation_bool = True
 
+    else:
+        perform_transormation_bool = False
+        transformed_array = hf5.get_node(save_path,'transformed_amplitude_array')[:] 
+        transformed_array_params = ast.literal_eval(\
+                    hf5.get_node(save_path,'transformed_amplitude_info')[:][0]\
+                    .decode('utf-8'))
+
+# This decision branch is made to avoid unnecessarily loading STFT data
+# which are usually quite large
+if perform_transormation_bool:
+    dat.get_stft()
+
+    # Only pull STFT if transformation needs to be calculated
+    amplitude_array = dat.amplitude_array.swapaxes(0,1)
+    transformed_array = np.array(\
+            parallelize(lambda x: rolling_zscore(x, window_size), amplitude_array))
+
+    with tables.open_file(dat.hdf5_name,'r+') as hf5:
         #============================== 
         # Will only remove if array already there
         remove_node('/stft/analyses/amplitude_xcorr/transformed_amplitude_array',hf5)
         remove_node('/stft/analyses/amplitude_xcorr/transformed_amplitude_info',hf5)
-        transformed_array = np.array(\
-                parallelize(lambda x: rolling_zscore(x, window_size), amplitude_array))
         # Save transformed array to HDF5
         hf5.create_array(save_path,'transformed_amplitude_array',transformed_array)
         transform_array_params = {
@@ -179,11 +193,9 @@ with tables.open_file(dat.hdf5_name,'r+') as hf5:
         #============================== 
         del amplitude_array
 
-    else:
-        transformed_array = hf5.get_node(save_path,'transformed_amplitude_array')[:] 
-        transformed_array_params = ast.literal_eval(\
-                    hf5.get_node(save_path,'transformed_amplitude_info')[:][0]\
-                    .decode('utf-8'))
+# Chop to relevant time period
+baseline_lims = [0,2000]
+base_transformed_array = transformed_array[...,baseline_lims[0]:baseline_lims[1]]
 
 # Chop to relevant time period
 time_lims = [2000,4000]
@@ -205,17 +217,23 @@ transformed_array = transformed_array[...,time_lims[0]:time_lims[1]]
 
 split_amplitude_list = \
         [transformed_array[region] for region in dat.lfp_region_electrodes]
+base_split_amplitude_list = \
+        [base_transformed_array[region] for region in dat.lfp_region_electrodes]
 
 recalculate_xcorr = True
 # If not there, or recalculate flag True, then calculate
 
 with tables.open_file(dat.hdf5_name,'r+') as hf5:
-    if os.path.join(save_path, 'inter_region_array') not in hf5:
+    if os.path.join(save_path, 'inter_region_frame') not in hf5:
         present_bool = False 
     else:
         present_bool = True
 
-if (not present_bool) or recalculate_transform:
+if (not present_bool) or recalculate_xcorr:
+    
+    # To dissociate from calculation of transformed_array above
+    if 'freq_vec' not in dir(dat):
+        dat.get_stft()
 
     ########################################
     ## Inter-Region
@@ -228,7 +246,7 @@ if (not present_bool) or recalculate_transform:
     chan_count = [len(x) for x in temp_split_amp_list]
     all_pairs = np.arange(1,1+chan_count[0])[:,np.newaxis].\
             dot(np.arange(1,1+chan_count[1])[np.newaxis,:])
-    pair_inds = list(zip(*np.where(np.tril(all_pairs))))
+    pair_inds = list(zip(*np.where(all_pairs)))
 
     inter_region_xcorr = np.array([\
             norm_zero_lag_xcorr(temp_split_amp_list[0][ind[0]],
@@ -305,6 +323,44 @@ if (not present_bool) or recalculate_transform:
                         for this_bin in this_region]) \
                         for this_pair_list, this_region in zip(pair_list,binned_amp)]
 
+    ########################################
+    ## BASELINE Inter-Region 
+    ########################################
+    # Mean XCorr between all pairs of channels from both regions
+
+    base_temp_split_amp_list = [base_split_amplitude_list[x] for x in wanted_order]
+
+    base_inter_region_xcorr = np.array([\
+            norm_zero_lag_xcorr(base_temp_split_amp_list[0][ind[0]],
+                                base_temp_split_amp_list[1][ind[1]]) \
+                        for ind in pair_inds])
+
+    base_shuffled_inter_region_xcorr = np.array([\
+                    norm_zero_lag_xcorr(\
+                        base_temp_split_amp_list[0][ind[0]]\
+                            [:,np.random.permutation(\
+                                        np.arange(base_temp_split_amp_list[0].shape[2]))],
+                        base_temp_split_amp_list[1][ind[1]]) \
+                    for ind in pair_inds])
+
+    ########################################
+    ## BASELINE INTRA(WITHIN)-Region 
+    ########################################
+    # Perform xcorr between all pairs of channels within a region
+
+    base_intra_region_xcorr_list = [np.array([\
+            norm_zero_lag_xcorr(region[ind[0]],region[ind[1]]) \
+            for ind in this_pair_list]) \
+            for this_pair_list, region in zip(pair_list, base_split_amplitude_list)]
+
+    base_shuffled_intra_region_xcorr_list = [np.array([\
+            norm_zero_lag_xcorr(\
+                   region[ind[0]]
+                        [:,np.random.permutation(\
+                                    np.arange(base_temp_split_amp_list[0].shape[2]))],
+                    region[ind[1]]) \
+            for ind in this_pair_list]) \
+            for this_pair_list, region in zip(pair_list, base_split_amplitude_list)]
 
     ########################################
     ## Save arrays 
@@ -318,6 +374,10 @@ if (not present_bool) or recalculate_transform:
             gen_df(inter_region_xcorr,'inter_region'),
             gen_df(shuffled_inter_region_xcorr,'shuffled_inter_region')])
 
+    base_inter_region_frame = pd.concat([\
+            gen_df(base_inter_region_xcorr,'base_inter_region'),
+            gen_df(base_shuffled_inter_region_xcorr,'base_shuffled_inter_region')])
+
     binned_inter_region_frame = pd.concat([\
             gen_df_bin(binned_inter_region_xcorr,'binned_inter_region'),
             gen_df_bin(shuffled_binned_inter_region_xcorr,
@@ -329,24 +389,31 @@ if (not present_bool) or recalculate_transform:
             [gen_df(x,'shuffled_intra_'+region_name) for x,region_name \
                     in zip(shuffled_intra_region_xcorr_list, dat.region_names)])
 
+    base_intra_region_frame = pd.concat(
+            [gen_df(x,'base_intra_'+region_name) for x,region_name in \
+                    zip(base_intra_region_xcorr_list, dat.region_names)] + \
+            [gen_df(x,'base_shuffled_intra_'+region_name) for x,region_name \
+                    in zip(base_shuffled_intra_region_xcorr_list, dat.region_names)])
+
     binned_intra_region_frame = pd.concat(
             [gen_df_bin(x,'intra_'+region_name) for x,region_name in \
                 zip(binned_intra_region_xcorr_list, dat.region_names)] + \
             [gen_df_bin(x,'shuffled_intra_'+region_name) for x,region_name \
                 in zip(shuffled_binned_intra_region_xcorr_list, dat.region_names)])
 
-    with tables.open_file(dat.hdf5_name,'r+') as hf5:
-        for frame_name in ['inter_region_frame',
+    frame_name_list = ['inter_region_frame',
                             'binned_inter_region_frame',
                             'intra_region_frame',
-                            'binned_intra_region_frame']:
+                            'binned_intra_region_frame',
+                            'base_inter_region_frame',
+                            'base_intra_region_frame']
+
+    with tables.open_file(dat.hdf5_name,'r+') as hf5:
+        for frame_name in frame_name_list:
             # Will only remove if array already there
             remove_node(os.path.join(save_path, frame_name),hf5, recursive=True)
 
-    for frame_name in ['inter_region_frame',
-                        'binned_inter_region_frame',
-                        'intra_region_frame',
-                        'binned_intra_region_frame']:
+    for frame_name in frame_name_list:
         # Save transformed array to HDF5
         eval(frame_name).to_hdf(dat.hdf5_name,  
                 os.path.join(save_path, frame_name))
