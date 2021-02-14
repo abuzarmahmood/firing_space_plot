@@ -12,14 +12,11 @@ Fitting trial-shuffled and simulated datasets
 ########################################
 import os
 import sys
-import scipy.stats as stats
 import pymc3 as pm
 import theano.tensor as tt
+import json
 
 import numpy as np
-from matplotlib import pyplot as plt
-plt.rcParams.update(plt.rcParamsDefault)
-from scipy.stats import percentileofscore
 import pickle
 import argparse
 
@@ -27,8 +24,9 @@ sys.path.append('/media/bigdata/firing_space_plot/ephys_data')
 sys.path.append('/media/bigdata/firing_space_plot/changepoint_mcmc')
 from ephys_data import ephys_data
 import visualize
-from poisson_all_tastes_changepoint_model \
-        import create_changepoint_model, run_inference
+import poisson_all_tastes_changepoint_model as changepoint 
+#from poisson_all_tastes_changepoint_model \
+#        import create_changepoint_model, run_inference
 
 ############################################################
 # _                    _   ____        _        
@@ -38,6 +36,8 @@ from poisson_all_tastes_changepoint_model \
 #|_____\___/ \__,_|\__,_| |____/ \__,_|\__\__,_|
 ############################################################
 
+params_file_path = '/media/bigdata/firing_space_plot/changepoint_mcmc/fit_params.json'
+
 parser = argparse.ArgumentParser(description = 'Script to fit changepoint model')
 parser.add_argument('dir_name',  help = 'Directory containing data files')
 parser.add_argument('states', type = int, help = 'Number of States to fit')
@@ -46,10 +46,6 @@ data_dir = args.dir_name
 
 #data_dir = '/media/bigdata/Abuzar_Data/AM35/AM35_4Tastes_201230_115322/'
 #states = 4
-
-#plot_super_dir = os.path.join(data_dir,'changepoint_plots')
-#if not os.path.exists(plot_super_dir):
-#        os.makedirs(plot_super_dir)
 
 dat = ephys_data(data_dir)
 
@@ -65,28 +61,34 @@ taste_dat = np.array(dat.spikes)
 ##########
 # PARAMS 
 ##########
-time_lims = [1500,4000]
-bin_width = 10
-#states = 4
 states = int(args.states)
-fit = 40000
-samples = 20000
+
+with open(params_file_path, 'r') as file:
+    params_dict = json.load(file)
+
+for key,val in params_dict.items():
+    globals()[key] = val
 
 # Create dirs and names
-model_save_dir = os.path.join(data_dir,'saved_models',f'vi_{states}_states')
+model_save_dir = changepoint.get_model_save_dir(data_dir, states)
+#model_save_dir = os.path.join(data_dir,'saved_models',f'vi_{states}_states')
+#model_save_dir = changepoint.get_model_save_dir(data_dir, states)
+#model_name = f'vi_{states}_states_{fit}fit_'\
+#        f'time{time_lims[0]}_{time_lims[1]}_bin{bin_width}'
+#shuffle_model_name = 'shuffle_' + model_name
+#simulate_model_name = 'simulate_' + model_name
+#model_name_list = [shuffle_model_name,simulate_model_name]
+model_name_list = [changepoint.get_model_name(\
+                        states,fit,time_lims,bin_width,this_type) \
+                        for this_type in ['shuffle','simulate']]
+
+model_dump_path_list =[\
+        changepoint.get_model_dump_path(this_model_name,model_save_dir)
+        for this_model_name in model_name_list]
+        #os.path.join(model_save_dir,f'dump_{this_model_name}.pkl')\
+
 if not os.path.exists(model_save_dir):
         os.makedirs(model_save_dir)
-model_name = f'vi_{states}_states_{fit}fit_'\
-        f'time{time_lims[0]}_{time_lims[1]}_bin{bin_width}'
-shuffle_model_name = 'shuffle_' + model_name
-simulate_model_name = 'simulate_' + model_name
-model_name_list = [shuffle_model_name,simulate_model_name]
-
-#for this_model_name in model_name_list:
-#    plot_dir = os.path.join(plot_super_dir,this_model)
-#    if not os.path.exists(plot_dir):
-#            os.makedirs(plot_dir)
-
 
 ##########
 # Bin Data
@@ -197,18 +199,15 @@ simulated_dat_binned = np.vectorize(np.int)(simulated_dat_binned)
 #|___|_| |_|_|  \___|_|  \___|_| |_|\___\___|
 ########################################
 
-model_dump_path_list =[\
-        os.path.join(model_save_dir,f'dump_{this_model_name}.pkl')\
-        for this_model_name in model_name_list]
-
 if not all([os.path.exists(x) for x in model_dump_path_list]):
     model_kwargs = {'states':states,'fit':fit,'samples':samples}
     model_list = [\
-            create_changepoint_model(\
+            changepoint.create_changepoint_model(\
                     spike_array = this_data, **model_kwargs) \
                     for this_data in \
                     [shuffled_dat_binned, simulated_dat_binned]]
                 
     
     for this_model,this_model_name in zip(model_list, model_name_list):
-        run_inference(this_model, fit, samples, model_save_dir, this_model_name)
+        changepoint.run_inference(this_model, fit, samples, 
+                                model_save_dir, this_model_name)
