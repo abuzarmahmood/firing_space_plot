@@ -22,6 +22,35 @@ import pymc3 as pm
 import theano.tensor as tt
 import numpy as np
 
+########################################
+# _   _                 _             
+#| \ | | __ _ _ __ ___ (_)_ __   __ _ 
+#|  \| |/ _` | '_ ` _ \| | '_ \ / _` |
+#| |\  | (_| | | | | | | | | | | (_| |
+#|_| \_|\__,_|_| |_| |_|_|_| |_|\__, |
+#                               |___/ 
+########################################
+# Since naming is used to save and load models
+# it must be consistent across files
+# This section provides functions to name models
+# and model_save_path's
+
+def get_model_save_dir(data_dir, states):
+    return os.path.join(data_dir,'saved_models',f'vi_{states}_states')
+
+def get_model_name(states,fit,time_lims,bin_width, model_type):
+    model_name = f'vi_{states}states_{fit}fit_'\
+        f'{time_lims[0]}_{time_lims[1]}time_{bin_width}bin'
+    if model_type == 'shuffle':
+        model_name = 'shuffle_' + model_name
+    if model_type == 'simulate':
+        model_name = 'simulate_' + model_name
+    return model_name
+
+def get_model_dump_path(model_name, model_save_dir):
+    model_path = os.path.join(model_save_dir,f'{model_name}.pkl')
+    return model_path
+
 ############################################################
 #  ____                _         __  __           _      _ 
 # / ___|_ __ ___  __ _| |_ ___  |  \/  | ___   __| | ___| |
@@ -175,8 +204,9 @@ def run_inference(model,fit,samples, model_save_dir, model_name):
     model_name : name for the model
     """
 
-    model_dump_path = os.path.join(model_save_dir,f'dump_{model_name}.pkl')
-    trace_dump_path = os.path.join(model_save_dir,f'traces_{model_name}.pkl')
+    #model_dump_path = os.path.join(model_save_dir,f'dump_{model_name}.pkl')
+    model_dump_path = get_model_dump_path(model_name,model_save_dir) 
+    #trace_dump_path = os.path.join(model_save_dir,f'traces_{model_name}.pkl')
 
     if os.path.exists(model_dump_path):
         print('Trace loaded from cache')
@@ -185,6 +215,8 @@ def run_inference(model,fit,samples, model_save_dir, model_name):
         model = data['model']
         #inference = data['inference']
         approx = data['approx']
+        # Remove pickled data to conserve memory
+        del data
         # Recreate samples
         trace = approx.sample(draws=samples)
     else:
@@ -193,20 +225,23 @@ def run_inference(model,fit,samples, model_save_dir, model_name):
             approx = pm.fit(n=fit, method=inference)
             trace = approx.sample(draws=samples)
 
+        # Extract relevant variables from trace
+        lambda_stack = trace['lambda'].swapaxes(0,1)
+        tau_samples = trace['tau']
+
         print('Dumping trace to cache')
         with open(model_dump_path, 'wb') as buff:
             pickle.dump({'model' : model,
-                        'approx' : approx}, buff)
+                        'approx' : approx,
+                        'lambda' : lambda_stack,
+                        'tau' : tau_samples,
+                        'data' : model.obs.observations}, buff)
                         #'trace': trace,
                         #'inference': inference,
 
-    # Extract relevant variables from trace
-    lambda_stack = trace['lambda'].swapaxes(0,1)
-    tau_samples = trace['tau']
-
     # Save lambda and tau traces to file to improve retrieval 
-    with open(trace_dump_path, 'wb') as buff:
-        pickle.dump({'lambda' : lambda_stack,
-                    'tau' : tau_samples,
-                    'data' : model.obs.observations}, buff)
+    #with open(trace_dump_path, 'wb') as buff:
+    #    pickle.dump({'lambda' : lambda_stack,
+    #                'tau' : tau_samples,
+    #                'data' : model.obs.observations}, buff)
 
