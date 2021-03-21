@@ -90,9 +90,6 @@ if not os.path.exists(model_save_dir):
 ##########
 # Bin Data
 ##########
-t_vec = np.arange(taste_dat.shape[-1])
-binned_t_vec = np.min(t_vec[time_lims[0]:time_lims[1]].\
-                    reshape((-1,bin_width)),axis=-1)
 this_dat_binned = \
         np.sum(taste_dat[...,time_lims[0]:time_lims[1]].\
         reshape(*taste_dat.shape[:-1],-1,bin_width),axis=-1)
@@ -112,8 +109,8 @@ if not os.path.exists(model_dump_path):
                 fit = fit,
                 samples = samples)
     
-# If the unnecessarily detailed model name exists
-# It will be loaded without running the inference
-# Otherwise model will be fit and saved
+    # If the unnecessarily detailed model name exists
+    # It will be loaded without running the inference
+    # Otherwise model will be fit and saved
 
-changepoint.run_inference(model, fit, samples, model_save_dir, model_name)
+    changepoint.run_inference(model, fit, samples, model_save_dir, model_name)
