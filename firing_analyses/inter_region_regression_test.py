@@ -27,6 +27,14 @@ from joblib import Parallel, delayed, cpu_count
 vector_percentile = lambda dist,vals: np.array(\
         list(map(lambda vals: percentileofscore(dist, vals), vals)))
 
+def trial_shuffle_gen(label_list):
+    new_trial_order = np.random.permutation(np.unique(label_list))
+    return np.concatenate([np.where(label_list == x)[0] for x in new_trial_order])
+
+def parallelize(func, iterator):
+    return Parallel(n_jobs = cpu_count()-2)\
+            (delayed(func)(this_iter) for this_iter in tqdm(iterator))
+
 ###################################################
 # _                    _   ____        _        
 #| |    ___   __ _  __| | |  _ \  __ _| |_ __ _ 
@@ -59,10 +67,6 @@ firing_long_scaled = StandardScaler().fit_transform(firing_array_long.T)
 
 trial_labels = np.repeat(np.arange(firing_array.shape[1]), firing_array.shape[2])
 
-def trial_shuffle_gen(label_list):
-    new_trial_order = np.random.permutation(np.unique(label_list))
-    return np.concatenate([np.where(label_list == x)[0] for x in new_trial_order])
-
 
 ###################################################
 # ____                              _             
@@ -77,26 +81,34 @@ def trial_shuffle_gen(label_list):
 ## Perform regression for all trials collectively
 ##################################################
 ## No crossvalidation
-def run_regression(firing_array,trial_labels, shuffle_repeats = 100 
+def run_regression(firing1, firing2 = None, trial_labels = None, shuffle_repeats = 100, 
         cv_splitter = None, scoring_metric = None, cv_bool = False):
         """
-        firing_array : 2D : (trials x time_bins) x nrns
+        firing1 : 2D : (trials x time_bins) x nrns
+        firing2 : 2D : Firing for second region
+                        If firing2 not present, firing1 gets chopped up
+        trial_labels : REQUIRED, but set to None to make it a kwarg
         cv_bool : use cross validation?
         """
+        if trial_labels == None:
+            raise Exception('trial_labels are required to generate shuffles')
         if cv_bool:
             if cv_splitter == None or scoring_metric == None:
                 raise Exception('cv_splitter or scoring_metric not provided')
 
-        grp1,grp2 = np.array_split(\
-                np.random.permutation(np.arange(firing_long_scaled.shape[1])),2)
+        if firing2 == None:
+            grp1,grp2 = np.array_split(\
+                    np.random.permutation(np.arange(firing1.shape[1])),2)
 
-        X,y = firing_long_scaled[:,grp1], firing_long_scaled[:,grp2]
+            X,y = firing1[:,grp1], firing1[:,grp2]
+        else:
+            X,y = firing1,firing2
 
         if cv_bool:
             lm = LinearRegression()
             cv_iter = cv_splitter.split(X, y, trial_labels)
             actual_score = cross_val_score(lm, X, y, 
-                    cv=cv_iter, scoring_metric = metric)
+                    cv=cv_iter, scoring = scoring_metric)
         else:
             reg = LinearRegression().fit(X, y)
             actual_score = r2_score(y,reg.predict(X))
@@ -112,7 +124,7 @@ def run_regression(firing_array,trial_labels, shuffle_repeats = 100
                 lm = LinearRegression()
                 cv_iter = cv_splitter.split(X_sh, y_sh, trial_labels)
                 shuffled_scores.append(cross_val_score(lm, X_sh, y_sh, 
-                    cv=cv_iter, scoring_metric = metric))
+                    cv=cv_iter, scoring = scoring_metric))
             else:
                 reg = LinearRegression().fit(X_sh, y_sh)
                 shuffled_scores.append(r2_score(y_sh,reg.predict(X_sh)))
@@ -125,122 +137,29 @@ def run_regression(firing_array,trial_labels, shuffle_repeats = 100
 
         return actual_data_percentile, actual_score, shuffled_scores
 
-def parallelize(func, iterator):
-    return Parallel(n_jobs = cpu_count()-2)\
-            (delayed(func)(this_iter) for this_iter in tqdm(iterator))
 
-split_repeat_num = 30
+split_repeat_num = 100
 gss = GroupShuffleSplit(n_splits=cv_split, train_size=.9)
 
-this_func = lambda x : run_regression(firing_long_scaled, trial_labels,
+# WITHOUT cross-validation
+this_func = lambda x : run_regression(firing_long_scaled, 
+                trial_labels = trial_labels,
                 cv_splitter = gss, scoring_metric = metric, cv_bool = False)
-outs = parallelize(this_func, range(split_repeat_num))
-actual_data_percentile, actual_score, shuffled_scores = list(zip(*outs))
-actual_data_percentile = np.concatenate(actual_data_percentile)
+no_cv_outs = parallelize(this_func, range(split_repeat_num))
+no_cv_actual_data_percentile, no_cv_actual_score, no_cv_shuffled_scores = \
+                            list(zip(*no_cv_outs))
+no_cv_actual_data_percentile = np.concatenate(no_cv_actual_data_percentile)
 
-# With cross-validation
-this_func = lambda x : run_regression(firing_long_scaled, trial_labels,
+# WITH cross-validation
+this_func = lambda x : run_regression(firing_long_scaled, 
+                trial_labels = trial_labels,
                 cv_splitter = gss, scoring_metric = metric, cv_bool = True)
-outs = parallelize(this_func, range(split_repeat_num))
-actual_data_percentile, actual_score, shuffled_scores = list(zip(*outs))
-actual_data_percentile = np.concatenate(actual_data_percentile)
+cv_outs = parallelize(this_func, range(split_repeat_num))
+cv_actual_data_percentile, cv_actual_score, cv_shuffled_scores = \
+                                list(zip(*cv_outs))
+cv_actual_data_percentile = np.concatenate(cv_actual_data_percentile)
 
 vals,bins,patches = \
-        plt.hist(np.concatenate(all_percentiles), bins = np.linspace(0,100,21))
+        plt.hist(cv_actual_data_percentile, bins = np.linspace(0,100,21))
 patches[-1].set_fc('red')
 plt.show()
-
-#all_percentiles = []
-#for this_split in trange(split_repeat_num):
-#    grp1,grp2 = np.array_split(\
-#            np.random.permutation(np.arange(firing_long_scaled.shape[1])),2)
-#
-#    X,y = firing_long_scaled[:,grp1], firing_long_scaled[:,grp2]
-#    reg = LinearRegression().fit(X, y)
-#    actual_score = r2_score(y,reg.predict(X))
-#
-#    # Shuffled trials
-#    repeats = 100
-#    shuffled_scores = []
-#    for repeat in range(repeats):
-#
-#        X_sh = X[trial_shuffle_gen(trial_labels)] 
-#        y_sh = y[trial_shuffle_gen(trial_labels)]
-#
-#        reg = LinearRegression().fit(X_sh, y_sh)
-#        shuffled_scores.append(r2_score(y_sh,reg.predict(X_sh)))
-#
-#    actual_data_percentile = percentileofscore(shuffled_scores, actual_score)
-#    all_percentiles.append(actual_data_percentile)
-#
-#plt.hist(shuffled_scores,bins=50)
-#plt.axvline(actual_score)
-#plt.title(f'Percentile : {actual_data_percentile}')
-#plt.show()
-#
-###################################################
-### With cross-validation
-###################################################
-### K-Fold cross validation will hold out chunks in CONTINUOUS TIME
-### There is no guarantee that the activity of the populations will be stable
-### across the session. This means that the relationship between the populations
-### could be different on the trained data and the validation data
-### To mitigate this issue:
-### 1) We could train and test on smaller chunks of data (e.g. 10 trial blocks)
-### 2) Use GroupKFold or GroupShuffleSplit (with groups as trials) to
-###      sample adequately from each time period
-## https://scikit-learn.org/stable/auto_examples/model_selection/plot_cv_indices.html
-#
-#cv_split = 10
-#shuffle_repeats = 100
-#split_repeat_num = 30
-#metric = 'r2'
-#all_percentiles = []
-#
-#gss = GroupShuffleSplit(n_splits=cv_split, train_size=.9)
-#
-##all_inds = []
-##for train_idx, test_idx in gss.split(X, y, trial_labels):
-##    all_inds.append(train_idx)
-##ind_mat = np.zeros((cv_split,len(trial_labels)))
-##for num,this_inds in enumerate(all_inds):
-##    ind_mat[num,this_inds] = 1
-##visualize.imshow(ind_mat)
-##plt.show()
-#
-#
-#
-#for this_split in trange(split_repeat_num):
-#
-#    # Actual data
-#    grp1,grp2 = np.array_split(\
-#            np.random.permutation(np.arange(firing_long_scaled.shape[1])),2)
-#
-#    X,y = firing_long_scaled[:,grp1], firing_long_scaled[:,grp2]
-#
-#    lm = LinearRegression()
-#    cv_iter = gss.split(X, y, trial_labels)
-#    actual_score = cross_val_score(lm, X, y, cv=cv_iter, scoring = metric)
-#
-#    # Shuffled trials
-#    shuffled_scores = []
-#    for repeat in range(shuffle_repeats):
-#
-#        X_sh = X[trial_shuffle_gen(trial_labels)] 
-#        y_sh = y[trial_shuffle_gen(trial_labels)]
-#
-#        lm = LinearRegression()
-#        cv_iter = gss.split(X_sh, y_sh, trial_labels)
-#        shuffled_scores.append(cross_val_score(lm, X_sh, y_sh, cv=cv_iter, 
-#            scoring = metric))
-#
-#    actual_data_percentile = \
-#            vector_percentile(np.concatenate(shuffled_scores), actual_score)
-#
-#    all_percentiles.append(actual_data_percentile)
-#
-#vals,bins,patches = \
-#        plt.hist(np.concatenate(all_percentiles), bins = np.linspace(0,100,21))
-#patches[-1].set_fc('red')
-#plt.show()
-#
