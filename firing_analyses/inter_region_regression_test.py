@@ -11,30 +11,28 @@
 
 import os
 import matplotlib.pyplot as plt
-import matplotlib
-matplotlib.use('Qt5Agg')
-import tables
-import easygui
-import scipy
 import numpy as np
 from tqdm import tqdm, trange
 from joblib import Parallel,delayed
-from sklearn.decomposition import PCA as pca
 from sklearn.preprocessing import StandardScaler
-from sklearn import linear_model
 from sklearn.model_selection import cross_val_predict
 from sklearn.metrics import mean_squared_error, r2_score
 from scipy.stats import zscore, percentileofscore
 from sklearn.model_selection import cross_val_predict, cross_val_score
-from statsmodels.tsa.stattools import acf
-import pandas as pd
-import statsmodels.api as sm
 from sklearn.linear_model import LinearRegression
 from sklearn.cross_decomposition import PLSRegression
 from sklearn.model_selection import GroupKFold, GroupShuffleSplit
 
 vector_percentile = lambda dist,vals: np.array(\
         list(map(lambda vals: percentileofscore(dist, vals), vals)))
+
+###################################################
+# _                    _   ____        _        
+#| |    ___   __ _  __| | |  _ \  __ _| |_ __ _ 
+#| |   / _ \ / _` |/ _` | | | | |/ _` | __/ _` |
+#| |__| (_) | (_| | (_| | | |_| | (_| | || (_| |
+#|_____\___/ \__,_|\__,_| |____/ \__,_|\__\__,_|
+###################################################
 
 os.chdir('/media/bigdata/firing_space_plot/ephys_data')
 from ephys_data import ephys_data
@@ -44,7 +42,7 @@ data_dir = '/media/bigdata/Abuzar_Data/AM34/AM34_4Tastes_201218_131632'
 dat = ephys_data(data_dir)
 dat.firing_rate_params = dict(zip(\
     ('type', 'step_size','window_size','dt', 'baks_resolution', 'baks_dt'),
-    ('conv',25,250,1,25e-3,1e-3)))
+    ('baks',25,250,1,25e-3,1e-3)))
 dat.extract_and_process()
 
 # Use half of neurons to predict activity in other half
@@ -55,87 +53,57 @@ time_inds = np.vectorize(np.int)(np.array(time_lims)/(step_size/dt))
 taste = 0
 
 firing_array = dat.firing_array[taste][...,time_inds[0]:time_inds[1]]
-# Shuffle trial order so there are no trends along the trial dim
-shuffle_trial_inds = np.random.permutation(np.arange(firing_array.shape[1]))
-firing_array = firing_array[:,shuffle_trial_inds]
+firing_array_long = firing_array.reshape((firing_array.shape[0],-1))
+firing_long_scaled = StandardScaler().fit_transform(firing_array_long.T) 
+
+trial_labels = np.repeat(np.arange(firing_array.shape[1]), firing_array.shape[2])
+
+def trial_shuffle_gen(label_list):
+    new_trial_order = np.random.permutation(np.unique(label_list))
+    return np.concatenate([np.where(label_list == x)[0] for x in new_trial_order])
 
 split_repeat_num = 10
 
+###################################################
+# ____                              _             
+#|  _ \ ___  __ _ _ __ ___  ___ ___(_) ___  _ __  
+#| |_) / _ \/ _` | '__/ _ \/ __/ __| |/ _ \| '_ \ 
+#|  _ <  __/ (_| | | |  __/\__ \__ \ | (_) | | | |
+#|_| \_\___|\__, |_|  \___||___/___/_|\___/|_| |_|
+#           |___/                                 
+###################################################
+
+##################################################
+## Perform regression for all trials collectively
+##################################################
 ## No crossvalidation
 
 all_percentiles = []
-all_pls_percentiles = []
 for this_split in trange(split_repeat_num):
-    pop1_neurons = np.random.choice(np.arange(firing_array.shape[0]),
-                                firing_array.shape[0]*1//2, replace = False)
-    pop2_neurons = np.array([x for x in np.arange(firing_array.shape[0]) \
-                            if x not in pop1_neurons])
-    pop1_firing = firing_array[pop1_neurons] 
-    pop2_firing = firing_array[pop2_neurons] 
+    grp1,grp2 = np.array_split(\
+            np.random.permutation(np.arange(firing_long_scaled.shape[1])),2)
 
-
-    ##################################################
-    ## Perform regression for all trials collectively
-    ##################################################
-    # Actual data
-    pop1_firing_long = pop1_firing.reshape((pop1_firing.shape[0],-1))
-    pop2_firing_long = pop2_firing.reshape((pop2_firing.shape[0],-1))
-
-    pop1_long_scaled = StandardScaler().fit_transform(pop1_firing_long.T)
-    pop2_long_scaled = StandardScaler().fit_transform(pop2_firing_long.T)
-
-    X = pop1_long_scaled 
-    y = pop2_long_scaled 
+    X,y = firing_long_scaled[:,grp1], firing_long_scaled[:,grp2]
     reg = LinearRegression().fit(X, y)
     actual_score = r2_score(y,reg.predict(X))
-
-    ## Use PLSR to avoid overfitting
-    pls2 = PLSRegression(n_components=2)
-    pls2.fit(X, y)
-
-    actual_pls_score = r2_score(y,pls2.predict(X))
 
     # Shuffled trials
     repeats = 100
     shuffled_scores = []
-    shuffled_pls_scores = []
     for repeat in range(repeats):
-        pop1_shuffled = \
-                pop1_firing[:,np.random.permutation(np.arange(pop1_firing.shape[1]))] 
-        pop2_shuffled = \
-                pop2_firing[:,np.random.permutation(np.arange(pop2_firing.shape[1]))] 
 
-        pop1_shuffled_long = pop1_shuffled.reshape((pop1_shuffled.shape[0],-1))
-        pop2_shuffled_long = pop2_shuffled.reshape((pop2_shuffled.shape[0],-1))
+        X_sh = X[trial_shuffle_gen(trial_labels)] 
+        y_sh = y[trial_shuffle_gen(trial_labels)]
 
-        pop1_shuffled_long_scaled = \
-                StandardScaler().fit_transform(pop1_shuffled_long.T)
-        pop2_shuffled_long_scaled = \
-                StandardScaler().fit_transform(pop2_shuffled_long.T)
-
-        X = pop1_shuffled_long_scaled 
-        y = pop2_shuffled_long_scaled 
-
-        reg = LinearRegression().fit(X, y)
-        shuffled_scores.append(r2_score(y,reg.predict(X)))
-
-        pls2 = PLSRegression(n_components=2).fit(X, y)
-        shuffled_pls_scores.append(r2_score(y,pls2.predict(X)))
+        reg = LinearRegression().fit(X_sh, y_sh)
+        shuffled_scores.append(r2_score(y_sh,reg.predict(X_sh)))
 
     actual_data_percentile = percentileofscore(shuffled_scores, actual_score)
-    actual_pls_data_percentile = \
-            percentileofscore(shuffled_pls_scores, actual_pls_score)
     all_percentiles.append(actual_data_percentile)
-    all_pls_percentiles.append(actual_pls_data_percentile)
 
 plt.hist(shuffled_scores,bins=50)
 plt.axvline(actual_score)
 plt.title(f'Percentile : {actual_data_percentile}')
-plt.show()
-
-plt.hist(shuffled_pls_scores,bins=50)
-plt.axvline(actual_pls_score)
-plt.title(f'Percentile : {actual_pls_data_percentile}')
 plt.show()
 
 ##################################################
@@ -151,126 +119,54 @@ plt.show()
 ##      sample adequately from each time period
 # https://scikit-learn.org/stable/auto_examples/model_selection/plot_cv_indices.html
 
-
 cv_split = 10
 shuffle_repeats = 100
-split_repeat_num = 20
+split_repeat_num = 30
 metric = 'r2'
 all_percentiles = []
-all_pls_percentiles = []
 
-trial_labels = np.repeat(np.arange(firing_array.shape[1]), firing_array.shape[2])
-gss = GroupShuffleSplit(n_splits=cv_split, train_size=.9, random_state=42)
-gss.get_n_splits()
+gss = GroupShuffleSplit(n_splits=cv_split, train_size=.9)
 
-all_inds = []
-for train_idx, test_idx in gss.split(X, y, groups):
-    all_inds.append(train_idx)
-ind_mat = np.zeros((cv_split,len(trial_labels)))
-for num,this_inds in enumerate(all_inds):
-    ind_mat[num,this_inds] = 1
-visualize.imshow(ind_mat)
-plt.show()
+#all_inds = []
+#for train_idx, test_idx in gss.split(X, y, trial_labels):
+#    all_inds.append(train_idx)
+#ind_mat = np.zeros((cv_split,len(trial_labels)))
+#for num,this_inds in enumerate(all_inds):
+#    ind_mat[num,this_inds] = 1
+#visualize.imshow(ind_mat)
+#plt.show()
 
 for this_split in trange(split_repeat_num):
-    ##################################################
 
-    pop1_neurons = np.random.choice(np.arange(firing_array.shape[0]),
-                                firing_array.shape[0]*1//2, replace = False)
-    pop2_neurons = np.array([x for x in np.arange(firing_array.shape[0]) \
-                            if x not in pop1_neurons])
-    pop1_firing = firing_array[pop1_neurons] 
-    pop2_firing = firing_array[pop2_neurons] 
-
-
-    ##################################################
-    ## Perform regression for all trials collectively
-    ##################################################
     # Actual data
-    pop1_firing_long = pop1_firing.reshape((pop1_firing.shape[0],-1))
-    pop2_firing_long = pop2_firing.reshape((pop2_firing.shape[0],-1))
+    grp1,grp2 = np.array_split(\
+            np.random.permutation(np.arange(firing_long_scaled.shape[1])),2)
 
-    pop1_long_scaled = StandardScaler().fit_transform(pop1_firing_long.T)
-    pop2_long_scaled = StandardScaler().fit_transform(pop2_firing_long.T)
+    X,y = firing_long_scaled[:,grp1], firing_long_scaled[:,grp2]
 
-    #permutation_inds = np.random.permutation(np.arange(pop1_long_scaled.shape[0]))
-    permutation_inds = np.arange(pop1_long_scaled.shape[0])
-    # To avoid cross-validation being affected by position/trial
-    X = pop1_long_scaled[permutation_inds] 
-    y = pop2_long_scaled[permutation_inds] 
     lm = LinearRegression()
-    gss = GroupShuffleSplit(n_splits=cv_split, train_size=.9)
-    cv_iter = gss.split(X, y, groups)
+    cv_iter = gss.split(X, y, trial_labels)
     actual_score = cross_val_score(lm, X, y, cv=cv_iter, scoring = metric)
-
-
-    ## Use PLSR to avoid overfitting
-    #pls2 = PLSRegression(n_components=2)
-    #actual_pls_score = cross_val_score(pls2, X, y, cv=cv_split, scoring = metric)
 
     # Shuffled trials
     shuffled_scores = []
-    #shuffled_pls_scores = []
-    #full_shuffled_scores = []
     for repeat in range(shuffle_repeats):
-        pop1_shuffled = \
-                pop1_firing[:,np.random.permutation(np.arange(pop1_firing.shape[1]))] 
-        pop2_shuffled = \
-                pop2_firing[:,np.random.permutation(np.arange(pop2_firing.shape[1]))] 
 
-        pop1_shuffled_long = pop1_shuffled.reshape((pop1_shuffled.shape[0],-1))
-        pop2_shuffled_long = pop2_shuffled.reshape((pop2_shuffled.shape[0],-1))
-
-        pop1_shuffled_long_scaled = \
-                StandardScaler().fit_transform(pop1_shuffled_long.T)
-        pop2_shuffled_long_scaled = \
-                StandardScaler().fit_transform(pop2_shuffled_long.T)
-
-        # Can probably use same permutation inds as above
-        X = pop1_shuffled_long_scaled[permutation_inds] 
-        y = pop2_shuffled_long_scaled[permutation_inds] 
+        X_sh = X[trial_shuffle_gen(trial_labels)] 
+        y_sh = y[trial_shuffle_gen(trial_labels)]
 
         lm = LinearRegression()
-        gss = GroupShuffleSplit(n_splits=cv_split, train_size=.9)
-        cv_iter = gss.split(X, y, groups)
-        shuffled_scores.append(cross_val_score(lm, X, y, cv=cv_iter, 
+        cv_iter = gss.split(X_sh, y_sh, trial_labels)
+        shuffled_scores.append(cross_val_score(lm, X_sh, y_sh, cv=cv_iter, 
             scoring = metric))
-        #full_shuffled_scores.append(\
-        #        cross_val_score(lm, X, np.random.permutation(y), cv=10, scoring = 'r2'))
 
-        #pls2 = PLSRegression(n_components=2)
-        #shuffled_pls_scores.append(cross_val_score(pls2, X, y, cv=cv_split, 
-        #    scoring =metric))
-
-    #mean_actual_score = np.mean(actual_score)
-    #mean_shuffled_scores = np.mean(np.array(shuffled_scores),axis=1)
-    #mean_full_shuffled_scores = np.mean(np.array(full_shuffled_scores),axis=1)
-    #actual_data_percentile = percentileofscore(mean_shuffled_scores, mean_actual_score)
     actual_data_percentile = vector_percentile(np.concatenate(shuffled_scores), 
                                             actual_score)
 
-    #mean_pls_actual_score = np.mean(actual_pls_score)
-    #mean_pls_shuffled_scores = np.mean(np.array(shuffled_pls_scores),axis=1)
-    #actual_pls_data_percentile = \
-    #        percentileofscore(mean_pls_shuffled_scores, mean_pls_actual_score)
-
     all_percentiles.append(actual_data_percentile)
-    #all_pls_percentiles.append(actual_pls_data_percentile)
 
-plt.hist(np.concatenate(all_percentiles), bins = 20)
-vals,bins = np.histogram(np.concatenate(all_percentiles), bins = 20)
-plt.plot(bins[1:], np.cumsum(vals))
+vals,bins,patches = \
+        plt.hist(np.concatenate(all_percentiles), bins = np.linspace(0,100,21))
+patches[-1].set_fc('red')
 plt.show()
 
-#plt.hist(np.concatenate(shuffled_scores),bins=50, label = 'Trial shuffled')
-##plt.hist(mean_full_shuffled_scores,bins=50, label = 'Complete Random')
-#np.vectorize(lambda x :\
-#        plt.axvline(x, label = 'Actual', linewidth = 2, color = 'red'))(actual_score)
-#plt.legend()
-#plt.title(f'Percentile : {actual_data_percentile}')
-#plt.show()
-
-#plt.hist(mean_pls_shuffled_scores,bins=50)
-#plt.axvline(mean_pls_actual_score)
-#plt.title(f'Percentile : {actual_pls_data_percentile}')
-#plt.show()
