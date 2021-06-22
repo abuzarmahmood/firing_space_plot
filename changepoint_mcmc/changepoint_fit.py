@@ -130,12 +130,12 @@ model_save_dir = changepoint.get_model_save_dir(data_dir, states)
 #        f'time{time_lims[0]}_{time_lims[1]}_bin{bin_width}'
 
 if good_nrn_bool:
-    prefix = 'good_'
+    suffix = '_type_good'
 else:
-    prefix = ''
+    suffix = '_type_reg'
 
 model_name = changepoint.get_model_name(\
-        states,fit,time_lims,bin_width, prefix+'actual')
+        states,fit,time_lims,bin_width, 'actual') + suffix
 #model_dump_path = os.path.join(model_save_dir,f'dump_{model_name}.pkl')
 model_dump_path = changepoint.get_model_dump_path(model_name,model_save_dir)
 
@@ -192,7 +192,7 @@ if simulate_bool:
     model_name_list = [changepoint.get_model_name(\
                             states,fit,time_lims,bin_width,this_type) \
                             for this_type in ['shuffle','simulate']]
-    model_name_list = [prefix+x for x in model_name_list]
+    model_name_list = [x+suffix for x in model_name_list]
 
     model_dump_path_list =[\
             changepoint.get_model_dump_path(this_model_name,model_save_dir)
