@@ -99,6 +99,28 @@ def create_changepoint_plots(spike_array, tau_samples, trial_inds_list,
         fig.suptitle(suptitle)
         fig.tight_layout(rect=[0, 0.03, 1, 0.95])
 
+def get_state_firing(spike_array,tau_array):
+    """
+    spike_array : trials x nrns x bins
+    tau_array : trials x switchpoints
+    """
+    states = tau_array.shape[-1] + 1
+    # Get mean firing rate for each STATE using model
+    state_inds = np.hstack([np.zeros((tau_array.shape[0],1)),
+                            tau_array,
+                            np.ones((tau_array.shape[0],1))*spike_array.shape[-1]])
+    state_lims = np.array([state_inds[:,x:x+2] for x in range(states)])
+    state_lims = np.vectorize(np.int)(state_lims)
+    state_lims = np.swapaxes(state_lims,0,1)
+
+    state_firing = \
+            np.array([[np.mean(trial_dat[:,start:end],axis=-1) \
+            for start, end in trial_lims] \
+            for trial_dat, trial_lims in zip(spike_array,state_lims)])
+
+    state_firing = np.nan_to_num(state_firing)
+    return state_firing
+
 ############################################################
 # _                    _   ____        _        
 #| |    ___   __ _  __| | |  _ \  __ _| |_ __ _ 
@@ -116,7 +138,11 @@ model_path = args.model_path
 #        'saved_models/vi_4_states/vi_4states_40000fit_1500_4000time_50bin.pkl'
 #model_path = '/media/bigdata/Abuzar_Data/AS18/AS18_4Tastes_200228_151511/'\
 #        'saved_models/vi_4_states/vi_4states_40000fit_1500_4000time_50bin.pkl'
-#model_path = '/media/bigdata/Abuzar_Data/AM28/AM28_4Tastes_201004_120804/saved_models/vi_4_states/vi_4states_40000fit_2000_4000time_50bin.pkl'
+#model_path = '/media/bigdata/Abuzar_Data/AM28/AM28_4Tastes_201004_120804/'\
+#        'saved_models/vi_4_states/vi_4states_40000fit_2000_4000time_50bin.pkl'
+#model_path = '/media/bigdata/Abuzar_Data/AS18/AS18_4Tastes_200229_154608/'\
+#        'saved_models/vi_4_states/'\
+#        'actual_vi_4states_40000fit_2000_4000time_50bin_type_good.pkl'
 
 if not os.path.exists(model_path):
     raise Exception('Model path does not exist')
@@ -130,6 +156,7 @@ states = int(re.findall("\d+states",model_name)[0][:-6])
 time_lims = [int(x) for x in \
         re.findall("\d+_\d+time",model_name)[0][:-4].split('_')]
 bin_width = int(re.findall("\d+bin",model_name)[0][:-3])
+fit_type = re.findall("type_.+",model_name)[0].split('_')[1]
 
 # Exctract data_dir from model_path
 data_dir = "/".join(model_path.split('/')[:-3])
@@ -146,7 +173,8 @@ dat.get_region_units()
 ########################################
 # Create dirs and names
 ########################################
-plot_super_dir = os.path.join(data_dir,'changepoint_plots',f'{states}_states')
+plot_super_dir = os.path.join(data_dir,
+        'changepoint_plots',f'{states}_states', f'type_{fit_type}')
 plot_dir = os.path.join(plot_super_dir,model_name,'analysis_plots')
 
 if not os.path.exists(plot_super_dir):
@@ -183,29 +211,6 @@ taste_label = np.sort(list(range(len(dat.spikes)))*dat.spikes[0].shape[0])
 #stat_tau = np.mean(tau_samples, axis=0)
 int_tau = np.vectorize(np.int)(tau_samples)
 stat_tau = np.squeeze(mode(int_tau,axis=0)[0])
-
-def get_state_firing(spike_array,tau_array):
-    """
-    spike_array : trials x nrns x bins
-    tau_array : trials x switchpoints
-    """
-    states = tau_array.shape[-1] + 1
-    # Get mean firing rate for each STATE using model
-    state_inds = np.hstack([np.zeros((tau_array.shape[0],1)),
-                            tau_array,
-                            np.ones((tau_array.shape[0],1))*spike_array.shape[-1]])
-    state_lims = np.array([state_inds[:,x:x+2] for x in range(states)])
-    state_lims = np.vectorize(np.int)(state_lims)
-    state_lims = np.swapaxes(state_lims,0,1)
-
-    state_firing = \
-            np.array([[np.mean(trial_dat[:,start:end],axis=-1) \
-            for start, end in trial_lims] \
-            for trial_dat, trial_lims in zip(spike_array,state_lims)])
-
-    state_firing = np.nan_to_num(state_firing)
-    return state_firing
-
 
 state_firing = get_state_firing(binned_dat, stat_tau)
 ## Zscore firing for later plotting
@@ -446,8 +451,10 @@ for fig_num in tqdm(plt.get_fignums()):
 # Check that simulate and shuffle fits exist
 # Checking done here so initial plots can be made despite 
 # not have control fits
+search_pattern = "_".join(os.path.basename(model_path).split('_')[1:])
 files_of_interest = glob(os.path.dirname(model_path) + '/*' +\
-                        os.path.basename(model_path))
+                        search_pattern)
+
 if not len(files_of_interest) > 1:
     quit()
 control_patterns = ['shuffle','simulate']
