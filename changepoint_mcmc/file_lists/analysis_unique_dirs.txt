@@ -1,0 +1,16 @@
+/media/bigdata/Abuzar_Data/AM28/AM28_4Tastes_201001_102615
+/media/bigdata/Abuzar_Data/AM28/AM28_4Tastes_201004_120804
+/media/bigdata/Abuzar_Data/AM32/AM32_4Tastes_201118_153102
+/media/bigdata/Abuzar_Data/AM32/AM32_4Tastes_201120_154001
+/media/bigdata/Abuzar_Data/AM32/AM32_4Tastes_201121_155641
+/media/bigdata/Abuzar_Data/AM32/AM32_4Tastes_201122_160144
+/media/bigdata/Abuzar_Data/AM32/AM32_4Tastes_201123_160634
+/media/bigdata/Abuzar_Data/AM32/AM32_4Tastes_201124_164617
+/media/bigdata/Abuzar_Data/AM32/AM32_4Tastes_201126_105343
+/media/bigdata/Abuzar_Data/AM34/AM34_4Tastes_201215_115133
+/media/bigdata/Abuzar_Data/AM34/AM34_4Tastes_201216_105150
+/media/bigdata/Abuzar_Data/AM34/AM34_4Tastes_201217_114556
+/media/bigdata/Abuzar_Data/AM34/AM34_4Tastes_201218_131632
+/media/bigdata/Abuzar_Data/AM34/AM34_4Tastes_201219_130532
+/media/bigdata/Abuzar_Data/AS18/AS18_4Tastes_200228_151511
+/media/bigdata/Abuzar_Data/AS18/AS18_4Tastes_200229_154608

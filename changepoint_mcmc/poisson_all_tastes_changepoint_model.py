@@ -41,10 +41,14 @@ def get_model_save_dir(data_dir, states):
 def get_model_name(states,fit,time_lims,bin_width, model_type):
     model_name = f'vi_{states}states_{fit}fit_'\
         f'{time_lims[0]}_{time_lims[1]}time_{bin_width}bin'
-    if model_type == 'shuffle':
+    if model_type == 'actual':
+        model_name = 'actual_' + model_name
+    elif model_type == 'shuffle':
         model_name = 'shuffle_' + model_name
-    if model_type == 'simulate':
+    elif model_type == 'simulate':
         model_name = 'simulate_' + model_name
+    else:
+        model_name = f'{model_type}_' + model_name
     return model_name
 
 def get_model_dump_path(model_name, model_save_dir):
@@ -78,6 +82,7 @@ def create_changepoint_model(
 
     # Find mean firing for initial values
     tastes = spike_array.shape[0]
+    trials = spike_array.shape[1]
     split_list = np.array_split(spike_array,states,axis=-1)
     # Cut all to the same size
     min_val = min([x.shape[-1] for x in split_list])
@@ -93,7 +98,7 @@ def create_changepoint_model(
     even_switches = np.linspace(0,idx.max(),states+1)
     even_switches_normal = even_switches/np.max(even_switches)
 
-    taste_label = np.repeat([0,1,2,3],30)
+    taste_label = np.repeat(list(np.arange(tastes)),trials)
     trial_num = array_idx.shape[0]
 
     # Being constructing model
@@ -136,18 +141,45 @@ def create_changepoint_model(
 
         # Sigmoing to create transitions based off tau
         # Hardcoded 3-5 states
+        ## ** Can this be changed to something like
+        ## sigmoid(array_idx - tau[...,np.newaxis,np.newaxis])?
         weight_1_stack = tt.nnet.sigmoid(\
                 array_idx - tau[:,0][...,np.newaxis,np.newaxis])
-        weight_2_stack = tt.nnet.sigmoid(\
-                array_idx - tau[:,1][...,np.newaxis,np.newaxis])
+        if states > 2:
+            weight_2_stack = tt.nnet.sigmoid(\
+                    array_idx - tau[:,1][...,np.newaxis,np.newaxis])
         if states > 3:
             weight_3_stack = tt.nnet.sigmoid(\
                     array_idx - tau[:,2][...,np.newaxis,np.newaxis])
         if states > 4:
             weight_4_stack = tt.nnet.sigmoid(\
                     array_idx - tau[:,3][...,np.newaxis,np.newaxis])
+        if states > 5:
+            weight_5_stack = tt.nnet.sigmoid(\
+                    array_idx - tau[:,4][...,np.newaxis,np.newaxis])
+        if states > 6:
+            weight_6_stack = tt.nnet.sigmoid(\
+                    array_idx - tau[:,5][...,np.newaxis,np.newaxis])
+        if states > 7:
+            weight_7_stack = tt.nnet.sigmoid(\
+                    array_idx - tau[:,6][...,np.newaxis,np.newaxis])
+        if states > 8:
+            weight_8_stack = tt.nnet.sigmoid(\
+                    array_idx - tau[:,7][...,np.newaxis,np.newaxis])
+        if states > 9:
+            weight_9_stack = tt.nnet.sigmoid(\
+                    array_idx - tau[:,8][...,np.newaxis,np.newaxis])
+        if states > 10:
+            weight_10_stack = tt.nnet.sigmoid(\
+                    array_idx - tau[:,9][...,np.newaxis,np.newaxis])
 
         # Generate firing rates from lambda and sigmoid weights
+        if states == 2:
+            # 3 states
+            lambda_ = np.multiply(1 - weight_1_stack, 
+                            lambda_latent[taste_label,0][:,:,np.newaxis]) + \
+                    np.multiply(weight_1_stack, 
+                                lambda_latent[taste_label,1][:,:,np.newaxis])
         if states == 3:
             # 3 states
             lambda_ = np.multiply(1 - weight_1_stack, 
@@ -180,7 +212,99 @@ def create_changepoint_model(
                             lambda_latent[taste_label][:,3][:,:,np.newaxis])+ \
                     np.multiply(weight_4_stack, 
                             lambda_latent[taste_label,4][:,:,np.newaxis])
-            
+
+        elif states == 6:
+            # 5 states
+            lambda_ = np.multiply(1 - weight_1_stack, 
+                            lambda_latent[taste_label,0][:,:,np.newaxis]) + \
+                    np.multiply(weight_1_stack * (1 - weight_2_stack), 
+                            lambda_latent[taste_label][:,1][:,:,np.newaxis]) + \
+                    np.multiply(weight_2_stack * (1 - weight_3_stack), 
+                            lambda_latent[taste_label][:,2][:,:,np.newaxis]) +\
+                    np.multiply(weight_3_stack * (1 - weight_4_stack), 
+                            lambda_latent[taste_label][:,3][:,:,np.newaxis])+ \
+                    np.multiply(weight_4_stack * (1 - weight_5_stack), 
+                            lambda_latent[taste_label][:,4][:,:,np.newaxis])+ \
+                    np.multiply(weight_5_stack, 
+                            lambda_latent[taste_label,5][:,:,np.newaxis])
+        elif states == 7:
+            # 5 states
+            lambda_ = np.multiply(1 - weight_1_stack, 
+                            lambda_latent[taste_label,0][:,:,np.newaxis]) + \
+                    np.multiply(weight_1_stack * (1 - weight_2_stack), 
+                            lambda_latent[taste_label][:,1][:,:,np.newaxis]) + \
+                    np.multiply(weight_2_stack * (1 - weight_3_stack), 
+                            lambda_latent[taste_label][:,2][:,:,np.newaxis]) +\
+                    np.multiply(weight_3_stack * (1 - weight_4_stack), 
+                            lambda_latent[taste_label][:,3][:,:,np.newaxis])+ \
+                    np.multiply(weight_4_stack * (1 - weight_5_stack), 
+                            lambda_latent[taste_label][:,4][:,:,np.newaxis])+ \
+                    np.multiply(weight_5_stack * (1 - weight_6_stack), 
+                            lambda_latent[taste_label][:,5][:,:,np.newaxis])+ \
+                    np.multiply(weight_6_stack, 
+                            lambda_latent[taste_label,6][:,:,np.newaxis])
+        elif states == 8:
+            # 5 states
+            lambda_ = np.multiply(1 - weight_1_stack, 
+                            lambda_latent[taste_label,0][:,:,np.newaxis]) + \
+                    np.multiply(weight_1_stack * (1 - weight_2_stack), 
+                            lambda_latent[taste_label][:,1][:,:,np.newaxis]) + \
+                    np.multiply(weight_2_stack * (1 - weight_3_stack), 
+                            lambda_latent[taste_label][:,2][:,:,np.newaxis]) +\
+                    np.multiply(weight_3_stack * (1 - weight_4_stack), 
+                            lambda_latent[taste_label][:,3][:,:,np.newaxis])+ \
+                    np.multiply(weight_4_stack * (1 - weight_5_stack), 
+                            lambda_latent[taste_label][:,4][:,:,np.newaxis])+ \
+                    np.multiply(weight_5_stack * (1 - weight_6_stack), 
+                            lambda_latent[taste_label][:,5][:,:,np.newaxis])+ \
+                    np.multiply(weight_6_stack * (1 - weight_7_stack), 
+                            lambda_latent[taste_label][:,6][:,:,np.newaxis])+ \
+                    np.multiply(weight_7_stack, 
+                            lambda_latent[taste_label,7][:,:,np.newaxis])
+        elif states == 9:
+            # 5 states
+            lambda_ = np.multiply(1 - weight_1_stack, 
+                            lambda_latent[taste_label,0][:,:,np.newaxis]) + \
+                    np.multiply(weight_1_stack * (1 - weight_2_stack), 
+                            lambda_latent[taste_label][:,1][:,:,np.newaxis]) + \
+                    np.multiply(weight_2_stack * (1 - weight_3_stack), 
+                            lambda_latent[taste_label][:,2][:,:,np.newaxis]) +\
+                    np.multiply(weight_3_stack * (1 - weight_4_stack), 
+                            lambda_latent[taste_label][:,3][:,:,np.newaxis])+ \
+                    np.multiply(weight_4_stack * (1 - weight_5_stack), 
+                            lambda_latent[taste_label][:,4][:,:,np.newaxis])+ \
+                    np.multiply(weight_5_stack * (1 - weight_6_stack), 
+                            lambda_latent[taste_label][:,5][:,:,np.newaxis])+ \
+                    np.multiply(weight_6_stack * (1 - weight_7_stack), 
+                            lambda_latent[taste_label][:,6][:,:,np.newaxis])+ \
+                    np.multiply(weight_7_stack * (1 - weight_8_stack), 
+                            lambda_latent[taste_label][:,7][:,:,np.newaxis])+ \
+                    np.multiply(weight_8_stack, 
+                            lambda_latent[taste_label,8][:,:,np.newaxis])
+        elif states == 10:
+            # 5 states
+            lambda_ = np.multiply(1 - weight_1_stack, 
+                            lambda_latent[taste_label,0][:,:,np.newaxis]) + \
+                    np.multiply(weight_1_stack * (1 - weight_2_stack), 
+                            lambda_latent[taste_label][:,1][:,:,np.newaxis]) + \
+                    np.multiply(weight_2_stack * (1 - weight_3_stack), 
+                            lambda_latent[taste_label][:,2][:,:,np.newaxis]) +\
+                    np.multiply(weight_3_stack * (1 - weight_4_stack), 
+                            lambda_latent[taste_label][:,3][:,:,np.newaxis])+ \
+                    np.multiply(weight_4_stack * (1 - weight_5_stack), 
+                            lambda_latent[taste_label][:,4][:,:,np.newaxis])+ \
+                    np.multiply(weight_5_stack * (1 - weight_6_stack), 
+                            lambda_latent[taste_label][:,5][:,:,np.newaxis])+ \
+                    np.multiply(weight_6_stack * (1 - weight_7_stack), 
+                            lambda_latent[taste_label][:,6][:,:,np.newaxis])+ \
+                    np.multiply(weight_7_stack * (1 - weight_8_stack), 
+                            lambda_latent[taste_label][:,7][:,:,np.newaxis])+ \
+                    np.multiply(weight_8_stack * (1 - weight_9_stack), 
+                            lambda_latent[taste_label][:,8][:,:,np.newaxis])+ \
+                    np.multiply(weight_9_stack, 
+                            lambda_latent[taste_label,9][:,:,np.newaxis])
+
+
         # Add observations
         observation = pm.Poisson("obs", lambda_, observed=spike_array_long)
 
@@ -195,7 +319,7 @@ def create_changepoint_model(
 # If the unnecessarily detailed model name exists
 # It will be loaded without running the inference
 # Otherwise model will be fit and saved
-def run_inference(model,fit,samples, model_save_dir, model_name):
+def run_inference(model,fit,samples,unbinned_array,model_save_dir, model_name):
     """
     model : PyMC3 changepoint model as defined above
     fit : number of iterations to fit
@@ -235,7 +359,8 @@ def run_inference(model,fit,samples, model_save_dir, model_name):
                         'approx' : approx,
                         'lambda' : lambda_stack,
                         'tau' : tau_samples,
-                        'data' : model.obs.observations}, buff)
+                        'data' : model.obs.observations,
+                        'fulldata' : unbinned_array}, buff)
                         #'trace': trace,
                         #'inference': inference,
 

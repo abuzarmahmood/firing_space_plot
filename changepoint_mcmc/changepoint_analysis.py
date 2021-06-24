@@ -1,4 +1,7 @@
 """
+Input :: Only actual data
+            Shuffled and simulated datasets are loaded automatically
+
 1)
 Fit ANOVA to "firing rates" of neurons
 based off of changepoint predictions to test which and how many neurons
