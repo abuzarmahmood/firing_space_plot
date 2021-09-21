@@ -41,24 +41,33 @@ def create_changepoint_plots(spike_array, tau_samples, trial_inds_list,
                     #stft_ticks, stft_tick_inds, 
 
     mean_tau = np.mean(tau_samples,axis=0)
+    fill_inds = np.concatenate((np.zeros((mean_tau.shape[0],1)),
+        mean_tau, np.ones((mean_tau.shape[0],1))*spike_array.shape[-1]),
+        axis=-1)
     #mean_tau_stft = (mean_tau/spike_array.shape[-1])*stft_cut.shape[-1]
+    this_cmap = plt.get_cmap('Pastel1')
 
     for fig_num in tqdm(np.arange(len(trial_inds_list))):
         trial_inds = trial_inds_list[fig_num]
         trial_count = len(trial_inds)
         
-        fig, ax = plt.subplots(trial_count,2,#sharex='col', 
-                            figsize = (20,trial_count*3))
+        fig, ax = plt.subplots(trial_count,2, sharex='col', 
+                            figsize = (20,trial_count))#*3))
         for num,trial in enumerate(trial_inds):
             if plot_type == 'heatmap':
                 ax[num,0].imshow(spike_array[trial], **imshow_kwargs)
             elif plot_type == 'raster':
-                ax[num,0].scatter(*np.where(spike_array[trial])[::-1], marker = "|")
+                ax[num,0].scatter(*np.where(spike_array[trial])[::-1], 
+                        s = 30,marker = "|", color = 'k')
             ax[num,0].set_ylabel(taste_label[trial])
             #ax[num,1].imshow(stft_array[trial], **imshow_kwargs)
             ax[num,0].hlines(len(region_units_list[0]) -0.5 ,**hline_kwargs)
             ax[num,0].vlines(mean_tau[trial],-0.5,spike_array.shape[1]-0.5,
                                 **vline_kwargs)
+            for state_num in range(mean_tau.shape[-1]+1):
+                ax[num,0].axvspan(fill_inds[trial,state_num],
+                        fill_inds[trial,state_num+1],
+                    facecolor = this_cmap(state_num), alpha = 0.5)
             #ax[num,1].vlines(mean_tau_stft[trial],-0.5,stft_cut.shape[1]-0.5,
             #                    **vline_kwargs)
 
@@ -93,9 +102,9 @@ args = parser.parse_args()
 model_path = args.model_path 
 saved_data_bool = bool(args.use_saved_data_array)
 
-#model_path = '/media/bigdata/Abuzar_Data/AM35/AM35_4Tastes_201230_115322/'\
-#        'saved_models/vi_4_states/dump_vi_4states_40000fit_1500_4000time_50bin.pkl'
-saved_data_bool = True
+#model_path = '/media/fastdata/KM28_4tastes_laser_200408_145209/saved_models'\
+#        '/vi_3_states/actual_vi_3states_40000fit_2000_4000time_50bin_offfiring_region_gc_type_reg.pkl'
+#saved_data_bool = True
 
 ##########
 # PARAMS 
@@ -106,6 +115,9 @@ states = int(re.findall("\d+states",model_name)[0][:-6])
 time_lims = [int(x) for x in \
         re.findall("\d+_\d+time",model_name)[0][:-4].split('_')]
 bin_width = int(re.findall("\d+bin",model_name)[0][:-3])
+laser_name = [x for x in model_name.split('_') if 'firing' in x][0][:-6] 
+if 'none' not in laser_name:
+    laser_bool = True
 
 # Exctract data_dir from model_path
 data_dir = "/".join(model_path.split('/')[:-3])
@@ -115,9 +127,11 @@ dat = ephys_data(data_dir)
 dat.get_unit_descriptors()
 dat.get_spikes()
 #dat.get_firing_rates()
-dat.default_stft_params['max_freq'] = 50
+#dat.default_stft_params['max_freq'] = 50
 #dat.get_stft(recalculate=False, dat_type = ['amplitude'])
 dat.get_region_units()
+if laser_bool:
+    dat.separate_laser_spikes()
 
 ########################################
 # Create dirs and names
@@ -143,9 +157,14 @@ if os.path.exists(model_path):
     # Remove pickled data to conserve memory
     del data
     # Recreate samples
+else:
+    raise Exception("Could not find model path")
 
 binned_t_vec = np.arange(time_lims[0],time_lims[1])[::bin_width]
-taste_label = np.sort(list(range(len(dat.spikes)))*dat.spikes[0].shape[0])
+if laser_bool:
+    taste_label = np.sort(list(range(len(dat.spikes)))*dat.off_spikes[0].shape[0])
+else:
+    taste_label = np.sort(list(range(len(dat.spikes)))*dat.spikes[0].shape[0])
 
 ##############################
 # ____  _       _       
@@ -258,64 +277,48 @@ for fig_num in tqdm(plt.get_fignums()):
 ##################################################
 # Good Trial Changepoint Plot
 ##################################################
-# Find trials where the mean tau for one changepoint is outside the 95% interval for other taus 
-this_plot_dir = os.path.join(plot_dir, 'good_changepoints')
-if not os.path.exists(this_plot_dir):
-    os.makedirs(this_plot_dir)
-
-percentile_array = np.zeros((*mean_tau.shape,mean_tau.shape[-1]))
-for trial_num, (this_mean_tau, this_tau_dist) in \
-            enumerate(zip(mean_tau, np.moveaxis(tau_samples,0,-1))):
-    for tau1_val, this_tau in enumerate(this_mean_tau):
-        for tau2_val, this_dist in enumerate(this_tau_dist):
-            percentile_array[trial_num, tau1_val, tau2_val] = \
-                    percentileofscore(this_dist, this_tau)
-
-# Visually, threshold of <1 percentile seems compelling
-# Find all trials where all the upper triangular elements are <1
-# and lower triangular elements are >99
-lower_thresh = 1
-upper_thresh = 100 - lower_thresh
-good_trial_list = np.where([all(x[np.triu_indices(states-1,1)] < lower_thresh) \
-                  and all(x[np.tril_indices(states-1,-1)] > upper_thresh) \
-                  for x in percentile_array])[0]
-
-# Plot only good trials
-# Overlay raster with CDF of switchpoints
-tick_interval = 5
-max_trials = 15
-num_plots = int(np.ceil(len(good_trial_list)/max_trials))
-good_trial_inds_list = [good_trial_list[x*max_trials:(x+1)*max_trials] \
-                        for x in np.arange(num_plots)]
-
-#create_changepoint_plots(plot_spikes, stft_cut, tau_samples, good_trial_inds_list,
-create_changepoint_plots(plot_spikes, tau_samples, good_trial_inds_list,
-            region_unit_count, taste_label, [unit_order],
-            binned_tick_inds, binned_tick_vals)
-            #stft_ticks, stft_tick_inds,
-
-for fig_num in tqdm(plt.get_fignums()):
-    plt.figure(fig_num)
-    plt.savefig(os.path.join(\
-            this_plot_dir,'good_changepoints{}'.format(fig_num)))#,dpi=300)
-    plt.close(fig_num)
-                
-##################################################
-# Good Trial Changepoint Plot - Color
-##################################################
-#imshow_kwargs = {'interpolation':'nearest','aspect':'auto','origin':'lower'}
+## Find trials where the mean tau for one changepoint is outside the 95% interval for other taus 
+#this_plot_dir = os.path.join(plot_dir, 'good_changepoints')
+#if not os.path.exists(this_plot_dir):
+#        os.makedirs(this_plot_dir)
+#        
+#percentile_array = np.zeros((*mean_tau.shape,mean_tau.shape[-1]))
+#for trial_num, (this_mean_tau, this_tau_dist) in \
+#            enumerate(zip(mean_tau, np.moveaxis(tau_samples,0,-1))):
+#    for tau1_val, this_tau in enumerate(this_mean_tau):
+#        for tau2_val, this_dist in enumerate(this_tau_dist):
+#            percentile_array[trial_num, tau1_val, tau2_val] = \
+#                    percentileofscore(this_dist, this_tau)
 #
-#create_changepoint_plots(binned_dat, stft_cut, tau_samples, good_trial_inds_list,
-#            region_unit_count, taste_label, dat.region_units,
-#            stft_ticks, stft_tick_inds,
-#            binned_tick_inds, binned_tick_vals, plot_type = 'heatmap')
+## Visually, threshold of <1 percentile seems compelling
+## Find all trials where all the upper triangular elements are <1
+## and lower triangular elements are >99
+#lower_thresh = 1
+#upper_thresh = 100 - lower_thresh
+#good_trial_list = np.where([all(x[np.triu_indices(states-1,1)] < lower_thresh) \
+#                  and all(x[np.tril_indices(states-1,-1)] > upper_thresh) \
+#                  for x in percentile_array])[0]
+#
+## Plot only good trials
+## Overlay raster with CDF of switchpoints
+#tick_interval = 5
+#max_trials = 15
+#num_plots = int(np.ceil(len(good_trial_list)/max_trials))
+#good_trial_inds_list = [good_trial_list[x*max_trials:(x+1)*max_trials] \
+#                        for x in np.arange(num_plots)]
+#
+##create_changepoint_plots(plot_spikes, stft_cut, tau_samples, good_trial_inds_list,
+#create_changepoint_plots(plot_spikes, tau_samples, good_trial_inds_list,
+#            region_unit_count, taste_label, [unit_order],
+#            binned_tick_inds, binned_tick_vals)
+#            #stft_ticks, stft_tick_inds,
 #
 #for fig_num in tqdm(plt.get_fignums()):
 #    plt.figure(fig_num)
 #    plt.savefig(os.path.join(\
-#            this_plot_dir,'good_changepoints_color{}'.format(fig_num)),dpi=300)
+#            this_plot_dir,'good_changepoints{}'.format(fig_num)))#,dpi=300)
 #    plt.close(fig_num)
-
+                
 ##################################################
 # Changepoint plots on RAW spikes 
 ##################################################
@@ -351,22 +354,22 @@ for fig_num in tqdm(plt.get_fignums()):
 # Good Changepoint plots on RAW spikes
 ##################################################
 
-this_plot_dir = os.path.join(plot_dir, 'full_spike_good_changepoints')
-if not os.path.exists(this_plot_dir):
-    os.makedirs(this_plot_dir)
-
-#create_changepoint_plots(spike_array_long, stft_cut, scaled_tau_samples, 
-create_changepoint_plots(spike_array_long, scaled_tau_samples, 
-            good_trial_inds_list,
-            region_unit_count, taste_label, [unit_order],
-            raw_tick_inds, binned_tick_vals)
-            #stft_ticks, stft_tick_inds,
-
-for fig_num in tqdm(plt.get_fignums()):
-    plt.figure(fig_num)
-    plt.savefig(os.path.join(\
-            this_plot_dir,'full_spike_good_changepoints{}'.format(fig_num)))#,dpi=300)
-    plt.close(fig_num)
-
-## ** NO POINT PLOTTING FULL SPIKES AS HEATMAP
-## ** SPIKES DON'T SHOW UP IN IMAGE
+#this_plot_dir = os.path.join(plot_dir, 'full_spike_good_changepoints')
+#if not os.path.exists(this_plot_dir):
+#    os.makedirs(this_plot_dir)
+#
+##create_changepoint_plots(spike_array_long, stft_cut, scaled_tau_samples, 
+#create_changepoint_plots(spike_array_long, scaled_tau_samples, 
+#            good_trial_inds_list,
+#            region_unit_count, taste_label, [unit_order],
+#            raw_tick_inds, binned_tick_vals)
+#            #stft_ticks, stft_tick_inds,
+#
+#for fig_num in tqdm(plt.get_fignums()):
+#    plt.figure(fig_num)
+#    plt.savefig(os.path.join(\
+#            this_plot_dir,'full_spike_good_changepoints{}'.format(fig_num)))#,dpi=300)
+#    plt.close(fig_num)
+#
+### ** NO POINT PLOTTING FULL SPIKES AS HEATMAP
+### ** SPIKES DON'T SHOW UP IN IMAGE

@@ -38,17 +38,10 @@ import numpy as np
 def get_model_save_dir(data_dir, states):
     return os.path.join(data_dir,'saved_models',f'vi_{states}_states')
 
-def get_model_name(states,fit,time_lims,bin_width, model_type):
-    model_name = f'vi_{states}states_{fit}fit_'\
-        f'{time_lims[0]}_{time_lims[1]}time_{bin_width}bin'
-    if model_type == 'actual':
-        model_name = 'actual_' + model_name
-    elif model_type == 'shuffle':
-        model_name = 'shuffle_' + model_name
-    elif model_type == 'simulate':
-        model_name = 'simulate_' + model_name
-    else:
-        model_name = f'{model_type}_' + model_name
+def get_model_name(states,fit,time_lims,bin_width, model_type, laser):
+    model_name = f'{model_type}_vi_{states}states_{fit}fit_'\
+        f'{time_lims[0]}_{time_lims[1]}time_{bin_width}bin_'\
+        f'{laser}firing'
     return model_name
 
 def get_model_dump_path(model_name, model_save_dir):
@@ -67,7 +60,8 @@ def create_changepoint_model(
                         spike_array,
                         states,
                         fit,
-                        samples):
+                        samples,
+                        changepoint_prior = 'even'):
 
     """
     spike_array :: Shape : tastes, trials, neurons, time_bins
@@ -95,8 +89,16 @@ def create_changepoint_model(
     idx = np.arange(spike_array.shape[-1]) # Index
     array_idx = np.broadcast_to(idx, spike_array_long.shape)
     idx_range = idx.max() - idx.min()
+
+    #if changepoint_prior == 'even':
     even_switches = np.linspace(0,idx.max(),states+1)
     even_switches_normal = even_switches/np.max(even_switches)
+    fin_switches = even_switches_normal
+    #else:
+    #    if len(changepoint_prior) == states-1:
+    #        fin_switches = np.array(changepoint_prior)
+    #    else:
+    #        raise Exception('Changepoint priors length MUST equal states-1')
 
     taste_label = np.repeat(list(np.arange(tastes)),trials)
     trial_num = array_idx.shape[0]
@@ -133,7 +135,7 @@ def create_changepoint_model(
         tau_latent = pm.Beta('tau_latent', a, b, 
                                shape = (trial_num, states-1),
                                testval = \
-                                       tt.tile(even_switches_normal[1:(states)],
+                                       tt.tile(fin_switches[1:(states)],
                                            (array_idx.shape[0],1))).sort(axis=-1)
                
         tau = pm.Deterministic('tau', 

@@ -21,7 +21,6 @@ import json
 import tables
 
 import numpy as np
-import pickle
 import argparse
 
 sys.path.append('/media/bigdata/firing_space_plot/ephys_data')
@@ -38,7 +37,8 @@ import poisson_all_tastes_changepoint_model as changepoint
 #|_____\___/ \__,_|\__,_| |____/ \__,_|\__\__,_|
 ############################################################
 
-params_file_path = '/media/bigdata/firing_space_plot/changepoint_mcmc/fit_params.json'
+params_file_path = '/media/bigdata/firing_space_plot'\
+        '/changepoint_mcmc/fit_params.json'
 
 def str2bool(v):
     if isinstance(v, bool):
@@ -53,6 +53,9 @@ def str2bool(v):
 parser = argparse.ArgumentParser(description = 'Script to fit changepoint model')
 parser.add_argument('dir_name',  help = 'Directory containing data files')
 parser.add_argument('states', type = int, help = 'Number of States to fit')
+parser.add_argument("--multiregion", type=str2bool, nargs='?',
+                        const=True, default=False,
+                        help="Fit separate models to each region")
 parser.add_argument("--good", type=str2bool, nargs='?',
                         const=True, default=False,
                         help="Use only good neurons")
@@ -64,12 +67,19 @@ args = parser.parse_args()
 data_dir = args.dir_name 
 good_nrn_bool = args.good
 simulate_bool = args.simulate
+multi_region_bool = args.multiregion
 
-#data_dir = '/media/NotVeryBig/for_you_to_play/file3'
-#data_dir = '/media/bigdata/Abuzar_Data/AM35/AM35_4Tastes_201230_115322/'
-#states = 4
-#good_nrn_bool = True
-#simulate_bool = True
+#data_dir = '/media/fastdata/KM28_4tastes_laser_200408_145209'
+#good_nrn_bool = False
+#simulate_bool = False
+#multi_region_bool = False
+#states = 3
+
+# If multi_region, for now prevent good_nrn indexing (not implemented),
+# and simulated fits (not needed)
+if multi_region_bool:
+    good_nrn_bool = False
+    simulate_bool = False
 
 dat = ephys_data(data_dir)
 
@@ -79,33 +89,10 @@ dat.get_unit_descriptors()
 dat.get_spikes()
 dat.check_laser()
 #dat.get_firing_rates()
-dat.default_stft_params['max_freq'] = 50
+dat.get_region_units()
 
-
-if dat.laser_exists:
-    dat.separate_laser_spikes()
-    ##############################
-    # ____    _    ____  
-    #| __ )  / \  |  _ \ 
-    #|  _ \ / _ \ | | | |
-    #| |_) / ___ \| |_| |
-    #|____/_/   \_\____/ 
-    ##############################
-                        
-    taste_dat = np.array(dat.off_spikes)
-else:
-    taste_dat = dat.spikes
-
-taste_dat = np.array(taste_dat)
-
-if good_nrn_bool:
-    print("Attempting to use good neurons")
-
-    with tables.open_file(dat.hdf5_path,'r') as h5:
-        good_nrn_bool_list = h5.get_node('/', 'selected_changepoint_nrns')[:]
-
-    good_nrn_inds = np.where(good_nrn_bool_list)[0]
-    taste_dat = taste_dat[:,:,good_nrn_inds]
+if multi_region_bool and not len(dat.region_names)>1:
+    raise Exception("Cannot fit separate models to recordings with single region")
 
 ##########
 # PARAMS 
@@ -123,57 +110,100 @@ for key,val in params_dict.items():
 #fit = 40000
 #samples = 20000
 
-# Create dirs and names
-model_save_dir = changepoint.get_model_save_dir(data_dir, states)
-#model_save_dir = os.path.join(data_dir,'saved_models',f'vi_{states}_states')
-#model_name = f'vi_{states}_states_{fit}fit_'\
-#        f'time{time_lims[0]}_{time_lims[1]}_bin{bin_width}'
+if dat.laser_exists:
 
-if good_nrn_bool:
-    suffix = '_type_good'
+    # Nothing for now, these may be added later
+    good_nrn_bool = False
+    simulate_bool = False
+
+    dat.separate_laser_spikes()
+    taste_dat = [np.array(dat.off_spikes), np.array(dat.on_spikes)]
+    laser_names = ['off','on']
+
 else:
-    suffix = '_type_reg'
+    taste_dat = dat.spikes
+    laser_names = ['none']
 
-model_name = changepoint.get_model_name(\
-        states,fit,time_lims,bin_width, 'actual') + suffix
-#model_dump_path = os.path.join(model_save_dir,f'dump_{model_name}.pkl')
-model_dump_path = changepoint.get_model_dump_path(model_name,model_save_dir)
+for this_laser_name, this_taste_dat in zip(laser_names, taste_dat):
 
-if not os.path.exists(model_save_dir):
-        os.makedirs(model_save_dir)
+    this_taste_dat = np.array(this_taste_dat)
+    # Convert to list so more esy to separate by neuron
+    taste_dat_list = [this_taste_dat[:,:,these_units] \
+            for these_units in dat.region_units]
 
-##########
-# Bin Data
-##########
-this_dat_binned = \
-        np.sum(taste_dat[...,time_lims[0]:time_lims[1]].\
-        reshape(*taste_dat.shape[:-1],-1,bin_width),axis=-1)
-this_dat_binned = np.vectorize(np.int)(this_dat_binned)
+    if good_nrn_bool:
+        # Not used if multiregion or laser
+        print("Attempting to use good neurons")
 
-########################################
-# ___        __                              
-#|_ _|_ __  / _| ___ _ __ ___ _ __   ___ ___ 
-# | || '_ \| |_ / _ \ '__/ _ \ '_ \ / __/ _ \
-# | || | | |  _|  __/ | |  __/ | | | (_|  __/
-#|___|_| |_|_|  \___|_|  \___|_| |_|\___\___|
-########################################
-if not os.path.exists(model_dump_path):
-    model = changepoint.create_changepoint_model(
-                spike_array = this_dat_binned,
-                states = states,
-                fit = fit,
-                samples = samples)
-    
-    # If the unnecessarily detailed model name exists
-    # It will be loaded without running the inference
-    # Otherwise model will be fit and saved
+        with tables.open_file(dat.hdf5_path,'r') as h5:
+            good_nrn_bool_list = h5.get_node('/', 'selected_changepoint_nrns')[:]
 
-    changepoint.run_inference(model = model, 
-                                fit = fit, 
-                                samples = samples, 
-                                unbinned_array = taste_dat, 
-                                model_save_dir = model_save_dir, 
-                                model_name = model_name)
+        good_nrn_inds = np.where(good_nrn_bool_list)[0]
+        this_taste_dat = this_taste_dat[:,:,good_nrn_inds]
+        taste_dat_list = [this_taste_dat]
+
+
+    # Create dirs and names
+    model_save_dir = changepoint.get_model_save_dir(data_dir, states)
+    if not os.path.exists(model_save_dir):
+            os.makedirs(model_save_dir)
+
+    if good_nrn_bool:
+        suffix = '_type_good'
+    else:
+        suffix = '_type_reg'
+
+    suffix_list = [f'_region_{name}{suffix}' for name in dat.region_names]
+
+    model_name_list = [changepoint.get_model_name(\
+            states,fit,time_lims,bin_width, 'actual', this_laser_name) + suffix \
+            for suffix in suffix_list]
+
+    model_dump_path_list = \
+            [changepoint.get_model_dump_path(model_name,model_save_dir) \
+            for model_name in model_name_list]
+
+    ##########
+    # Bin Data
+    ##########
+    this_dat_binned = \
+            np.sum(this_taste_dat[...,time_lims[0]:time_lims[1]].\
+            reshape(*this_taste_dat.shape[:-1],-1,bin_width),axis=-1)
+    this_dat_binned = np.vectorize(np.int)(this_dat_binned)
+
+    # Separate out final fit data by region
+    if good_nrn_bool:
+        this_dat_binned_list = [this_dat_binned]
+    else:
+        this_dat_binned_list = [this_dat_binned[:,:,these_units] \
+                for these_units in dat.region_units]
+
+    ########################################
+    # ___        __                              
+    #|_ _|_ __  / _| ___ _ __ ___ _ __   ___ ___ 
+    # | || '_ \| |_ / _ \ '__/ _ \ '_ \ / __/ _ \
+    # | || | | |  _|  __/ | |  __/ | | | (_|  __/
+    #|___|_| |_|_|  \___|_|  \___|_| |_|\___\___|
+    ########################################
+    for num in range(len(this_dat_binned_list)):
+        if not os.path.exists(model_dump_path_list[num]):
+            model = changepoint.create_changepoint_model(
+                        spike_array = this_dat_binned_list[num],
+                        states = states,
+                        fit = fit,
+                        samples = samples,
+                        changepoint_prior = changepoint_prior)
+            
+            # If the unnecessarily detailed model name exists
+            # It will be loaded without running the inference
+            # Otherwise model will be fit and saved
+
+            changepoint.run_inference(model = model, 
+                                        fit = fit, 
+                                        samples = samples, 
+                                        unbinned_array = taste_dat_list[num], 
+                                        model_save_dir = model_save_dir, 
+                                        model_name = model_name_list[num])
 
 ################################################################################
 ################################################################################
@@ -240,7 +270,8 @@ if simulate_bool:
     ########################################
     #if not all([os.path.exists(x) for x in model_dump_path_list]):
 
-    model_kwargs = {'states':states,'fit':fit,'samples':samples}
+    model_kwargs = {'states':states,'fit':fit,
+            'samples':samples, 'changepoint_prior' : changepoint_prior}
     if not os.path.exists(model_dump_path_list[0]):
         shuffle_model = changepoint.create_changepoint_model(\
                         spike_array = shuffled_dat_binned, **model_kwargs)
