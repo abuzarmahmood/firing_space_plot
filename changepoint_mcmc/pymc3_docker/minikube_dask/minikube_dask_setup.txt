@@ -1,0 +1,62 @@
+Resources:
+========================================
+    1 - https://www.dabbleofdevops.com/blog/deploy-and-scale-your-dask-cluster-with-kubernetes
+        - Largely working guide for local deployment of dask-kubernetes cluster
+    2 - https://towardsdatascience.com/scalable-machine-learning-with-dask-on-google-cloud-5c72f945e768
+        - Up and RUNNING guide for getting dask-kubernetes cluster on GCP
+    3 - https://stackoverflow.com/questions/62324275/external-ip-not-exposed-helm-dask
+    4 - https://kubernetes.io/docs/tasks/access-application-cluster/ingress-minikube/
+
+Required installations:
+========================================
+    - kubectl
+        - Kubernetes management CLI
+        - https://kubernetes.io/docs/tasks/tools/
+    - minikube
+        - For quickly deploying local kubernetes clusters
+        - https://kubernetes.io/docs/tasks/tools/
+    - helm
+        - Package manager for kubernetes
+        - https://helm.sh/docs/intro/install/
+
+Steps:
+========================================
+    1 - Install above requirements
+    2 - Start minikube
+        - minikube start
+    3 - Install dask
+        - helm repo add dask https://helm.dask.org/
+        - helm repo update
+        - export RELEASE="my-dask"
+        - helm install ${RELEASE} dask/dask --version 4.1.13 \
+            --set scheduler.serviceType=LoadBalancer \
+            --set jupyter.serviceType=LoadBalancer 
+        **NOTES**:
+        - This versioning has been tested 
+        - services need to be set as 'LoadBalancer' due to IP config 
+            mumbo-jumbo as detailed in reference (3)
+            which otherwise prevents an accesible external IP 
+    4 - Check thinkgs are running
+        - kubectl get pods | grep dask
+        - kubectl get svc | grep dask
+    5 - Access the dashboards
+        - minikube service <SERVICE-NAME> --url
+        **NOTES**:
+        - For whatever reason, the external IP from the above commands 
+            appears as <pending> no matter how long you wait
+        - However, according to reference (4), we can get the url from the command noted above 
+            - For example "minikube service my-dask-jupyter --url" or 
+                minikube service my-dask-scheduler --url
+        - Additionally, the scheduler dashboard is NOT ACCESSIBLE from the url given 
+            by the dask.distributed.Client output in the python code
+    6*- Connecting to dask client over TCP
+        - Somehow it automatically connects for c = Client(), but otherwise...
+        - c = Client("tcp://192.168.49.2:30208")
+        - tcp://<http IP from minikibe service NAME --url>:<forwarded port from kubectl get svc>
+
+Still to figure out:
+========================================
+    1 - Change number of nodes, and node specs for cluster
+    2 - Run cluster with custom Docker Image
+        - https://gist.github.com/dims/aafc4b23c6653402f056d5c185fd6cf9
+    3 - Parallize over Pymc3 model fits

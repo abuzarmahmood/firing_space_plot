@@ -1,0 +1,24 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: job-wq-2
+spec:
+  parallelism: 2
+  template:
+    metadata:
+      name: job-wq-2
+    spec:
+      volumes:
+        - name: test
+          hostPath:
+              path: /test
+              type: DirectoryOrCreate
+      containers:
+      - name: c
+        image: nginx 
+        imagePullPolicy: Never
+        volumeMounts:
+          - mountPath: /test_mount
+            name: test
+        command: [ "touch", "/test_mount/kube_test.txt"]
+      restartPolicy: OnFailure

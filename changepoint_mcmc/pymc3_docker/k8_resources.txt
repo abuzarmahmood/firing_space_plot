@@ -1,0 +1,3 @@
+https://mlinproduction.com/k8s-pods/
+https://mlinproduction.com/k8s-jobs/
+
