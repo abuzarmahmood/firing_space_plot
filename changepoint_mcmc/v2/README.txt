@@ -28,7 +28,7 @@ Database for models fit:
         -   Taste Name
         -   Region Name
         -   Experiment name (user-given name to separate batches of fits)
-        -   Date
+        -   Fit Date
 
         -   Model parameters:
             - Model Type (See below) 

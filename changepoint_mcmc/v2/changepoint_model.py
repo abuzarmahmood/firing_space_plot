@@ -25,7 +25,7 @@ import numpy as np
 
 def single_taste_poisson(
         spike_array,
-        states)
+        states):
 
     """
     ** Model to fit changepoint to single taste **
@@ -39,17 +39,20 @@ def single_taste_poisson(
     """
 
     mean_vals = np.array([np.mean(x,axis=-1) \
-            for x in np.array_split(data_array,states,axis=-1)]).T
+            for x in np.array_split(spike_array,states,axis=-1)]).T
     mean_vals = np.mean(mean_vals,axis=1)
+    mean_vals += 0.01 # To avoid zero starting prob
+
+    nrns = spike_array.shape[1]
+    trials = spike_array.shape[0]
+    idx = np.arange(spike_array.shape[-1])
+    length = idx.max() + 1
 
     with pm.Model() as model:
-        # Finite, but somewhere on the lower end, Beta prior
-        a_lambda = 2
-        b_lambda = 5
-        lambda_latent = pm.Beta('lambda', 
-                a_lambda, b_lambda, 
-                shape = (nrns,states),
-                testval = mean_vals + 1e-3)
+        lambda_latent = pm.Exponential('lambda',
+                                    1/mean_vals, 
+                                    shape = (nrns,states))
+
 
         a = pm.HalfCauchy('a_tau', 3., shape = states - 1)
         b = pm.HalfCauchy('b_tau', 3., shape = states - 1)
@@ -69,10 +72,21 @@ def single_taste_poisson(
         weight_stack = np.multiply(weight_stack,inverse_stack)
 
         lambda_ = tt.tensordot(weight_stack,lambda_latent, [1,1]).swapaxes(1,2)
-        observation = pm.Bernoulli("obs", lambda_, observed=data_array)
+        observation = pm.Poisson("obs", lambda_, observed=spike_array)
 
     return model
 
+
+def all_taste_poisson(
+        spike_array,
+        states):
+    pass
+
+def single_taste_poisson_biased_tau_priors(spike_array,states):
+    pass
+
+def single_taste_poisson_hard_padding_tau(spike_array,states):
+    pass
 
 ######################################################################
 #|  _ \ _   _ _ __   |_ _|_ __  / _| ___ _ __ ___ _ __   ___ ___ 
@@ -81,7 +95,7 @@ def single_taste_poisson(
 #|_| \_\\__,_|_| |_| |___|_| |_|_|  \___|_|  \___|_| |_|\___\___|
 ######################################################################
 
-def advi_fit(model,fit,samples)
+def advi_fit(model,fit,samples):
     """
     model : PyMC3 changepoint model as defined above
     fit : number of iterations to fit

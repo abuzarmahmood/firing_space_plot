@@ -10,13 +10,7 @@ Code to preprocess spike trains before feeding into model
 #|___|_| |_| |_| .__/ \___/|_|   \__|
 #              |_|                   
 ########################################
-import os
-import sys
-import json
-
 import numpy as np
-import pickle
-import argparse
 
 def preprocess_single_taste(spike_array, time_lims, bin_width, data_transform):
     """
@@ -28,35 +22,48 @@ def preprocess_single_taste(spike_array, time_lims, bin_width, data_transform):
     ** Note, it may be useful to use x-arrays here to keep track of coordinates
     """
 
+    accepted_transforms = ['shuffled','simulated','None',None]
+    if data_transform not in accepted_transforms:
+        raise Exception(f'data_transform must be of type {accepted_transforms}')
+
     ##################################################
     ## Create shuffled data
     ##################################################
     # Shuffle neurons across trials FOR SAME TASTE
-    shuffled_dat = np.array([np.random.permutation(neuron) \
-                for neuron in np.swapaxes(taste_dat,2,0)])
-    shuffled_dat = np.swapaxes(shuffled_dat,0,2)
+
+    if data_transform == 'shuffled':
+        transformed_dat = np.array([np.random.permutation(neuron) \
+                    for neuron in np.swapaxes(spike_array,1,0)])
+        transformed_dat = np.swapaxes(transformed_dat,0,1)
 
     ##################################################
     ## Create simulated data 
     ##################################################
     # Inhomogeneous poisson process using mean firing rates
 
-    mean_firing = np.mean(taste_dat,axis=1)
+    elif data_transform == 'simulated':
+        mean_firing = np.mean(spike_array,axis=0)
 
-    # Simulate spikes
-    simulated_spike_array = np.array(\
-            [np.random.random(mean_firing.shape) < mean_firing \
-            for trial in range(shuffled_dat_binned.shape[1])])*1
-    simulated_spike_array = simulated_spike_array.swapaxes(0,1)
-    # taste_dat : 
+        # Simulate spikes
+        transformed_dat = np.array(\
+                [np.random.random(mean_firing.shape) < mean_firing \
+                for trial in range(spike_array.shape[0])])*1
+
+    ##################################################
+    ## Null Transform Case 
+    ##################################################
+    elif data_transform is None:
+        transformed_dat = spike_array
 
     ##################################################
     ## Bin Data 
     ##################################################
-    this_dat_binned = \
-            np.sum(taste_dat[...,time_lims[0]:time_lims[1]].\
-            reshape(*taste_dat.shape[:-1],-1,bin_width),axis=-1)
-    this_dat_binned = np.vectorize(np.int)(this_dat_binned)
+    spike_binned = \
+            np.sum(transformed_dat[...,time_lims[0]:time_lims[1]].\
+            reshape(*spike_array.shape[:-1],-1,bin_width),axis=-1)
+    spike_binned = np.vectorize(np.int)(spike_binned)
+
+    return spike_binned
 
 def preprocess_all_taste():
     pass
