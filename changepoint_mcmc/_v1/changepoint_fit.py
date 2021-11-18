@@ -79,7 +79,7 @@ dat.get_unit_descriptors()
 dat.get_spikes()
 dat.check_laser()
 #dat.get_firing_rates()
-dat.default_stft_params['max_freq'] = 50
+#dat.default_stft_params['max_freq'] = 50
 
 
 if dat.laser_exists:
@@ -171,7 +171,7 @@ if not os.path.exists(model_dump_path):
     changepoint.run_inference(model = model, 
                                 fit = fit, 
                                 samples = samples, 
-                                unbinned_array = taste_dat, 
+                                #unbinned_array = taste_dat, 
                                 model_save_dir = model_save_dir, 
                                 model_name = model_name)
 
@@ -247,7 +247,7 @@ if simulate_bool:
         changepoint.run_inference(model = shuffle_model, 
                                     fit = fit, 
                                     samples = samples, 
-                                    unbinned_array = shuffled_dat, 
+                                    #unbinned_array = shuffled_dat, 
                                     model_save_dir = model_save_dir, 
                                     model_name = model_name_list[0])
 
@@ -257,6 +257,6 @@ if simulate_bool:
         changepoint.run_inference(model = simulate_model, 
                                     fit = fit, 
                                     samples = samples, 
-                                    unbinned_array = simulated_spike_array,
+                                    #unbinned_array = simulated_spike_array,
                                     model_save_dir = model_save_dir, 
                                     model_name = model_name_list[1])

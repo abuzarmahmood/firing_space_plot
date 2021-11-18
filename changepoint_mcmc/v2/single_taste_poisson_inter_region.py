@@ -12,10 +12,11 @@ dir_list_path = '/media/bigdata/firing_space_plot/firing_analyses/'\
 dir_list = [x.strip() for x in open(dir_list_path,'r').readlines()]
 taste_num_list = range(3)
 region_list = ['bla','gc']
+preprocess_list = ['shuffled','simulated']
 
-arg_list = list(it.product(dir_list,taste_num_list,region_list))
+arg_list = list(it.product(dir_list,taste_num_list,region_list, preprocess_list))
 
-for data_dir, taste_num, region_name in tqdm(arg_list):
+for data_dir, taste_num, region_name, preprocess_transform in tqdm(arg_list):
     #data_dir = '/media/bigdata/Abuzar_Data/bla_gc/AM11/AM11_4Tastes_191029_171714'
     #taste_num = 0
     #region_name = 'bla'
@@ -23,7 +24,7 @@ for data_dir, taste_num, region_name in tqdm(arg_list):
 
     model_parameters = dict(zip(['states','fit','samples'],[4,40000,20000]))
     preprocess_parameters = dict(zip(['time_lims','bin_width','data_transform'],
-                                    [[2000,4000],50, None]))
+                                    [[2000,4000],50, preprocess_transform]))
 
     fit_handler_kwargs = {'data_dir' : data_dir,
                         'taste_num' : taste_num,
@@ -42,4 +43,5 @@ for data_dir, taste_num, region_name in tqdm(arg_list):
         handler.save_fit_output()
     except:
         with open(error_file_path,'a') as error_file:
-            error_file.write(str((data_dir,taste_num,region_name)) + "\n")
+            error_file.write(\
+                str((data_dir,taste_num,region_name, preprocess_transform)) + "\n")

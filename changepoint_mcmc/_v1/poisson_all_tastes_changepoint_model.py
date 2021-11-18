@@ -213,7 +213,6 @@ def run_inference(model,fit,samples, model_save_dir, model_name):
         with open(model_dump_path, 'rb') as buff:
             data = pickle.load(buff)
         model = data['model']
-        #inference = data['inference']
         approx = data['approx']
         # Remove pickled data to conserve memory
         del data
@@ -236,12 +235,3 @@ def run_inference(model,fit,samples, model_save_dir, model_name):
                         'lambda' : lambda_stack,
                         'tau' : tau_samples,
                         'data' : model.obs.observations}, buff)
-                        #'trace': trace,
-                        #'inference': inference,
-
-    # Save lambda and tau traces to file to improve retrieval 
-    #with open(trace_dump_path, 'wb') as buff:
-    #    pickle.dump({'lambda' : lambda_stack,
-    #                'tau' : tau_samples,
-    #                'data' : model.obs.observations}, buff)
-
