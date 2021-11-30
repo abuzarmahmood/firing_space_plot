@@ -160,7 +160,10 @@ class fit_handler():
         self.ephys_data = ephys_data(self.data_dir)
         #self.data = self.ephys_data.get_spikes({"bla","gc","all"})
         full_spike_array = self.ephys_data.return_region_spikes(self.region_name)
-        self.data = full_spike_array[self.taste_num] 
+        if isinstance(self.taste_num,int):
+            self.data = full_spike_array[self.taste_num] 
+        elif isinstance(self.taste_num,str):
+            self.data = full_spike_array 
         print(f'Loading spike trains from {self.database_handler.data_basename}, '
                 f'dig_in {self.taste_num}')
         pass
@@ -296,7 +299,10 @@ class database_handler():
     def write_to_databse(self):
         agg_metadata = self.aggregate_metadata()
         flat_metadata = pd.json_normalize(agg_metadata)
-        flat_metadata.to_csv(self.model_database_path, mode='a')
+        if not os.path.isfile(self.model_database_path):
+            flat_metadata.to_csv(self.model_database_path, mode='a')
+        else:
+            flat_metadata.to_csv(self.model_database_path, mode='a', header = False)
 
     def check_exists():
         if self.fit_exists is None:
