@@ -52,7 +52,7 @@ def preprocess_single_taste(spike_array, time_lims, bin_width, data_transform):
     ##################################################
     ## Null Transform Case 
     ##################################################
-    elif data_transform is None:
+    elif data_transform == None or data_transform == 'None':
         transformed_dat = spike_array
 
     ##################################################
