@@ -7,7 +7,11 @@ import uuid
 import pickle
 import pandas as pd
 import json
-from datetime import date
+from datetime import date, datetime
+from time import time
+import shutil
+from glob import glob
+import numpy as np
 import changepoint_preprocess
 import changepoint_model
 from ephys_data import ephys_data
@@ -49,7 +53,8 @@ class fit_handler():
         data_handler_init_kwargs = dict(zip(
                         ['data_dir','experiment_name','taste_num','region_name'],
                         [data_dir, experiment_name, taste_num, region_name]))
-        self.database_handler = database_handler(**data_handler_init_kwargs)
+        self.database_handler = database_handler()
+        self.database_handler.set_run_params(**data_handler_init_kwargs)
 
         if model_params_path is None:
             print('MODEL_PARAMS will have to be set')
@@ -233,7 +238,8 @@ class fit_handler():
         with open(self.database_handler.model_save_path + '.pkl', 'wb') as buff:
             pickle.dump(out_dict, buff)
 
-        json_file_name = os.path.join(self.database_handler.model_save_path + '.info')
+        json_file_name = os.path.join(
+                self.database_handler.model_save_path + '.info')
         with open(json_file_name,'w') as file:
             json.dump(out_dict['metadata'], file, indent = 4)
 
@@ -243,16 +249,71 @@ class fit_handler():
                 f'{self.database_handler.model_save_dir}')
         
 class database_handler():
+    
+    self.unique_cols = ['exp.model_id','exp.save_path','exp.fit_date']
 
-    def __init__(self, data_dir, experiment_name, taste_num, region_name):
+    def __init__(self):
+        self.model_database_path = MODEL_DATABASE_PATH
+        self.model_save_base_dir = MODEL_SAVE_DIR
 
+        if os.path.exists(self.model_database_path):
+            self.fit_database = pd.read_csv(self.model_database_path,
+                                                index_col = 0)
+            all_na = [all(x) for num,x in self.fit_database.isna().iterrows()]
+            if all_na:
+                print(f'{sum(all_na)} rows found with all NA, removing...')
+                self.fit_database = self.fit_database.dropna(how='all')
+        else:
+            print('Fit database does not exist yet')
+
+    def show_duplicates(self, keep = 'first'):
+        dup_inds = self.fit_database.drop(self.unique_cols,axis=1)\
+                .duplicated(keep=keep)
+        return self.fit_database.loc[dup_inds], dup_inds
+
+    def drop_duplicates(self):
+        _, dup_inds = self.show_duplicates()
+        self.fit_database = self.fit_database.loc[~dup_inds]
+
+    def check_mismatched_paths(self):
+        mismatch_from_database = [not os.path.exists(x + ".pkl") \
+                for x in self.fit_database['exp.save_path']]
+        file_list = glob(os.path.join(self.model_save_base_dir, "*/*.pkl"))
+        mismatch_from_file = [not \
+                (x.split('.')[0] in list(self.fit_database['exp.save_path'])) \
+                for x in file_list]
+        print(f"{sum(mismatch_from_database)} mismatches from database" + "\n" \
+                + f"{sum(mismatch_from_file)} mismatches from files")
+        return mismatch_from_database, mismatch_from_file, file_list
+
+    def clear_mismatched_paths(self):
+        mismatch_from_database, mismatch_from_file = self.check_mismatched_paths()
+        mismatch_from_file = np.array(mismatch_from_file)
+        mismatch_from_database = np.array(mismatch_from_database)
+        self.fit_database = self.fit_database.loc[~mismatch_from_database]
+        mismatched_files = [x for x,y in zip(file_list, mismatch_from_file) if y]
+        for x in mismatched_files:
+            os.remove(x)
+        print('==== Clearing Completed ====')
+
+    def write_updated_database(self):
+        database_backup_dir = os.path.join(
+            self.model_save_base_dir, '.database_backups')
+        if not os.path.exists(database_backup_dir):
+            os.makedirs(database_backup_dir)
+        #current_date = date.today().strftime("%m-%d-%y")
+        current_date = str(datetime.now()).replace(" ","_")
+        shutil.copy(self.model_database_path,
+            os.path.join(database_backup_dir, f"database_backup_{current_date}"))
+        self.fit_database.to_csv(self.model_database_path, mode = 'w')
+
+    def set_run_params(self, data_dir, experiment_name, taste_num, region_name):
         self.data_dir = data_dir
         self.data_basename = os.path.basename(self.data_dir)
         self.animal_name = self.data_basename.split("_")[0]
         self.session_date = self.data_basename.split("_")[-1]
 
         self.experiment_name = experiment_name
-        self.model_save_base_dir = MODEL_SAVE_DIR
         self.model_save_dir = os.path.join(self.model_save_base_dir, 
                             experiment_name)
 
@@ -262,7 +323,6 @@ class database_handler():
         self.model_id = str(uuid.uuid4()).split('-')[0]
         self.model_save_path = os.path.join(self.model_save_dir,
                     self.experiment_name + "_" + self.model_id)
-        self.model_database_path = MODEL_DATABASE_PATH
         self.fit_date = date.today().strftime("%m-%d-%y")
 
         self.taste_num = taste_num
