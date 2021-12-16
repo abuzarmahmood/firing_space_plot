@@ -31,8 +31,45 @@ sys.path.append('/media/bigdata/firing_space_plot/ephys_data')
 from ephys_data import ephys_data
 
 sys.path.append('/media/bigdata/firing_space_plot/'\
-        'firing_analyses/transition_corrs')
+        'firing_analyses/transition_corrs/all_tastes')
 from check_data import check_data 
+import itertools as it
+
+def parallelize(func, iterator):
+    return Parallel(n_jobs = cpu_count()-2)\
+            (delayed(func)(this_iter) for this_iter in tqdm(iterator))
+
+def corr_percentile_single(a,b, shuffles = 1000):
+    #shuffles = 1000
+    #this_comp = comparison_list[1]
+    #a,b = tau_array[0, this_comp[0]], tau_array[1,this_comp[1]]
+    corr_val = stats.spearmanr(a,b)[0]
+    shuffle_vals = [stats.spearmanr(a, 
+                    np.random.permutation(b))[0] \
+            for i in range(shuffles)]
+    percentile_val = p_of_s(shuffle_vals, corr_val)
+    return percentile_val, corr_val, shuffle_vals
+
+def return_corr_percentile(tau_array, shuffles = 5000):
+    #tau_array = tau_list[0]
+    trans_list = np.arange(tau_array.shape[1])
+    # **Note: The transitions in BLA and GC are not the same,
+    #           therefore we must look at all permutations, not simply
+    #           all combinations.
+    comparison_list = list(it.product(trans_list, trans_list))
+    #comparison_list = list(it.combinations_with_replacement(trans_list, 2))
+    percentile_array = np.zeros((tau_array.shape[1], tau_array.shape[1]))
+    corr_array = np.zeros((tau_array.shape[1], tau_array.shape[1]))
+    shuffle_array = np.zeros((tau_array.shape[1], tau_array.shape[1], shuffles))
+    for this_comp in tqdm(comparison_list):
+        percentile_val, corr_val, shuffle_vals = \
+                corr_percentile_single(tau_array[0, this_comp[0]],
+                                        tau_array[1, this_comp[1]],
+                                        shuffles = shuffles)
+        percentile_array[this_comp] = percentile_val
+        corr_array[this_comp] = corr_val
+        shuffle_array[this_comp] = shuffle_vals
+    return percentile_array, corr_array, shuffle_array
 
 class params_from_path:
     def __init__(self, path):
@@ -64,28 +101,12 @@ class params_from_path:
 save_path = '/ancillary_analysis/changepoint_alignment/inter_region'
 wanted_names = ['rho_percentiles','mode_tau','rho_shuffles',
         'tau_corrs','tau_list'] 
-#wanted_names = ['rho_percentiles','mse_percentiles', 
-#        'moving_rhos','moving_ps','moving_t']
 
 # Load pkl detailing which recordings have split changepoints
 data_dir_pkl = '/media/bigdata/firing_space_plot/firing_analyses/'\
-        'transition_corrs/multi_region_frame.pkl'
+        'transition_corrs/all_tastes/multi_region_frame.pkl'
 inter_frame = pd.read_pickle(data_dir_pkl)
 inter_frame['animal_name'] = [x.split('_')[0] for x in inter_frame['name']]
-
-### GOOD FILES (i.e. files with >7 neurons in both regions)
-#good_files_list_path = '/media/bigdata/firing_space_plot/'\
-#        'firing_analyses/transition_corrs/good_inter_region.txt'
-#good_files_list = open(good_files_list_path,'r').readlines()
-#good_files_list = [x.strip() for x in good_files_list]
-
-#rho_percentiles = []
-#mse_percentiles = []
-#region_names = []
-#region_sizes = []
-#moving_rhos = []
-#moving_ps = []
-#moving_t = []
 
 black_list = ['AM26_4Tastes_200828_112822', 'AM18','AM37']
 
@@ -96,7 +117,7 @@ this_info.run_all()
 inter_region_paths = [path for  num,path in enumerate(this_info.pkl_file_paths) \
                 if num in this_info.region_fit_inds]
 state4_models = [path for path in inter_region_paths if '4state' in path]
-#split_basenames = [os.path.basename(x) for x in state4_models]
+
 # Check params for both fits add up
 check_params_bool = params_from_path(state4_models[0]).to_dict() ==\
                     params_from_path(state4_models[1]).to_dict()
@@ -131,50 +152,87 @@ for num, data_dir in tqdm(enumerate(inter_frame.path)):
                     for this_name in wanted_names]
             dat_list.append(this_dat)
             session_num_list.append(num)
-            #this_rho_percentiles = hf5.get_node(save_path, wanted_names[0])[:]
-            #this_mse_percentiles = hf5.get_node(save_path, wanted_names[1])[:]
-            #this_moving_rhos = hf5.get_node(save_path, wanted_names[2])[:]
-            #this_moving_ps = hf5.get_node(save_path, wanted_names[3])[:]
-            #this_moving_t = hf5.get_node(save_path, wanted_names[4])[:]
 
-            #rho_percentiles.append(this_rho_percentiles)
-            #mse_percentiles.append(this_mse_percentiles)
-            #moving_rhos.append(this_moving_rhos)
-            #moving_ps.append(this_moving_ps)
-            #moving_t.append(this_moving_t)
-
-#var_list = ['rho_percentiles','mse_percentiles']
-        #'moving_rhos','moving_ps','moving_t']
 dat_list_zip = list(zip(*dat_list))
 dat_list_zip = [np.stack(x) for x in dat_list_zip]
 for this_var, this_dat in zip(wanted_names, dat_list_zip):
     globals()[this_var] = this_dat 
-#rho_percentiles = np.array(rho_percentiles)
-#mse_percentiles = np.array(mse_percentiles)
 
 ########################################
-## Quality Control
-########################################
-# If positions of changepoints are very different, they obviously can't
-# be compared
-# Similarly, if variances are very different, one of them had a bad fit
-tau_list_temp = tau_list.swapaxes(1,2)
-mean_p_out = np.empty(tau_list_temp.shape[:2])
-inds = np.array(list(np.ndindex(mean_p_out.shape)))
-for this_ind in inds:
-    mean_p_out[tuple(this_ind)] = \
-            stats.mannwhitneyu(*tau_list_temp[tuple(this_ind)])[1]
-alpha = 0.05/np.size(mean_p_out)
-mean_sig = mean_p_out <= alpha
-
+## All to all transition correlation
 ########################################
 
-for trans_num in range(tau_corrs.shape[1]):
-    dat1 = rho_shuffles[:,trans_num,:1000].flatten() 
-    dat2 = tau_corrs[:,trans_num]
-    #dat2 = np.random.choice(tau_corrs[:,trans_num], resample_num) +\
-    #                (np.random.random(resample_num)-0.5)*0.05
-    stats.ks_2samp(dat1,dat2, alternative = 'greater')
+outs = parallelize(return_corr_percentile, tau_list)
+percentile_array, corr_array, shuffle_array = list(zip(*outs))
+percentile_array = np.stack(percentile_array)
+corr_array = np.stack(corr_array)
+shuffle_array = np.stack(shuffle_array)
+
+
+# Find number of significant correlations
+sig_perc = 90
+sig_frac = np.mean(percentile_array >= sig_perc, axis=0)
+
+# Find percentile of shuffles with respect to self
+iters = list(np.ndindex(shuffle_array.shape[:-1]))
+shuffle_perc_array = np.empty(shuffle_array.shape) 
+for this_iter in iters:
+    crit_val = stats.scoreatpercentile(shuffle_array[this_iter], sig_perc)
+    shuffle_perc_array[this_iter] = shuffle_array[this_iter] >= crit_val
+
+# Find distributions of random counts
+random_sig_frac = np.mean(shuffle_perc_array, axis=0)
+
+# 2 tailed, Bonferroni corrected p-value
+
+#iters = list(np.ndindex(random_sig_frac.shape[:-1]))
+#p_val_array = np.empty(random_sig_frac.shape[:-1]) 
+#for this_iter in iters:
+#
+#comparisons = all_bin_percs.shape[1]
+#abs_diff_perc = np.min(np.stack([100 - all_bin_percs, all_bin_percs]),axis=0)
+#abs_diff_perc = ((abs_diff_perc*2)/100)*comparisons
+#bonf_sig = abs_diff_perc <= 0.05
+
+## Running into finite sample issues because of low dataset count
+## i.e. because we only have 20 or so datasetes, when we calculate
+## the percentile of actual significant counts to shuffle signficant
+## counts, the support of the shuffle counts is small (e.g. 0-10
+## out of 20), which creates problems for calculating the percentile
+## to significant accuracy.
+## Therefore, resample actual dataset and shuffle to optain larger
+## number of possible counts
+alpha = 0.05
+resampled_counts = 1000
+resample_inds = np.random.choice(
+        np.arange(percentile_array.shape[0]), resampled_counts, replace=True)
+resampled_percentile_array = percentile_array[resample_inds] 
+resampled_sig_frac = np.mean(resampled_percentile_array >= sig_perc, axis=0)
+
+resampled_shuffle_perc = shuffle_perc_array[resample_inds]
+resampled_random_sig_frac = np.mean(resampled_shuffle_perc, axis=0)
+
+iters = list(np.ndindex(random_sig_frac.shape[:-1]))
+p_val_array = np.empty(random_sig_frac.shape[:-1]) 
+for this_iter in iters:
+    p_val_array[this_iter] = \
+        p_of_s(resampled_random_sig_frac[this_iter], 
+                resampled_sig_frac[this_iter])
+
+#mask =  np.tri(p_val_array.shape[0], k=-1)
+#p_val_array = np.ma.array(p_val_array, mask=mask)
+#comparisons = (p_val_array.mask==False).sum()
+comparisons = p_val_array.size
+abs_diff_perc = np.min(np.stack([100 - p_val_array, p_val_array]),axis=0)
+abs_diff_perc = ((abs_diff_perc*2)/100)
+bonf_sig = abs_diff_perc <= (alpha/comparisons)
+#bonf_sig = np.ma.array(bonf_sig, mask = mask)
+
+def holm_bonferroni_test(p_vals, alpha = 0.05):
+    sorted_vals = np.sort(p_vals)
+    denoms = np.arange(len(sorted_vals),0, step = -1)
+    corrected_alpha = alpha/denoms
+    return sorted_vals < corrected_alpha
 
 ########################################
 #|  _ \| | ___ | |_ ___ 
@@ -184,7 +242,42 @@ for trans_num in range(tau_corrs.shape[1]):
 ########################################
 
 plot_dir = '/media/bigdata/firing_space_plot/firing_analyses/'\
-        'transition_corrs/plots/multi_region'
+        'transition_corrs/all_tastes/plots/multi_region'
+
+########################################
+plot_sig_frac = np.ma.array(resampled_sig_frac, mask = mask).T
+
+fig = plt.figure()
+ax = fig.add_subplot(111)
+cmap = plt.cm.get_cmap('viridis') # jet doesn't have white color
+cmap.set_bad('w') # default value is 'k'
+im = ax.imshow(plot_sig_frac, interpolation="nearest", cmap=cmap)
+iters = list(np.ndindex(bonf_sig.shape))
+for this_iter in iters:
+    if not bonf_sig.mask[this_iter]:
+        if bonf_sig.data[this_iter]:
+            text = ax.text(this_iter[0], this_iter[1], "*",
+                    ha="center", va="center", color="black",)
+            text.set_fontsize(20)
+tick_vals = np.arange(bonf_sig.shape[0])
+ax.set_xticks(tick_vals)
+ax.set_xticklabels(tick_vals)
+ax.set_yticks(tick_vals)
+ax.set_yticklabels(tick_vals)
+ax.set_xlabel("GC Transition")
+ax.set_ylabel("BLA Transition")
+for key,val in ax.spines.items():
+    val.set_visible(False)
+ax.set_xticks(tick_vals - 0.5, minor = True)
+ax.set_yticks(tick_vals - 0.5, minor = True)
+ax.grid(which="minor", color="w", linestyle='-', linewidth=5)
+ax.tick_params(which="minor", bottom=False, left=False)
+plt.colorbar(im)
+plt.suptitle('All-to-all transition correlation \n' + \
+        f"* = 2 Tailed Bonferroni Corrected p-value < alpha ({alpha})")
+fig.savefig(os.path.join(plot_dir, 'multi_transition_corr'))#, format='svg'))
+plt.close(fig)
+#plt.show()
 
 ########################################
 
@@ -454,84 +547,3 @@ fig.savefig(os.path.join(plot_dir,
 plt.close(fig)
 #plt.show()
 
-
-#fig,ax = plt.subplots(rho_percentiles.shape[1], 1, 
-#        sharey = True, sharex=True, figsize = (5,10))
-#for trans_num in range(rho_percentiles.shape[1]):
-#    ax[trans_num].scatter(rho_percentiles[:,trans_num],
-#            mse_percentiles[:,trans_num])
-#    ax[trans_num].set_ylabel('MSE')
-#    ax[trans_num].set_title(f'Transition {trans_num}')
-#ax[-1].set_xlabel('Rho')
-#plt.suptitle('Aggregate transition statistics')
-#fig.savefig(os.path.join(plot_dir, 'aggregate_percentiles_scatter'))
-#plt.close(fig)
-##plt.show()
-
-## Rho and MS#E Groups
-#inds = np.array(list(np.ndindex(rho_percentiles.shape)))
-#rho_mse_frame = pd.DataFrame(dict(
-#            animal_name = np.repeat(inter_frame.animal_name, 
-#                rho_percentiles.shape[1]),
-#            session_ind = inds[:,0],
-#            change_ind = inds[:,1],
-#            rho = rho_percentiles.flatten(),
-#            mse = mse_percentiles.flatten()))
-#
-#sns.clustermap(data = rho_mse_frame, x = 'change_ind', y = 'session_ind',
-#                    col_cluster=False)
-#plt.show()
-
-perc_array = np.concatenate([rho_percentiles, mse_percentiles],axis=-1)
-standard_perc_array = ss().fit_transform(perc_array)
-
-plt.imshow(standard_perc_array, aspect='auto', cmap = 'viridis')
-plt.show()
-                    
-
-sns.clustermap(data = standard_perc_array[:,:3], col_cluster=False)
-fig = plt.gcf()
-plt.suptitle('Aggregate corr percentile clustering') 
-fig.savefig(os.path.join(plot_dir, 'aggregate_corr_percentiles_cluster'))
-plt.close(fig)
-#plt.show()
-
-sns.clustermap(data = standard_perc_array, col_cluster=False)
-fig = plt.gcf()
-plt.suptitle('Aggregate corr mse percentile clustering') 
-fig.savefig(os.path.join(plot_dir, 'aggregate_corr_mse_percentiles_cluster'))
-plt.close(fig)
-
-## Rolling Window Analysis
-
-#session_num = 0
-#for session_num in trange(len(rho_percentiles)):
-#
-#    session_name = inter_frame.name.iloc[session_num]
-#    animal_name = session_name.split("_")[0]
-#    this_plot_dir = os.path.join(plot_dir, animal_name, session_name)
-#    if not os.path.exists(this_plot_dir):
-#        os.makedirs(this_plot_dir)
-#
-#    #fig, ax = plt.subplots(1,3)
-#    #ax[0].imshow(moving_rhos.T, aspect='auto')
-#    #ax[1].imshow(moving_ps.T, aspect = 'auto')#,vmin = 0, vmax = 1)
-#    #ax[2].imshow((moving_ps.T < 0.05)*1, aspect = 'auto')#,vmin = 0, vmax = 1)
-#    #plt.colorbar()
-#    #plt.show()
-#    
-#    this_moving_rhos = moving_rhos[session_num]
-#    this_moving_ps = moving_ps[session_num]
-#    this_t = moving_t[session_num]
-#
-#    alpha = 0.05
-#    fig, ax = plt.subplots(3,1, sharey=True, sharex=True)
-#    for num,(this_rho, this_p) in enumerate(zip(this_moving_rhos, this_moving_ps)):
-#        ax[num].plot(this_rho)
-#        inds = np.where(this_p <= alpha)
-#        ax[num].scatter(inds, this_rho[inds])
-#        ax[num].set_ylabel(f'Transition {num}')
-#    plt.suptitle(f'Alpha = {alpha}')
-#    fig.savefig(os.path.join(this_plot_dir, 'rolling_window_corrs'))
-#    plt.close(fig)
-#    #plt.show()
