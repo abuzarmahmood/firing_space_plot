@@ -1,0 +1,29 @@
+                            OLS Regression Results                            
+==============================================================================
+Dep. Variable:            fold_change   R-squared:                       0.659
+Model:                            OLS   Adj. R-squared:                 -0.362
+Method:                 Least Squares   F-statistic:                    0.6456
+Date:                Mon, 12 Apr 2021   Prob (F-statistic):              0.698
+Time:                        21:45:11   Log-Likelihood:                -1.7777
+No. Observations:                   5   AIC:                             11.56
+Df Residuals:                       1   BIC:                             9.993
+Df Model:                           3                                         
+Covariance Type:            nonrobust                                         
+=================================================================================
+                    coef    std err          t      P>|t|      [0.025      0.975]
+---------------------------------------------------------------------------------
+Intercept         1.1433      2.041      0.560      0.675     -24.788      27.074
+avg_ML           -0.0006      0.006     -0.095      0.940      -0.081       0.080
+avg_DV           -0.0049      0.006     -0.814      0.565      -0.081       0.071
+avg_ML:avg_DV  1.082e-05   1.68e-05      0.642      0.636      -0.000       0.000
+==============================================================================
+Omnibus:                          nan   Durbin-Watson:                   2.529
+Prob(Omnibus):                    nan   Jarque-Bera (JB):                0.864
+Skew:                          -0.995   Prob(JB):                        0.649
+Kurtosis:                       2.562   Cond. No.                     9.45e+05
+==============================================================================
+
+Notes:
+[1] Standard Errors assume that the covariance matrix of the errors is correctly specified.
+[2] The condition number is large, 9.45e+05. This might indicate that there are
+strong multicollinearity or other numerical problems.

@@ -108,7 +108,7 @@ data_dir_pkl = '/media/bigdata/firing_space_plot/firing_analyses/'\
 inter_frame = pd.read_pickle(data_dir_pkl)
 inter_frame['animal_name'] = [x.split('_')[0] for x in inter_frame['name']]
 
-black_list = ['AM26_4Tastes_200828_112822', 'AM18','AM37']
+black_list = ['AM26_4Tastes_200828_112822', 'AM18','AM37', 'AM39']
 
 # Pull out fit params for one file
 data_dir = inter_frame.path.iloc[0]
@@ -203,7 +203,7 @@ random_sig_frac = np.mean(shuffle_perc_array, axis=0)
 ## Therefore, resample actual dataset and shuffle to optain larger
 ## number of possible counts
 alpha = 0.05
-resampled_counts = 1000
+resampled_counts = 10000
 resample_inds = np.random.choice(
         np.arange(percentile_array.shape[0]), resampled_counts, replace=True)
 resampled_percentile_array = percentile_array[resample_inds] 
@@ -245,39 +245,39 @@ plot_dir = '/media/bigdata/firing_space_plot/firing_analyses/'\
         'transition_corrs/all_tastes/plots/multi_region'
 
 ########################################
-plot_sig_frac = np.ma.array(resampled_sig_frac, mask = mask).T
-
-fig = plt.figure()
-ax = fig.add_subplot(111)
-cmap = plt.cm.get_cmap('viridis') # jet doesn't have white color
-cmap.set_bad('w') # default value is 'k'
-im = ax.imshow(plot_sig_frac, interpolation="nearest", cmap=cmap)
-iters = list(np.ndindex(bonf_sig.shape))
-for this_iter in iters:
-    if not bonf_sig.mask[this_iter]:
-        if bonf_sig.data[this_iter]:
-            text = ax.text(this_iter[0], this_iter[1], "*",
-                    ha="center", va="center", color="black",)
-            text.set_fontsize(20)
-tick_vals = np.arange(bonf_sig.shape[0])
-ax.set_xticks(tick_vals)
-ax.set_xticklabels(tick_vals)
-ax.set_yticks(tick_vals)
-ax.set_yticklabels(tick_vals)
-ax.set_xlabel("GC Transition")
-ax.set_ylabel("BLA Transition")
-for key,val in ax.spines.items():
-    val.set_visible(False)
-ax.set_xticks(tick_vals - 0.5, minor = True)
-ax.set_yticks(tick_vals - 0.5, minor = True)
-ax.grid(which="minor", color="w", linestyle='-', linewidth=5)
-ax.tick_params(which="minor", bottom=False, left=False)
-plt.colorbar(im)
-plt.suptitle('All-to-all transition correlation \n' + \
-        f"* = 2 Tailed Bonferroni Corrected p-value < alpha ({alpha})")
-fig.savefig(os.path.join(plot_dir, 'multi_transition_corr'))#, format='svg'))
-plt.close(fig)
-#plt.show()
+#plot_sig_frac = np.ma.array(resampled_sig_frac, mask = mask).T
+#
+#fig = plt.figure()
+#ax = fig.add_subplot(111)
+#cmap = plt.cm.get_cmap('viridis') # jet doesn't have white color
+#cmap.set_bad('w') # default value is 'k'
+#im = ax.imshow(plot_sig_frac, interpolation="nearest", cmap=cmap)
+#iters = list(np.ndindex(bonf_sig.shape))
+#for this_iter in iters:
+#    if not bonf_sig.mask[this_iter]:
+#        if bonf_sig.data[this_iter]:
+#            text = ax.text(this_iter[0], this_iter[1], "*",
+#                    ha="center", va="center", color="black",)
+#            text.set_fontsize(20)
+#tick_vals = np.arange(bonf_sig.shape[0])
+#ax.set_xticks(tick_vals)
+#ax.set_xticklabels(tick_vals)
+#ax.set_yticks(tick_vals)
+#ax.set_yticklabels(tick_vals)
+#ax.set_xlabel("GC Transition")
+#ax.set_ylabel("BLA Transition")
+#for key,val in ax.spines.items():
+#    val.set_visible(False)
+#ax.set_xticks(tick_vals - 0.5, minor = True)
+#ax.set_yticks(tick_vals - 0.5, minor = True)
+#ax.grid(which="minor", color="w", linestyle='-', linewidth=5)
+#ax.tick_params(which="minor", bottom=False, left=False)
+#plt.colorbar(im)
+#plt.suptitle('All-to-all transition correlation \n' + \
+#        f"* = 2 Tailed Bonferroni Corrected p-value < alpha ({alpha})")
+#fig.savefig(os.path.join(plot_dir, 'multi_transition_corr'))#, format='svg'))
+#plt.close(fig)
+##plt.show()
 
 ########################################
 
@@ -379,7 +379,7 @@ plt.close(fig)
 ## Plot of percentiles with shuffled counts
 ########################################
 
-hist_bins = np.linspace(0,100,21)
+hist_bins = np.linspace(0,100,11)
 
 rho_shuffle_percs = np.array([[[p_of_s(x,z) for z in x] for x in y] \
                         for y in tqdm(rho_shuffles)])
@@ -521,7 +521,7 @@ ax.bar(x, rho_perc_frac.flatten(), label = 'Actual',
         color = cmap(0), edgecolor = None, alpha = 0.7, linewidth = 2)
         #color = cmap(0), edgecolor = cmap(0), alpha = 0.7, linewidth = 2)
 #ax.errorbar(x, mean_hist_counts, std_hist_counts, 
-ax.errorbar(x, mean_hist_frac, std_hist_frac, 
+ax.errorbar(x, mean_hist_frac, std_hist_frac.flatten(), 
         label = 'Shuffle', color = 'k', linewidth = 5, alpha = 0.7)
         #label = 'Shuffle', color = cmap(1), linewidth = 5, alpha = 0.7)
 for num,(perc,sig) in enumerate(zip(abs_diff_perc,bonf_sig)):

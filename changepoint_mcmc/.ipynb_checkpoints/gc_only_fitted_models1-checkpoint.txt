@@ -1,0 +1,1 @@
+/media/bigdata/Abuzar_Data/AS18/AS18_4Tastes_200229_154608/saved_models/vi_4_states/split0_vi_4states_40000fit_2000_4000time_50bin.pkl

@@ -1,0 +1,5 @@
+['states', 'data_transform', 'data_dir', 'taste_num']
+[2, 'None', '/media/bigdata/Abuzar_Data/bla_gc/TJM41/TJM41_2Tastes_210420_120752', 0]
+[2, 'None', '/media/bigdata/Abuzar_Data/bla_gc/TJM41/TJM41_2Tastes_210420_120752', 1]
+[2, 'None', '/media/bigdata/Abuzar_Data/bla_gc/TJM41/TJM41_2Tastes_210420_120752', 2]
+[2, 'None', '/media/bigdata/Abuzar_Data/bla_gc/TJM41/TJM41_2Tastes_210420_120752', 3]

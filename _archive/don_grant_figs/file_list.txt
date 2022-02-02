@@ -1,0 +1,10 @@
+/media/bigdata/Abuzar_Data/AM21/AM21_4Tastes_200303_102607/AM21_4Tastes_200303_102607_repacked.h5
+/media/bigdata/Abuzar_Data/AM21/AM21_4Tastes_200304_102732/AM21_4Tastes_200304_102732_repacked.h5 
+/media/bigdata/Abuzar_Data/AM21/AM21_4Tastes_200305_085032/AM21_4Tastes_200305_085032_repacked.h5
+/media/bigdata/Abuzar_Data/AM21/AM21_4Tastes_200306_085755/AM21_4Tastes_200306_085755_repacked.h5
+/media/bigdata/Abuzar_Data/AM22/AM22_4Tastes_200312_144306/AM22_4Tastes_200312_144306_repacked.h5
+/media/bigdata/Abuzar_Data/AM22/AM22_4Tastes_200313_152809/AM22_4Tastes_200313_152809_repacked.h5
+/media/bigdata/Abuzar_Data/AM22/AM22_4Tastes_200314_152731/AM22_4Tastes_200314_152731_repacked.h5
+/media/bigdata/Abuzar_Data/AM22/AM22_4Tastes_200315_093327/AM22_4Tastes_200315_093327_repacked.h5
+/media/bigdata/Abuzar_Data/AM23/AM23_4Tastes_200315_111458/AM23_4Tastes_200315_111458_repacked.h5
+/media/bigdata/Abuzar_Data/AM23/AM23_4Tastes_200316_134649/AM23_4Tastes_200316_134649_repacked.h5

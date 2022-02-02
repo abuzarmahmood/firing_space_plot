@@ -42,6 +42,7 @@ import pandas as pd
 import tables
 from joblib import Parallel, delayed, cpu_count
 import itertools as it
+from numba import jit
 import ast
 
 sys.path.append('/media/bigdata/firing_space_plot/ephys_data')
@@ -69,6 +70,7 @@ def rolling_zscore(array, window_size):
                 stats.zscore(array[...,this_ind[0]:this_ind[1]],axis=-1)
     return out/window_size
 
+@jit(nopython=True)
 def norm_zero_lag_xcorr(vec1, vec2):
     """
     Calculates normalized zero-lag cross correlation

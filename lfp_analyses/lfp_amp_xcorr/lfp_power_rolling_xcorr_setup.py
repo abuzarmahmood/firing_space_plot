@@ -56,7 +56,6 @@ from ephys_data import ephys_data
 ## Define Functions
 ########################################
 
-
 def parallelize(func, iterator):
     return Parallel(n_jobs = cpu_count()-2)\
             (delayed(func)(this_iter) for this_iter in tqdm(iterator))
@@ -114,19 +113,6 @@ def remove_node(path_to_node, hf5, recursive = False):
         hf5.remove_node(os.path.dirname(path_to_node),
                     os.path.basename(path_to_node), 
                     recursive = recursive)
-#
-#def gen_df(array, label, time_vec):
-#    inds = np.array(list(np.ndindex(array.shape)))
-#    return pd.DataFrame({
-#            'label' : [label] * inds.shape[0],
-#            'pair' : inds[:,0],
-#            'taste' : inds[:,1],
-#            'trial' : inds[:,2],
-#            'freq' : dat.freq_vec[inds[:,3]],
-#            'time_bin' : inds[:,3],
-#            'time' : time_vec[inds[:3]],
-#            'xcorr' : array.flatten()})
-
 
 ################################################### 
 # _                    _   ____        _        
@@ -142,8 +128,8 @@ if not os.path.exists(save_dir):
     os.makedirs(save_dir)
 
 
-#data_dir = '/media/bigdata/Abuzar_Data/bla_gc/AM12/AM12_4Tastes_191106_085215/'
-data_dir = sys.argv[1]
+data_dir = '/media/bigdata/Abuzar_Data/bla_gc/AM12/AM12_4Tastes_191106_085215/'
+#data_dir = sys.argv[1]
 dat = ephys_data(data_dir)
 dat.get_lfp_electrodes()
 
@@ -167,7 +153,7 @@ dat.get_lfp_electrodes()
 # Perform rolling window on WHOLE trial so that edges can
 # be choppoed away later
 window_size = 500
-recalculate_transform = True
+#recalculate_transform = True
 save_path = '/stft/analyses/amplitude_xcorr'
 # This will need to be parallelilzed
 with tables.open_file(dat.hdf5_path,'r+') as hf5:
@@ -191,6 +177,8 @@ with tables.open_file(dat.hdf5_path,'r+') as hf5:
 # This decision branch is made to avoid unnecessarily loading STFT data
 # which are usually quite large
 if perform_transormation_bool:
+    #dat.stft_params['signal_window'] = 500
+    #dat.stft_params['window_overlap'] = 450
     dat.get_stft(recalculate=True)
 
     # Only pull STFT if transformation needs to be calculated
@@ -198,11 +186,32 @@ if perform_transormation_bool:
     transformed_array = np.array(\
             parallelize(lambda x: rolling_zscore(x, window_size), amplitude_array))
 
+    amp_xr = xr.DataArray(data = amplitude_array, 
+        dims = ['pairs','tastes','trials','freq','bins'])
+    amp_xr_rolling = amp_xr.rolling(bins = 250)
+    amp_rolling_array = amp_xr_rolling.construct('window_dim', stride = 25)
+    inds = np.where(np.invert(np.isnan(amp_rolling_array[0,0,0,0,:,0])))[0]
+    amp_rolling_array = amp_rolling_array[...,inds,:]
+    #amp_rolling_chunk = amp_rolling_array.chunk({'pairs' : 1})
+    zscore_constr = man_zscore(amp_rolling_array, dim = 'window_dim')
+    zscore_out = zscore_constr.compute()
+
+    def man_zscore(obj, dim):
+        # note: apply always moves core dimensions to the end
+        return xr.apply_ufunc(
+            stats.zscore, obj, input_core_dims=[[dim]], 
+            #dask="parallelized", 
+            #output_dtypes=[float],
+            kwargs={"axis": -1}
+        )
+
     with tables.open_file(dat.hdf5_path,'r+') as hf5:
         #============================== 
         # Will only remove if array already there
-        remove_node('/stft/analyses/amplitude_xcorr/transformed_amplitude_array',hf5)
-        remove_node('/stft/analyses/amplitude_xcorr/transformed_amplitude_info',hf5)
+        remove_node('/stft/analyses/amplitude_xcorr/'\
+                'transformed_amplitude_array',hf5)
+        remove_node('/stft/analyses/amplitude_xcorr/'\
+                'transformed_amplitude_info',hf5)
         # Save transformed array to HDF5
         hf5.create_array(save_path,'transformed_amplitude_array',transformed_array)
         transform_array_params = {
@@ -281,7 +290,6 @@ if recalculate_xcorr:
                                 amp_list[0][ind[0]][:,shuffle_inds],
                                         amp_list[1][ind[1]],
                                         window_size, step_size)
-
     inter_outs = parallelize_args(
             par_rolling_inter_xcorr, pair_inds, temp_split_amp_list)
     shuffle_inter_outs = parallelize_args(
@@ -293,33 +301,22 @@ if recalculate_xcorr:
 
     inter_outs_x = xarray.DataArray(
             data = inter_outs[np.newaxis, np.newaxis],
-            dims = ['region_type','order_type','pairs','tastes','trials','freqs','bins'],
+            dims = ['region_type','order_type','pairs',
+                            'tastes','trials','freqs','bins'],
             coords = dict(region_type = ['inter'], order_type = ['actual'],
                                     bins = t_vec, freqs = dat.freq_vec),
             attrs = dict(window_size = window_size, step_size = step_size))
 
     shuffle_inter_outs_x = xarray.DataArray(
             data = shuffle_inter_outs[np.newaxis, np.newaxis],
-            dims = ['region_type','order_type','pairs','tastes','trials','freqs','bins'],
+            dims = ['region_type','order_type','pairs',
+                            'tastes','trials','freqs','bins'],
             coords = dict(region_type = ['inter'], order_type = ['shuffle'],
                                     bins = t_vec, freqs = dat.freq_vec),
             attrs = dict(window_size = window_size, step_size = step_size))
 
     fin_inter = xarray.concat([inter_outs_x, shuffle_inter_outs_x],
                                     dim = 'order_type')
-
-    #inter_region_xcorr = np.array([\
-    #        rolling_norm_zero_lag_xcorr(temp_split_amp_list[0][ind[0]],
-    #                            temp_split_amp_list[1][ind[1]]) \
-    #                    for ind in pair_inds])
-
-    #shuffled_inter_region_xcorr = np.array([\
-    #                norm_zero_lag_xcorr(\
-    #                    temp_split_amp_list[0][ind[0]]\
-    #                        [:,np.random.permutation(\
-    #                                    np.arange(temp_split_amp_list[0].shape[2]))],
-    #                    temp_split_amp_list[1][ind[1]]) \
-    #                for ind in pair_inds])
 
     ########################################
     ## Within Region
@@ -345,7 +342,8 @@ if recalculate_xcorr:
     intra_outs = np.array(intra_outs)
 
     shuffle_intra_outs = \
-            [parallelize_args(par_rolling_shuffle_intra_xcorr, this_pairs, this_region)\
+            [parallelize_args(par_rolling_shuffle_intra_xcorr, 
+                            this_pairs, this_region)\
             for this_pairs, this_region in zip(pair_list, split_amplitude_list)]
 
     intra_outs = [np.array(x) for x in intra_outs]
@@ -357,7 +355,8 @@ if recalculate_xcorr:
         intra_frame_list.append(
                 xarray.DataArray(
                 data = intra_outs[num][np.newaxis, np.newaxis],
-                dims = ['region_type','order_type','pairs','tastes','trials','freqs','bins'],
+                dims = ['region_type','order_type',
+                            'pairs','tastes','trials','freqs','bins'],
                 coords = dict(region_type = [name], order_type = ['actual'],
                                         bins = t_vec, freqs = dat.freq_vec),
                 attrs = dict(window_size = window_size, step_size = step_size)))
@@ -365,36 +364,15 @@ if recalculate_xcorr:
         shuffle_intra_frame_list.append(
                 xarray.DataArray(
                 data = shuffle_intra_outs[num][np.newaxis, np.newaxis],
-                dims = ['region_type','order_type','pairs','tastes','trials','freqs','bins'],
+                dims = ['region_type','order_type',
+                            'pairs','tastes','trials','freqs','bins'],
                 coords = dict(region_type = [name], order_type = ['shuffle'],
                                         bins = t_vec, freqs = dat.freq_vec),
                 attrs = dict(window_size = window_size, step_size = step_size)))
 
-    #intra_region_xcorr_list = [np.array([\
-    #        norm_zero_lag_xcorr(region[ind[0]],region[ind[1]]) \
-    #        for ind in this_pair_list]) \
-    #        for this_pair_list, region in zip(pair_list, split_amplitude_list)]
-    #shuffled_intra_region_xcorr_list = [np.array([\
-    #        norm_zero_lag_xcorr(\
-    #               region[ind[0]]
-    #                    [:,np.random.permutation(\
-    #                                np.arange(temp_split_amp_list[0].shape[2]))],
-    #                region[ind[1]]) \
-    #        for ind in this_pair_list]) \
-    #        for this_pair_list, region in zip(pair_list, split_amplitude_list)]
-
-
     ########################################
     ## Save arrays 
     ########################################
-    # HDF5 can't save list of different sized arrays
-    # Save as Pandas DataFrame for consistency across all calculations
-    # Save raw xcorr 
-    # Means can be calculated when doing further preocessing
-
-    #rolling_inter_region_frame = pd.concat([\
-    #        gen_df(inter_outs,'inter_region', t_vec),
-    #        gen_df(shuffled_inter_region_xcorr,'shuffled_inter_region')])
 
     fin_inter.to_netcdf(
             path = os.path.join(
@@ -411,22 +389,3 @@ if recalculate_xcorr:
                     save_dir, os.path.basename(dat.data_dir[:-1]) + "_" + \
                     this_frame.region_type.values[0]), 
                 mode = 'w', engine="h5netcdf")
-
-
-    #rolling_intra_region_frame = pd.concat(
-    #        [gen_df(x,'intra_'+region_name) for x,region_name in \
-    #                zip(intra_region_xcorr_list, dat.region_names)] + \
-    #        [gen_df(x,'shuffled_intra_'+region_name) for x,region_name \
-    #                in zip(shuffled_intra_region_xcorr_list, dat.region_names)])
-
-    #frame_name_list = ['rolling_inter_region_frame', 'rolling_intra_region_frame']
-
-    #with tables.open_file(dat.hdf5_path,'r+') as hf5:
-    #    for frame_name in frame_name_list:
-    #        # Will only remove if array already there
-    #        remove_node(os.path.join(save_path, frame_name),hf5, recursive=True)
-
-    #for frame_name in frame_name_list:
-    #    # Save transformed array to HDF5
-    #    eval(frame_name).to_hdf(dat.hdf5_path,  
-    #            os.path.join(save_path, frame_name))

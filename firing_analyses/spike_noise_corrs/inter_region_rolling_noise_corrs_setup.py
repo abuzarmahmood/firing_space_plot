@@ -267,6 +267,8 @@ diff_sum_spikes = [np.moveaxis(x,2,0) for x in diff_sum_spikes]
 ##################################################
 ## Inter-Region Whole Trial
 ##################################################
+analysis_attrs = dict(time_lims = time_lims, window_size = window_size,
+        step_size = step_size)
 
 # Perform correlation over all pairs for each taste separately
 # Compare values to corresponding shuffles
@@ -276,7 +278,8 @@ diff_spikes_paired = np.array([this_array[this_inds] \
 
 diff_spikes_x  = xr.DataArray(data = diff_spikes_paired,
         dims = ['region','pair','taste','trial','time'],
-        attrs = dict(region_type = 'inter',comparison_type = 'actual'))
+        attrs = dict(region_type = 'inter',comparison_type = 'actual',
+                    **analysis_attrs))
 
 def array_spearmanr(array1, array2, dim='trial', shuffle = False):
     if shuffle:
@@ -302,7 +305,8 @@ shuff_p = np.stack(shuff_p)
 inter_shuff_x = xr.Dataset(data_vars = dict(
                 rho = (['shuff_ind',*inter_x.p.dims], shuff_rho),
                 p = (['shuff_ind',*inter_x.p.dims], shuff_p),),
-        attrs = dict(region_type = 'inter',comparison_type = 'shuffle'))
+        attrs = dict(region_type = 'inter',comparison_type = 'shuffle',
+                            **analysis_attrs))
 
 inter_outs = [inter_x, inter_shuff_x]
 #inter_outs = list(zip(*parallelize(taste_calc_corrs,diff_sum_spikes,pair_inds)))
@@ -323,13 +327,14 @@ diff_paired_intra = [\
         for this_array,this_region_inds in zip(diff_sum_spikes, pair_list)]
 
 diff_intra_x  = [xr.DataArray(data = array,
-        dims = ['set','pair','taste','trial','time'],
-        attrs = dict(region_type = region, comparison_type = 'shuffle')) \
-                for region, array in zip(sorted_region_names, diff_paired_intra)]
+        dims = ['set','pair','taste','trial','time'],) \
+                for array in diff_paired_intra]
 
 intra_outs = [array_spearmanr(x[0], x[1]) for x in diff_intra_x]
 intra_x = [xr.Dataset(data_vars = dict(rho = x[0], p = x[1]),
-                            attrs = x[0].attrs) for x in intra_outs]
+     attrs = dict(region_type = region, comparison_type = 'actual',
+                                        **analysis_attrs)) \
+                        for region,x in zip(sorted_region_names, intra_outs)]
 
 #shuff_outs = [array_spearmanr(diff_spikes_x[0], diff_spikes_x[1], 
 #                    shuffle = True) for i in trange(shuffle_num)]
@@ -340,7 +345,8 @@ intra_shuff_outs = [[np.stack(x) for x in y] for y in intra_shuff_outs]
 intra_shuff_x = [xr.Dataset(data_vars = dict(
                 rho = (['shuff_ind',*intra_x[num].p.dims], x[0]),
                 p = (['shuff_ind',*intra_x[num].p.dims], x[1]),),
-                attrs = intra_x[num].attrs) \
+    attrs = dict(region_type = sorted_region_names[num], 
+                        comparison_type = 'shuffle', **analysis_attrs)) \
                 for num,x in enumerate(intra_shuff_outs)]
 
 intra_outs = [*intra_x, *intra_shuff_x]

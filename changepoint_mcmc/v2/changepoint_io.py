@@ -243,16 +243,15 @@ class fit_handler():
         with open(json_file_name,'w') as file:
             json.dump(out_dict['metadata'], file, indent = 4)
 
-        self.database_handler.write_to_databse()
+        self.database_handler.write_to_database()
 
         print('Saving inference output to '
                 f'{self.database_handler.model_save_dir}')
         
 class database_handler():
     
-    self.unique_cols = ['exp.model_id','exp.save_path','exp.fit_date']
-
     def __init__(self):
+        self.unique_cols = ['exp.model_id','exp.save_path','exp.fit_date']
         self.model_database_path = MODEL_DATABASE_PATH
         self.model_save_base_dir = MODEL_SAVE_DIR
 
@@ -273,6 +272,7 @@ class database_handler():
 
     def drop_duplicates(self):
         _, dup_inds = self.show_duplicates()
+        print(f'Removing {sum(dup_inds)} duplicate rows')
         self.fit_database = self.fit_database.loc[~dup_inds]
 
     def check_mismatched_paths(self):
@@ -287,7 +287,8 @@ class database_handler():
         return mismatch_from_database, mismatch_from_file, file_list
 
     def clear_mismatched_paths(self):
-        mismatch_from_database, mismatch_from_file = self.check_mismatched_paths()
+        mismatch_from_database, mismatch_from_file, file_list = \
+                self.check_mismatched_paths()
         mismatch_from_file = np.array(mismatch_from_file)
         mismatch_from_database = np.array(mismatch_from_database)
         self.fit_database = self.fit_database.loc[~mismatch_from_database]
@@ -338,10 +339,12 @@ class database_handler():
 
     def aggregate_metadata(self):
         if 'external_metadata' not in dir(self):
-            raise Exception('Fit run metdata needs to be ingested into data_handler first')
+            raise Exception('Fit run metdata needs to be ingested '\
+                    'into data_handler first')
 
         data_details = dict(zip(
-            ['data_dir','basename','animal_name','session_date','taste_num','region_name'],
+            ['data_dir','basename','animal_name','session_date',
+                'taste_num','region_name'],
             [self.data_dir, self.data_basename, self.animal_name,
                         self.session_date, self.taste_num, self.region_name]))
 
@@ -356,13 +359,14 @@ class database_handler():
 
         return temp_ext_met 
 
-    def write_to_databse(self):
+    def write_to_database(self):
         agg_metadata = self.aggregate_metadata()
         flat_metadata = pd.json_normalize(agg_metadata)
         if not os.path.isfile(self.model_database_path):
             flat_metadata.to_csv(self.model_database_path, mode='a')
         else:
-            flat_metadata.to_csv(self.model_database_path, mode='a', header = False)
+            flat_metadata.to_csv(self.model_database_path, 
+                    mode='a', header = False)
 
     def check_exists():
         if self.fit_exists is None:
