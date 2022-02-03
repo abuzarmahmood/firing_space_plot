@@ -34,8 +34,6 @@ def single_taste_poisson(
 
     spike_array :: Shape : trials, neurons, time_bins
     states :: number of states to include in the model 
-    fit :: number of iterations to fit for
-    samples :: number of samples to generate from the fit model
     """
 
     mean_vals = np.array([np.mean(x,axis=-1) \
@@ -80,7 +78,138 @@ def single_taste_poisson(
 def all_taste_poisson(
         spike_array,
         states):
-    pass
+
+    """
+    ** Model to fit changepoint to single taste **
+    ** Largely taken from "_v1/poisson_all_tastes_changepoint_model.py"
+
+    spike_array :: Shape : tastes, trials, neurons, time_bins
+    states :: number of states to include in the model 
+    """
+
+    # If model already doesn't exist, then create new one
+    #spike_array = this_dat_binned
+    # Unroll arrays along taste axis
+    #spike_array_long = np.reshape(spike_array,(-1,*spike_array.shape[-2:]))
+    spike_array_long = np.concatenate(spike_array, axis=0) 
+
+    # Find mean firing for initial values
+    tastes = spike_array.shape[0]
+    split_list = np.array_split(spike_array,states,axis=-1)
+    # Cut all to the same size
+    min_val = min([x.shape[-1] for x in split_list])
+    split_array = np.array([x[...,:min_val] for x in split_list])
+    mean_vals = np.mean(split_array,axis=(2,-1)).swapaxes(0,1)
+    mean_vals += 0.01 # To avoid zero starting prob
+    mean_nrn_vals = np.mean(mean_vals,axis=(0,1))
+
+    # Find evenly spaces switchpoints for initial values
+    idx = np.arange(spike_array.shape[-1]) # Index
+    array_idx = np.broadcast_to(idx, spike_array_long.shape)
+    idx_range = idx.max() - idx.min()
+    even_switches = np.linspace(0,idx.max(),states+1)
+    even_switches_normal = even_switches/np.max(even_switches)
+
+    taste_label = np.repeat(np.arange(spike_array.shape[0]), spike_array.shape[1])
+    trial_num = array_idx.shape[0]
+
+    # Being constructing model
+    with pm.Model() as model:
+
+        # Hierarchical firing rates
+        # Refer to model diagram
+        # Mean firing rate of neuron AT ALL TIMES
+        lambda_nrn = pm.Exponential('lambda_nrn',
+                                    1/mean_nrn_vals, 
+                                    shape = (mean_vals.shape[-1]))
+        # Priors for each state, derived from each neuron
+        # Mean firing rate of neuron IN EACH STATE (averaged across tastes)
+        lambda_state = pm.Exponential('lambda_state',
+                                        lambda_nrn, 
+                                        shape = (mean_vals.shape[1:]))
+        # Mean firing rate of neuron PER STATE PER TASTE
+        lambda_latent = pm.Exponential('lambda', 
+                                        lambda_state[np.newaxis,:,:], 
+                                        testval = mean_vals, 
+                                        shape = (mean_vals.shape))
+
+        # Changepoint time variable
+        # INDEPENDENT TAU FOR EVERY TRIAL
+        a = pm.HalfNormal('a_tau', 3., shape = states - 1)
+        b = pm.HalfNormal('b_tau', 3., shape = states - 1)
+
+        # Stack produces states x trials --> That gets transposed 
+        # to trials x states and gets sorted along states (axis=-1)
+        # Sort should work the same way as the Ordered transform --> 
+        # see rv_sort_test.ipynb
+        tau_latent = pm.Beta('tau_latent', a, b, 
+                               shape = (trial_num, states-1),
+                               testval = \
+                                       tt.tile(even_switches_normal[1:(states)],
+                                           (array_idx.shape[0],1))).sort(axis=-1)
+               
+        tau = pm.Deterministic('tau', 
+                idx.min() + (idx.max() - idx.min()) * tau_latent)
+
+        # Sigmoing to create transitions based off tau
+        # Hardcoded 3-5 states
+        weight_1_stack = tt.nnet.sigmoid(\
+                array_idx - tau[:,0][...,np.newaxis,np.newaxis])
+        if states >= 3:
+            weight_2_stack = tt.nnet.sigmoid(\
+                    array_idx - tau[:,1][...,np.newaxis,np.newaxis])
+        if states >= 4:
+            weight_3_stack = tt.nnet.sigmoid(\
+                    array_idx - tau[:,2][...,np.newaxis,np.newaxis])
+        if states >= 5:
+            weight_4_stack = tt.nnet.sigmoid(\
+                    array_idx - tau[:,3][...,np.newaxis,np.newaxis])
+
+        # Generate firing rates from lambda and sigmoid weights
+        if states == 2:
+            # 2 states
+            lambda_ = np.multiply(1 - weight_1_stack, 
+                            lambda_latent[taste_label,0][:,:,np.newaxis]) + \
+                    np.multiply(weight_1_stack, 
+                            lambda_latent[taste_label][:,1][:,:,np.newaxis])
+
+        elif states == 3:
+            # 3 states
+            lambda_ = np.multiply(1 - weight_1_stack, 
+                            lambda_latent[taste_label,0][:,:,np.newaxis]) + \
+                    np.multiply(weight_1_stack * (1 - weight_2_stack), 
+                            lambda_latent[taste_label][:,1][:,:,np.newaxis]) + \
+                    np.multiply(weight_2_stack, 
+                                lambda_latent[taste_label,2][:,:,np.newaxis])
+
+        elif states == 4:
+            # 4 states
+            lambda_ = np.multiply(1 - weight_1_stack, 
+                            lambda_latent[taste_label,0][:,:,np.newaxis]) + \
+                    np.multiply(weight_1_stack * (1 - weight_2_stack), 
+                            lambda_latent[taste_label][:,1][:,:,np.newaxis]) + \
+                    np.multiply(weight_2_stack * (1 - weight_3_stack), 
+                            lambda_latent[taste_label][:,2][:,:,np.newaxis]) + \
+                    np.multiply(weight_3_stack, 
+                                lambda_latent[taste_label,3][:,:,np.newaxis])
+
+        elif states == 5:
+            # 5 states
+            lambda_ = np.multiply(1 - weight_1_stack, 
+                            lambda_latent[taste_label,0][:,:,np.newaxis]) + \
+                    np.multiply(weight_1_stack * (1 - weight_2_stack), 
+                            lambda_latent[taste_label][:,1][:,:,np.newaxis]) + \
+                    np.multiply(weight_2_stack * (1 - weight_3_stack), 
+                            lambda_latent[taste_label][:,2][:,:,np.newaxis]) +\
+                    np.multiply(weight_3_stack * (1 - weight_4_stack), 
+                            lambda_latent[taste_label][:,3][:,:,np.newaxis])+ \
+                    np.multiply(weight_4_stack, 
+                            lambda_latent[taste_label,4][:,:,np.newaxis])
+            
+        # Add observations
+        observation = pm.Poisson("obs", lambda_, observed=spike_array_long)
+
+    return model
 
 def single_taste_poisson_biased_tau_priors(spike_array,states):
     pass

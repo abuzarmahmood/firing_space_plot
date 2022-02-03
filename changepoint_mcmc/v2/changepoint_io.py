@@ -40,7 +40,7 @@ class fit_handler():
         # =============== Check for exceptions ===============
         if experiment_name is None:
             raise Exception('Please specify an experiment name')
-        if not (isinstance(taste_num,int) or isinstance(taste_num,str)):
+        if not (isinstance(taste_num,int) or taste_num == 'all'):
             raise Exception('taste_num must be an integer or "all"')
 
         # =============== Save relevant arguments ===============
@@ -118,7 +118,7 @@ class fit_handler():
         """
         if isinstance(self.taste_num,int):
             self.set_preprocessor(changepoint_preprocess.preprocess_single_taste)
-        elif isinstance(self.taste_num,str):
+        elif self.taste_num == 'all':
             self.set_preprocessor(changepoint_preprocess.preprocess_all_taste)
         else:
             raise Exception("Something went wrong")
@@ -138,7 +138,7 @@ class fit_handler():
         """
         if isinstance(self.taste_num,int):
             self.set_model_template(changepoint_model.single_taste_poisson)
-        elif isinstance(self.taste_num,str):
+        elif self.taste_num == 'all':
             self.set_model_template(changepoint_model.all_taste_poisson)
         else:
             raise Exception("Something went wrong")
@@ -167,7 +167,7 @@ class fit_handler():
         full_spike_array = self.ephys_data.return_region_spikes(self.region_name)
         if isinstance(self.taste_num,int):
             self.data = full_spike_array[self.taste_num] 
-        elif isinstance(self.taste_num,str):
+        elif self.taste_num == 'all':
             self.data = full_spike_array 
         print(f'Loading spike trains from {self.database_handler.data_basename}, '
                 f'dig_in {self.taste_num}')
@@ -245,7 +245,7 @@ class fit_handler():
 
         self.database_handler.write_to_database()
 
-        print('Saving inference output to '
+        print('Saving inference output to : \n'
                 f'{self.database_handler.model_save_dir}')
         
 class database_handler():
