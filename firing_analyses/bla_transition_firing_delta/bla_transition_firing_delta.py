@@ -132,6 +132,93 @@ mpl.rc('axes', titlesize=13, labelsize = 13)
 ########################################
 ## Single neurons analysis
 ########################################
+
+## Compare magnitude of transition strength across conditions
+# Convert all_diffs to dataframe for convenience
+############################################################
+
+frame_list = []
+for session_num, session in tqdm(enumerate(all_diffs)):
+    for shuffle_type, shuffle_values in session.items():
+        this_inds = np.array(list(np.ndindex(shuffle_values.shape)))
+        this_frame = pd.DataFrame(dict(
+            session_num = session_num,
+            shuffle_type = shuffle_type,
+            taste_num = this_inds[:,0],
+            transition_num = this_inds[:,1],
+            nrn_num = this_inds[:,2],
+            diff_mag = shuffle_values.flatten()
+            ))
+        frame_list.append(this_frame)
+
+diff_frame = pd.concat(frame_list)
+diff_frame = diff_frame.groupby(['session_num','shuffle_type','nrn_num'])\
+        .mean().reset_index()
+
+# Compare zscored values for session x neuron
+#grouped_frame = list(diff_frame.groupby(['session_num','taste_num',
+#                                    'transition_num','nrn_num']))
+grouped_frame = list(diff_frame.groupby(['session_num','nrn_num']))
+for keys, frame in grouped_frame:
+    wanted_val = frame[frame['shuffle_type'] == 'None']['diff_mag'].values
+    frame['norm_mag'] = frame['diff_mag']/wanted_val
+    #frame['zscore_mag'] = zscore(frame['diff_mag']) 
+diff_frame = pd.concat([x[1] for x in grouped_frame])
+diff_frame['fold_change'] = diff_frame['norm_mag'] - 1
+
+hue_order = ['None','trial_shuffled','spike_shuffled']
+wanted_xlabels = ['None','Trial Shuffled','Spike Shuffled']
+sns.stripplot(data = diff_frame,
+        #x = 'shuffle_type', y = 'fold_change',
+        x = 'shuffle_type', y = 'norm_mag',
+        edgecolor = 'black', linewidth = 1, alpha = 0.5,
+        order = hue_order
+        )
+sns.boxplot(data = diff_frame,
+        #x = 'shuffle_type', y = 'fold_change', showfliers = False,
+        x = 'shuffle_type', y = 'norm_mag', showfliers = False,
+        order = hue_order)
+fig = plt.gcf()
+fig.savefig(os.path.join(plot_dir, 'single_nrn_comparison_box'))
+plt.close(fig)
+#plt.show()
+
+out = sns.displot(data = diff_frame.reset_index(drop=True), x = 'norm_mag',
+        row = 'shuffle_type', facet_kws=dict(sharey=False),
+        hue = 'shuffle_type', kde = True)
+for this_ax in out.axes.flatten()[:2]:
+    x,y = this_ax.lines[0].get_data()
+    mode_ind = np.argmax(y)
+    this_ax.set_title(f'Mode : {np.round(x[mode_ind],3)}')
+    this_ax.set_ylim([0.1, 80])
+    this_ax.set_xlim([0, 2])
+plt.suptitle('Single Neuron comparison')
+plt.subplots_adjust(top = 0.9)
+fig = plt.gcf()
+fig.savefig(os.path.join(plot_dir, 'single_nrn_comparison_hist'))
+plt.close(fig)
+#plt.show()
+
+out = sns.displot(data = diff_frame.reset_index(drop=True), x = 'norm_mag',
+        row = 'shuffle_type', facet_kws=dict(sharey=False),
+        hue = 'shuffle_type', kde = True)
+for this_ax in out.axes.flatten()[:2]:
+    x,y = this_ax.lines[0].get_data()
+    mode_ind = np.argmax(y)
+    #this_ax.axvline(mode_ind, color = 'red', linestyle = '--', linewidth = 2, zorder = 2)
+    this_ax.set_title(f'Mode : {np.round(x[mode_ind],3)}')
+    this_ax.set_yscale('log')
+    this_ax.set_xlim([0,2])
+    this_ax.set_ylim([0.1, 80])
+plt.suptitle('Single Neuron comparison Log')
+plt.subplots_adjust(top = 0.9)
+fig = plt.gcf()
+fig.savefig(os.path.join(plot_dir, 'single_nrn_comparison_hist_log'))
+plt.close(fig)
+#plt.show()
+
+## Compare number of transitions which were sharper
+############################################################
 session_list = []
 for session in tqdm(all_diffs):
     #session = all_diffs[0]
@@ -198,6 +285,68 @@ plt.close(fig)
 ########################################
 ## Population analysis
 ########################################
+
+## Compare magnitude of transition strength across conditions
+# Convert all_diffs to dataframe for convenience
+############################################################
+
+# Normalize single neurons across conditions 
+pop_grouped_frame = list(diff_frame.groupby(['session_num','nrn_num']))
+
+for keys, frame in pop_grouped_frame:
+    frame['zscore_mag'] = zscore(frame['diff_mag']) 
+
+pop_diff_frame = pd.concat([x[1] for x in pop_grouped_frame])
+
+# Calculate population vector magnitude
+pop_mag_frame = pop_diff_frame.groupby(
+        ['session_num','shuffle_type','taste_num','transition_num'])\
+                .agg(np.linalg.norm).reset_index()
+pop_mag_frame.drop(columns = 'norm_mag', inplace=True)
+
+# Average for populations
+pop_mag_frame = pop_mag_frame.\
+        groupby(['session_num','shuffle_type']).\
+        mean().reset_index()
+
+# Normalize population to None condition
+#grouped_frame = list(pop_mag_frame.groupby(['session_num','taste_num',
+#                                    'transition_num']))
+grouped_frame = list(pop_mag_frame.groupby(['session_num']))
+
+for keys, frame in grouped_frame:
+    wanted_val = frame[frame['shuffle_type'] == 'None']['zscore_mag'].values
+    frame['pop_zscore_mag'] = frame['zscore_mag']/wanted_val
+
+fin_pop_frame = pd.concat([x[1] for x in grouped_frame])
+
+out = sns.displot(data = fin_pop_frame, x = 'pop_zscore_mag',
+        row = 'shuffle_type', facet_kws=dict(sharey=False),
+        hue = 'shuffle_type', kde = True, bins = 20)
+for this_ax in out.axes.flatten()[1:]:
+    x,y = this_ax.lines[0].get_data()
+    mode_ind = np.argmax(y)
+    this_ax.set_title(f'Mode : {np.round(x[mode_ind],3)}')
+    #this_ax.set_ylim([0.1, 15])
+    #this_ax.set_xlim([0, 2])
+plt.suptitle('Population comparison')
+plt.subplots_adjust(top = 0.9)
+fig = plt.gcf()
+fig.savefig(os.path.join(plot_dir, 'population_comparison_hists'))
+plt.close(fig)
+#plt.show()
+
+sns.swarmplot(data = fin_pop_frame, x = 'shuffle_type', y = 'pop_zscore_mag',
+        edgecolor = 'black', linewidth = 1, order = hue_order)
+sns.boxplot(data = fin_pop_frame, x = 'shuffle_type', y = 'pop_zscore_mag', order = hue_order)
+fig = plt.gcf()
+fig.savefig(os.path.join(plot_dir, 'population_comparison_swarm.png'))
+plt.close(fig)
+#plt.show()
+
+
+## Compare number of transitions which were sharper
+############################################################
 pop_session_list = []
 for session in tqdm(all_diffs):
     #session = all_diffs[0]
