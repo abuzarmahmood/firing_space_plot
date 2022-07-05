@@ -305,7 +305,7 @@ for num, this_diff in enumerate(single_diff_stack):
                 )
             )
     single_diff_frame_list.append(this_frame)
-single_fin_diff_frame = pd.concat(diff_frame_list).reset_index(drop=True)
+single_fin_diff_frame = pd.concat(single_diff_frame_list).reset_index(drop=True)
 
 group_list = list(single_fin_diff_frame.groupby(
     ['session','tastes','transition','neuron']))
@@ -313,8 +313,8 @@ single_max_cond_list = []
 for num, this_group in group_list: 
     max_ind = np.argmax(this_group.diff_val)
     max_cond = this_group.iloc[max_ind:max_ind+1]
-    max_cond_list.append(max_cond)
-single_max_cond_frame = pd.concat(max_cond_list)\
+    single_max_cond_list.append(max_cond)
+single_max_cond_frame = pd.concat(single_max_cond_list)\
         .reset_index(drop=True).drop_duplicates()
 single_max_cond_count = single_max_cond_frame.groupby(
         ['session','neuron','cond'])['tastes'].count().\
@@ -665,8 +665,8 @@ pop_max_cond_list = []
 for num, this_group in group_list: 
     max_ind = np.argmax(this_group.diff_val)
     max_cond = this_group.iloc[max_ind:max_ind+1]
-    max_cond_list.append(max_cond)
-pop_max_cond_frame = pd.concat(max_cond_list)\
+    pop_max_cond_list.append(max_cond)
+pop_max_cond_frame = pd.concat(pop_max_cond_list)\
         .reset_index(drop=True).drop_duplicates()
 pop_max_cond_count = pop_max_cond_frame.groupby(
         ['session','cond'])['tastes'].count().\
@@ -732,22 +732,29 @@ comparison_map = dict(
 agg_frame['Comparison Level'] = \
         [comparison_map[x] for x in agg_frame['Comparison Level']]
 
-fig,ax = plt.subplots(figsize = (5,5))
+wanted_colors = [sns.color_palette()[0]]
+wanted_colors.append(sns.color_palette()[2])
+wanted_colors.append(sns.color_palette()[1])
+fig,ax = plt.subplots(figsize = (5,3))
 sns.barplot(
         data = agg_frame,
         x = 'Comparison Level',
         hue = 'Shuffle Type',
+        palette = wanted_colors,
         y = 'Fraction',
         alpha = 0.7,
         capsize = 0.1,
+        linewidth = 2,
+        edgecolor = '.2',
         ax=ax
         )
 fig = plt.gcf()
 plt.title('Fraction of Dataset with fastest transition')
+plt.ylim([0,0.7])
 plt.legend('')
-fig.savefig(os.path.join(plot_dir,'agg_best_frac.png'))
-plt.close(fig)
-#plt.show()
+#fig.savefig(os.path.join(plot_dir,'agg_best_frac.svg'))
+#plt.close(fig)
+plt.show()
 
 ############################################################
 bin_fracs = [x.groupby('binned_values')['values'].count() / len(x) \
