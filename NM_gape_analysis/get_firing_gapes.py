@@ -32,6 +32,7 @@ from scipy.stats import zscore
 import tensortools as tt
 from scipy.spatial.distance import pdist, squareform
 from sklearn.decomposition import PCA
+import xarray as xr
 
 sys.path.append('/media/bigdata/firing_space_plot/ephys_data')
 from ephys_data import ephys_data
@@ -110,6 +111,7 @@ real_time = np.arange(-2000, 5000)
 cut_real_time = real_time[time_lims[0]:time_lims[1]]
 stim_t = 2000 - time_lims[0]
 taste_inds = np.array([0,3]) # 0:Sucrose, 3:quinine
+taste_names = ['suc','quin']
 quin_ind = 3
 wanted_gape_array = [x[taste_inds] for x in wanted_gape_array]
 wanted_gape_array = [x[...,time_lims[0]:time_lims[1]] for x in wanted_gape_array]
@@ -169,10 +171,67 @@ fin_bin_gape = bin_gape_frame[bin_gape_frame['session'].isin(fin_bool_inds)]
 #plt.show()
 
 ########################################
+## Subtract AVERAGE sucrose response as non-specific EMG response 
+########################################
+taste_frame = fin_gape_frame.copy()
+
+corr_frame = taste_frame[taste_frame.real_time > 0].groupby(['session','taste']).mean()
+x = np.linspace(corr_frame.vals.min(), corr_frame.vals.max())
+plt.scatter(*[x[1].vals for x in list(corr_frame.groupby('taste'))])
+plt.xlabel('Average sucrose response')
+plt.ylabel('Average quinine response')
+plt.plot(x,x, color = 'red', alpha = 0.3, linestyle = '--')
+fig = plt.gcf()
+fig.suptitle('Correlated Taste Responses')
+fig.savefig(os.path.join(plot_dir, 'correlated_taste_responses.png'))
+plt.show()
+
+mean_taste_frame = taste_frame.groupby(['session','taste','time']).mean()
+mean_taste_frame = mean_taste_frame.drop(columns = 'trials')
+mean_taste_array = mean_taste_frame.to_xarray()['vals']
+mean_taste_array = mean_taste_array[fin_bool].reset_index('session')
+
+taste_diff_array = mean_taste_array.diff(dim = 'taste').squeeze()
+
+g = mean_taste_array.plot(
+        x = 'time',
+        y = 'session',
+        col = 'taste',
+        aspect = 2,
+        size = 3
+        );
+for num, ax in enumerate(g.axes[0]):
+    ax.axvline(stim_t, linestyle = '--', color = 'red', linewidth = 2,
+            label = 'Stim Delivery')
+    ax.set_title(taste_names[num])
+    #ax.legend()
+fig = plt.gcf()
+fig.suptitle('Average EMG Resopnses')
+#plt.subplots_adjust(top = 0.8)
+fig.savefig(os.path.join(plot_dir, 'average_emg_responses.png'))
+#plt.show()
+
+taste_diff_array.plot(cmap = 'viridis', aspect = 2, size = 3);
+ax = plt.gca()
+ax.axvline(stim_t, linestyle = '--', color = 'k')
+fig = plt.gcf()
+fig.suptitle('Quin - Suc Responses')
+fig.savefig(os.path.join(plot_dir, 'average_subtracted_emg_responses.png'))
+#plt.show()
+
+########################################
 ## Clustering in gape responses to quinine 
 ########################################
 quin_gape_array = [x[1] for x in wanted_gape_array]
 quin_gape_array = [quin_gape_array[i] for i in fin_bool_inds]
+
+# Subtract mean sucrose response from respective quinine responses
+suc_gape_array = [x[0] for x in wanted_gape_array]
+suc_gape_array = [suc_gape_array[i] for i in fin_bool_inds]
+mean_suc_gape = np.stack([np.mean(x,axis=0) for x in suc_gape_array])
+quin_gape_array = [x-y for x,y in zip(quin_gape_array, mean_suc_gape)]
+
+#vz.imshow(mean_suc_gape);plt.colorbar();plt.show()
 
 gape_t_lims = [750,2500]
 gape_t_lims = [x+time_lims[0] for x in gape_t_lims]
@@ -188,10 +247,23 @@ sort_inds = [np.argsort(x) for x in mean_gape_val]
 #    this_ax.hist(this_dat, bins = 15) 
 #plt.show()
 
-#fig,ax = vz.gen_square_subplots(len(quin_gape_array))
-#for this_dat, this_ax, this_inds in zip(process_gape_array, ax.flatten(), sort_inds):
-#    this_ax.imshow(this_dat[this_inds], 
-#            aspect='auto', interpolation = 'nearest', cmap = 'viridis')
+min_val = np.min([x.min(axis=None) for x in quin_gape_array])
+max_val = np.max([x.max(axis=None) for x in quin_gape_array])
+
+fig,ax = vz.gen_square_subplots(len(quin_gape_array))
+for this_dat, this_ax, this_inds in zip(quin_gape_array, ax.flatten(), sort_inds):
+    this_ax.imshow(this_dat[this_inds], 
+            aspect='auto', interpolation = 'nearest', cmap = 'viridis',
+            vmin = min_val, vmax = max_val)
+fig.savefig(os.path.join(plot_dir, 'sucrose_sub_quin_emg.png'))
+#plt.show()
+
+fig,ax = vz.gen_square_subplots(len(quin_gape_array))
+for this_dat, this_ax, this_inds in zip(process_gape_array, ax.flatten(), sort_inds):
+    this_ax.imshow(this_dat[this_inds], 
+            aspect='auto', interpolation = 'nearest', cmap = 'viridis',
+            vmin = min_val, vmax = max_val)
+fig.savefig(os.path.join(plot_dir, 'sucrose_sub_quin_emg_cut.png'))
 #plt.show()
 
 # Simply dividing into equally sized groups doesn't make sense
@@ -277,7 +349,8 @@ for num, this_dat in enumerate(wanted_quin_array):
     #this_ax.set_title(fin_mean_clustered_vals[num])
     this_ax.axvline(0, color = 'red', linestyle = '--')
 plt.suptitle(f'Plot time = ({cut_real_time.min()}, {cut_real_time.max()})')
-#plt.show()
+plt.show()
+
 fig.savefig(os.path.join(plot_dir, 'sorted_whole_emg_reponses.png'))
 plt.close(fig)
 
@@ -296,7 +369,8 @@ for num, this_dat in enumerate(process_gape_array):
         this_ax.axhline(x, color = 'red', linewidth = 2)
     #this_ax.set_title(fin_mean_clustered_vals[num])
 plt.suptitle(f'Plot time = {np.array(gape_t_lims) - stim_t}')
-#plt.show()
+plt.show()
+
 fig.savefig(os.path.join(plot_dir, 'sorted_cut_emg_reponses.png'))
 plt.close(fig)
 
