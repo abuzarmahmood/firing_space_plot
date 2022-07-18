@@ -32,6 +32,7 @@ import matplotlib.patches as mpatches
 from  matplotlib import colors
 import itertools as it
 from scipy.stats import mannwhitneyu as mwu
+from scipy import stats
 import pymc3 as pm
 import xarray as xr
 
@@ -207,43 +208,43 @@ plt.tight_layout()
 #plt.close(fig)
 plt.show()
 
-#############################################################
-#############################################################
-out = sns.displot(data = diff_frame.reset_index(drop=True), x = 'norm_mag',
-        row = 'shuffle_type', facet_kws=dict(sharey=False),
-        hue = 'shuffle_type', kde = True)
-for this_ax in out.axes.flatten()[:2]:
-    x,y = this_ax.lines[0].get_data()
-    mode_ind = np.argmax(y)
-    this_ax.set_title(f'Mode : {np.round(x[mode_ind],3)}')
-    this_ax.set_ylim([0.1, 80])
-    this_ax.set_xlim([0, 2])
-plt.suptitle('Single Neuron comparison')
-plt.subplots_adjust(top = 0.9)
-fig = plt.gcf()
-fig.savefig(os.path.join(plot_dir, 'single_nrn_comparison_hist'))
-plt.close(fig)
-#plt.show()
-
-#############################################################
-#############################################################
-out = sns.displot(data = diff_frame.reset_index(drop=True), x = 'norm_mag',
-        row = 'shuffle_type', facet_kws=dict(sharey=False),
-        hue = 'shuffle_type', kde = True)
-for this_ax in out.axes.flatten()[:2]:
-    x,y = this_ax.lines[0].get_data()
-    mode_ind = np.argmax(y)
-    #this_ax.axvline(mode_ind, color = 'red', linestyle = '--', linewidth = 2, zorder = 2)
-    this_ax.set_title(f'Mode : {np.round(x[mode_ind],3)}')
-    this_ax.set_yscale('log')
-    this_ax.set_xlim([0,2])
-    this_ax.set_ylim([0.1, 80])
-plt.suptitle('Single Neuron comparison Log')
-plt.subplots_adjust(top = 0.9)
-fig = plt.gcf()
-fig.savefig(os.path.join(plot_dir, 'single_nrn_comparison_hist_log'))
-plt.close(fig)
-#plt.show()
+###############################################################
+##############################################################
+#out = sns.displot(data = diff_frame.reset_index(drop=True), x = 'norm_mag',
+#        row = 'shuffle_type', facet_kws=dict(sharey=False),
+#        hue = 'shuffle_type', kde = True)
+#for this_ax in out.axes.flatten()[:2]:
+#    x,y = this_ax.lines[0].get_data()
+#    mode_ind = np.argmax(y)
+#    this_ax.set_title(f'Mode : {np.round(x[mode_ind],3)}')
+#    this_ax.set_ylim([0.1, 80])
+#    this_ax.set_xlim([0, 2])
+#plt.suptitle('Single Neuron comparison')
+#plt.subplots_adjust(top = 0.9)
+#fig = plt.gcf()
+#fig.savefig(os.path.join(plot_dir, 'single_nrn_comparison_hist'))
+#plt.close(fig)
+##plt.show()
+#
+##############################################################
+##############################################################
+#out = sns.displot(data = diff_frame.reset_index(drop=True), x = 'norm_mag',
+#        row = 'shuffle_type', facet_kws=dict(sharey=False),
+#        hue = 'shuffle_type', kde = True)
+#for this_ax in out.axes.flatten()[:2]:
+#    x,y = this_ax.lines[0].get_data()
+#    mode_ind = np.argmax(y)
+#    #this_ax.axvline(mode_ind, color = 'red', linestyle = '--', linewidth = 2, zorder = 2)
+#    this_ax.set_title(f'Mode : {np.round(x[mode_ind],3)}')
+#    this_ax.set_yscale('log')
+#    this_ax.set_xlim([0,2])
+#    this_ax.set_ylim([0.1, 80])
+#plt.suptitle('Single Neuron comparison Log')
+#plt.subplots_adjust(top = 0.9)
+#fig = plt.gcf()
+#fig.savefig(os.path.join(plot_dir, 'single_nrn_comparison_hist_log'))
+#plt.close(fig)
+##plt.show()
 
 ## Compare number of transitions which were sharper
 ############################################################
@@ -306,6 +307,14 @@ for num, this_diff in enumerate(single_diff_stack):
             )
     single_diff_frame_list.append(this_frame)
 single_fin_diff_frame = pd.concat(single_diff_frame_list).reset_index(drop=True)
+
+#g = sns.boxplot(
+#        data = single_fin_diff_frame,
+#        x = 'cond',
+#        y = 'diff_val'
+#        )
+#plt.show()
+
 
 group_list = list(single_fin_diff_frame.groupby(
     ['session','tastes','transition','neuron']))
@@ -431,6 +440,7 @@ for keys, frame in grouped_frame:
     frame['pop_zscore_mag'] = frame['zscore_mag']/wanted_val
 
 fin_pop_frame = pd.concat([x[1] for x in grouped_frame])
+[np.argmax(x.values) for a,x in fin_pop_frame.groupby('session_num')['pop_zscore_mag']]
 
 #out = sns.displot(data = fin_pop_frame, x = 'pop_zscore_mag',
 #        row = 'shuffle_type', facet_kws=dict(sharey=False),
@@ -522,8 +532,12 @@ fin_pop_data.rename(columns = dict(pop_zscore_mag = 'val'), inplace=True)
 ## Significance tests 
 single_dat = [1-x[1].val for x in list(fin_single_data.groupby('shuffle_type'))]
 single_tests = [stats.wilcoxon(x) for x in single_dat]
+with open(os.path.join(plot_dir, 'single_nrn_delta.txt'), 'w') as this_file:
+    this_file.writelines([str(x)+'\n' for x in single_tests])
 pop_dat = [1-x[1].val for x in list(fin_pop_data.groupby('shuffle_type'))]
 pop_tests = [stats.wilcoxon(x) for x in pop_dat]
+with open(os.path.join(plot_dir, 'pop_delta.txt'), 'w') as this_file:
+    this_file.writelines([str(x)+'\n' for x in pop_tests])
 ############################################################
 
 
@@ -623,7 +637,8 @@ population_frame['binned_values'] = \
 # Plot fraction of transitions faster for actual data vs shuffle
 cond_order = ['None', 'trial_shuffled','spike_shuffled']
 # Stack diffs and calc arg_max for each neuron
-# diff_stack : condition x taste x transition x neuron
+# all_diffs : dict : {cond} x Taste x Changepoints x Neurons
+# diff_stack : neuron x transition x taste x condition 
 pop_diff_stack = [np.stack(
             [
                 this_diff[this_cond] for this_cond in cond_order
@@ -640,6 +655,7 @@ pop_diff_stack = [
         for session in pop_diff_stack
         ]
 
+# transition x taste x condition
 pop_diff_mag_stack = [
         np.linalg.norm(x, axis=0) for x in pop_diff_stack
         ]
@@ -650,14 +666,21 @@ for num, this_diff in enumerate(pop_diff_mag_stack):
     this_frame = pd.DataFrame(
             dict(
                 session = num,
-                cond = inds[:,0],
+                cond = inds[:,2],
                 tastes = inds[:,1],
-                transition = inds[:,2],
+                transition = inds[:,0],
                 diff_val = this_diff.flatten()
                 )
             )
     pop_diff_frame_list.append(this_frame)
 pop_diff_frame = pd.concat(pop_diff_frame_list).reset_index(drop=True)
+
+#g = sns.boxplot(
+#        data = pop_diff_frame,
+#        x = 'cond',
+#        y = 'diff_val'
+#        )
+#plt.show()
 
 group_list = list(pop_diff_frame.groupby(
     ['session','tastes','transition']))
@@ -752,9 +775,9 @@ fig = plt.gcf()
 plt.title('Fraction of Dataset with fastest transition')
 plt.ylim([0,0.7])
 plt.legend('')
-#fig.savefig(os.path.join(plot_dir,'agg_best_frac.svg'))
-#plt.close(fig)
-plt.show()
+fig.savefig(os.path.join(plot_dir,'agg_best_frac.svg'))
+plt.close(fig)
+#plt.show()
 
 ############################################################
 bin_fracs = [x.groupby('binned_values')['values'].count() / len(x) \
