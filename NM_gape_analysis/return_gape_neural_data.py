@@ -21,18 +21,11 @@ import sys
 import numpy as np
 from tqdm import tqdm
 import tables
-import itertools as it
 import pylab as plt
 from glob import glob
 import pandas as pd
-import seaborn as sns
-import re
 import pingouin as pg
 from scipy.stats import zscore
-import tensortools as tt
-from scipy.spatial.distance import pdist, squareform
-from sklearn.decomposition import PCA
-import xarray as xr
 from sklearn.cluster import KMeans
 from collections import Counter
 
@@ -76,7 +69,7 @@ laser_dl_path = '/ancillary_analysis/laser_combination_d_l'
 # condition_num x (duration + onset) 
 
 # Temporal parameters
-time_lims = [1000,5000]
+time_lims = [0,7000]
 real_time = np.arange(-2000, 5000)
 cut_real_time = real_time[time_lims[0]:time_lims[1]]
 stim_t = 2000 - time_lims[0]
@@ -114,7 +107,7 @@ def _return_gape_data():
     ############################################################
 
     off_gape_array = [x[taste_inds] for x in off_gape_array]
-    off_gape_array = [x[...,time_lims[0]:time_lims[1]] for x in off_gape_array]
+    #off_gape_array = [x[...,time_lims[0]:time_lims[1]] for x in off_gape_array]
 
     #############################################################
     ## Remove sessions where
@@ -133,9 +126,16 @@ def _return_gape_data():
     fin_gape_frame = pd.concat(gape_frames)
     fin_gape_frame['real_time'] = cut_real_time[fin_gape_frame['time']]
 
+    # Only include data in 2000ms post-stim
+    fin_gape_frame = fin_gape_frame.loc[fin_gape_frame.real_time.\
+            isin(np.arange(2000))]
+
     # Downsample for ANOVA
     binsize = 500
-    bincount = int(np.diff(time_lims)[0]/binsize)
+    #bincount = int(np.diff(time_lims)[0]/binsize)
+    bincount = int(
+            (fin_gape_frame.time.max() + \
+                    1 - fin_gape_frame.time.min())/binsize)
     fin_gape_frame['time_bins'] = pd.cut(fin_gape_frame['time'], bincount, 
            labels = np.arange(bincount))
     fin_gape_frame['vals'] += np.random.random(fin_gape_frame['vals'].shape)*0.01
@@ -161,8 +161,8 @@ def _return_gape_data():
     ########################################
 
     quin_gape_array = [x[1] for x in off_gape_array]
-    gape_t_lims = [750,2500]
-    gape_t_lims = [x+time_lims[0] for x in gape_t_lims]
+    gape_t_lims = [2750,4500]
+    #gape_t_lims = [x+stim_t for x in gape_t_lims]
 
     cut_gape_array = [x[...,gape_t_lims[0]:gape_t_lims[1]] for x in quin_gape_array]
     mean_gape_val = [x.mean(axis=-1) for x in cut_gape_array]
@@ -257,9 +257,11 @@ def return_neural_data(kern_width = 250):
         else:
             off_spikes = dat.spikes
         off_firing = time_box_conv(off_spikes, kern_width)
+        firing_time_bins = time_box_conv(
+                np.arange(off_spikes.shape[-1]), kern_width)
         off_spikes_list.append(off_spikes)
         off_firing_list.append(off_firing)
-    return off_spikes_list, off_firing_list
+    return off_spikes_list, off_firing_list, firing_time_bins
 ## Relevant variables
 #1) quin_off_spikes
 #2) quin_firing
