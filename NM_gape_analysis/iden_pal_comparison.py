@@ -254,6 +254,55 @@ for epoch_num in range(len(epoch_lims)):
     fig.savefig(os.path.join(plot_dir, f'quin_suc_pca_{epoch_names[epoch_num]}.png'))
     plt.close(fig)
 
+#############################################################
+## Mean (Isotropic) variance of clusters
+from sklearn.preprocessing import StandardScaler
+
+taste_order = ['low_quin','high_quin','total_quin','suc']
+var_list = [[],[]] 
+for epoch_num in range(len(epoch_lims)):
+    for session_num in range(len(quin_epochs)):
+        quin_dat = quin_epochs[session_num][epoch_num]
+        this_cluster_div = cluster_div[session_num]
+        cluster_quin_dat = [quin_dat[:this_cluster_div], quin_dat[this_cluster_div:]]
+        suc_dat = suc_epochs[session_num][epoch_num]
+        all_dat = [*cluster_quin_dat, quin_dat, suc_dat]
+        concat_dat = np.concatenate(all_dat, axis=0)
+        #zscore_concat_dat = zscore(concat_dat, axis=0)
+        zscore_obj = StandardScaler().fit(concat_dat)
+        zscore_all_dat = [zscore_obj.transform(x) for x in all_dat]
+        nrn_vars = [np.var(x,axis=0) for x in zscore_all_dat]
+        mean_vars = [np.mean(x) for x in nrn_vars]
+        var_list[epoch_num].append(mean_vars)
+var_array = np.stack(var_list)
+
+inds = np.array(list(np.ndindex(var_array.shape)))
+var_frame = pd.DataFrame(
+        dict(
+            epoch = inds[:,0],
+            session = inds[:,1],
+            group = inds[:,2],
+            variance = var_array.flatten()
+            )
+        )
+
+var_frame['taste'] = [taste_order[i] for i in var_frame['group']]
+#var_frame['session'] = np.arange(len(var_frame))
+#var_frame = var_frame.melt(id_vars = 'session', value_vars = taste_order,
+#        var_name = 'taste', value_name = 'variance')
+
+g = sns.catplot(
+        data = var_frame,
+        x = 'taste',
+        y = 'variance',
+        col = 'epoch',
+        kind = 'box'
+        )
+fig = plt.gcf()
+fig.savefig(os.path.join(plot_dir, f'quin_suc_variance.png'))
+plt.close(fig)
+#plt.show()
+
 ############################################################
 # Calculate distances b/w all groups
 from scipy.spatial.distance import pdist
@@ -351,6 +400,7 @@ fig = plt.gcf()
 fig.savefig(os.path.join(plot_dir, f'quin_suc_mean_mean_dists_bar.png'))
 plt.close(fig)
 #plt.show()
+
 
 #############################################################
 ## Replot emg activity to make sure output is correct
