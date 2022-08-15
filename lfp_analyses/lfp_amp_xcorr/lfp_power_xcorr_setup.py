@@ -122,7 +122,7 @@ def gen_df_bin(array, label):
 #                                               
 ################################################### 
 
-#data_dir = '/media/bigdata/Abuzar_Data/AM12/AM12_4Tastes_191106_085215/'
+#data_dir = '/media/bigdata/Abuzar_Data/bla_gc/AM11/AM11_4Tastes_191030_114043_copy'
 data_dir = sys.argv[1]
 dat = ephys_data(data_dir)
 dat.get_lfp_electrodes()
@@ -146,11 +146,10 @@ dat.get_lfp_electrodes()
 
 # Perform rolling window on WHOLE trial so that edges can
 # be choppoed away later
-window_size = 500
-recalculate_transform = False
+recalculate_transform = True
 save_path = '/stft/analyses/amplitude_xcorr'
 # This will need to be parallelilzed
-with tables.open_file(dat.hdf5_name,'r+') as hf5:
+with tables.open_file(dat.hdf5_path,'r+') as hf5:
     #============================== 
     if save_path not in hf5:
         hf5.create_group(os.path.dirname(save_path),os.path.basename(save_path),
@@ -172,13 +171,16 @@ with tables.open_file(dat.hdf5_name,'r+') as hf5:
 # which are usually quite large
 if perform_transormation_bool:
     dat.get_stft()
+    window_size_ms = 500
+    window_size = int(500/(np.mean(np.diff(dat.time_vec))*1000))
 
     # Only pull STFT if transformation needs to be calculated
     amplitude_array = dat.amplitude_array.swapaxes(0,1)
     transformed_array = np.array(\
             parallelize(lambda x: rolling_zscore(x, window_size), amplitude_array))
+    #transformed_array = amplitude_array
 
-    with tables.open_file(dat.hdf5_name,'r+') as hf5:
+    with tables.open_file(dat.hdf5_path,'r+') as hf5:
         #============================== 
         # Will only remove if array already there
         remove_node('/stft/analyses/amplitude_xcorr/transformed_amplitude_array',hf5)
@@ -196,11 +198,14 @@ if perform_transormation_bool:
         del amplitude_array
 
 # Chop to relevant time period
-baseline_lims = [0,2000]
+baseline_time_lims = [0,2000]
+t_vec = dat.time_vec.copy()*1000
+baseline_lims = [np.argmin(np.abs(t_vec-x)) for x in baseline_time_lims] 
 base_transformed_array = transformed_array[...,baseline_lims[0]:baseline_lims[1]]
 
 # Chop to relevant time period
-time_lims = [2000,4000]
+time_time_lims = [2000,4000]
+time_lims = [np.argmin(np.abs(t_vec-x)) for x in time_time_lims] 
 transformed_array = transformed_array[...,time_lims[0]:time_lims[1]]
 
 # We can use ALL trials for rolling zscored power rather than
@@ -225,7 +230,7 @@ base_split_amplitude_list = \
 recalculate_xcorr = True
 # If not there, or recalculate flag True, then calculate
 
-with tables.open_file(dat.hdf5_name,'r+') as hf5:
+with tables.open_file(dat.hdf5_path,'r+') as hf5:
     if os.path.join(save_path, 'inter_region_frame') not in hf5:
         present_bool = False 
     else:
@@ -262,25 +267,25 @@ if (not present_bool) or recalculate_xcorr:
                         temp_split_amp_list[1][ind[1]]) \
                     for ind in pair_inds])
 
-    ########################################
-    ## Binned Inter-Region
-    ########################################
-    window_size = 250
-    splits = np.abs(np.diff(time_lims)[0])//window_size
-    binned_amp = [np.split(x,splits,axis=-1) for x in temp_split_amp_list]
+    #########################################
+    ### Binned Inter-Region
+    #########################################
+    #window_size = 250
+    #splits = np.abs(np.diff(time_lims)[0])//window_size
+    #binned_amp = [np.split(x,splits,axis=-1) for x in temp_split_amp_list]
 
-    binned_inter_region_xcorr = np.array([[\
-            norm_zero_lag_xcorr(this_bin[0][ind[0]],
-                                this_bin[1][ind[1]]) \
-                        for ind in pair_inds]\
-                        for this_bin in zip(*binned_amp)])
-    shuffled_binned_inter_region_xcorr = np.array([[\
-            norm_zero_lag_xcorr(this_bin[0][ind[0]]\
-                            [:,np.random.permutation(\
-                                        np.arange(temp_split_amp_list[0].shape[2]))],
-                                this_bin[1][ind[1]]) \
-                        for ind in pair_inds]\
-                        for this_bin in zip(*binned_amp)])
+    #binned_inter_region_xcorr = np.array([[\
+    #        norm_zero_lag_xcorr(this_bin[0][ind[0]],
+    #                            this_bin[1][ind[1]]) \
+    #                    for ind in pair_inds]\
+    #                    for this_bin in zip(*binned_amp)])
+    #shuffled_binned_inter_region_xcorr = np.array([[\
+    #        norm_zero_lag_xcorr(this_bin[0][ind[0]]\
+    #                        [:,np.random.permutation(\
+    #                                    np.arange(temp_split_amp_list[0].shape[2]))],
+    #                            this_bin[1][ind[1]]) \
+    #                    for ind in pair_inds]\
+    #                    for this_bin in zip(*binned_amp)])
 
 
     ########################################
@@ -303,66 +308,66 @@ if (not present_bool) or recalculate_xcorr:
             for ind in this_pair_list]) \
             for this_pair_list, region in zip(pair_list, split_amplitude_list)]
 
-    ########################################
-    ## Binned Within Region
-    ########################################
-    # I wonder if these would be more readable as for-loops :p
-    # Remake binned_amp so it's not using the region sorted temp_split_amp_list
-    binned_amp = [np.split(x,splits,axis=-1) for x in split_amplitude_list]
-    binned_intra_region_xcorr_list = [ np.array([[\
-            norm_zero_lag_xcorr(this_bin[ind[0]],
-                                this_bin[ind[1]]) \
-                        for ind in this_pair_list]\
-                        for this_bin in this_region]) \
-                        for this_pair_list, this_region in zip(pair_list,binned_amp)]
+    #########################################
+    ### Binned Within Region
+    #########################################
+    ## I wonder if these would be more readable as for-loops :p
+    ## Remake binned_amp so it's not using the region sorted temp_split_amp_list
+    #binned_amp = [np.split(x,splits,axis=-1) for x in split_amplitude_list]
+    #binned_intra_region_xcorr_list = [ np.array([[\
+    #        norm_zero_lag_xcorr(this_bin[ind[0]],
+    #                            this_bin[ind[1]]) \
+    #                    for ind in this_pair_list]\
+    #                    for this_bin in this_region]) \
+    #                    for this_pair_list, this_region in zip(pair_list,binned_amp)]
 
-    shuffled_binned_intra_region_xcorr_list = [np.array([[\
-            norm_zero_lag_xcorr(this_bin[ind[0]]\
-                            [:,np.random.permutation(\
-                                        np.arange(split_amplitude_list[0].shape[2]))],
-                                this_bin[ind[1]]) \
-                        for ind in this_pair_list]\
-                        for this_bin in this_region]) \
-                        for this_pair_list, this_region in zip(pair_list,binned_amp)]
+    #shuffled_binned_intra_region_xcorr_list = [np.array([[\
+    #        norm_zero_lag_xcorr(this_bin[ind[0]]\
+    #                        [:,np.random.permutation(\
+    #                                    np.arange(split_amplitude_list[0].shape[2]))],
+    #                            this_bin[ind[1]]) \
+    #                    for ind in this_pair_list]\
+    #                    for this_bin in this_region]) \
+    #                    for this_pair_list, this_region in zip(pair_list,binned_amp)]
 
-    ########################################
-    ## BASELINE Inter-Region 
-    ########################################
-    # Mean XCorr between all pairs of channels from both regions
+    #########################################
+    ### BASELINE Inter-Region 
+    #########################################
+    ## Mean XCorr between all pairs of channels from both regions
 
-    base_temp_split_amp_list = [base_split_amplitude_list[x] for x in wanted_order]
+    #base_temp_split_amp_list = [base_split_amplitude_list[x] for x in wanted_order]
 
-    base_inter_region_xcorr = np.array([\
-            norm_zero_lag_xcorr(base_temp_split_amp_list[0][ind[0]],
-                                base_temp_split_amp_list[1][ind[1]]) \
-                        for ind in pair_inds])
+    #base_inter_region_xcorr = np.array([\
+    #        norm_zero_lag_xcorr(base_temp_split_amp_list[0][ind[0]],
+    #                            base_temp_split_amp_list[1][ind[1]]) \
+    #                    for ind in pair_inds])
 
-    base_shuffled_inter_region_xcorr = np.array([\
-                    norm_zero_lag_xcorr(\
-                        base_temp_split_amp_list[0][ind[0]]\
-                            [:,np.random.permutation(\
-                                        np.arange(base_temp_split_amp_list[0].shape[2]))],
-                        base_temp_split_amp_list[1][ind[1]]) \
-                    for ind in pair_inds])
+    #base_shuffled_inter_region_xcorr = np.array([\
+    #                norm_zero_lag_xcorr(\
+    #                    base_temp_split_amp_list[0][ind[0]]\
+    #                        [:,np.random.permutation(\
+    #                                    np.arange(base_temp_split_amp_list[0].shape[2]))],
+    #                    base_temp_split_amp_list[1][ind[1]]) \
+    #                for ind in pair_inds])
 
-    ########################################
-    ## BASELINE INTRA(WITHIN)-Region 
-    ########################################
-    # Perform xcorr between all pairs of channels within a region
+    #########################################
+    ### BASELINE INTRA(WITHIN)-Region 
+    #########################################
+    ## Perform xcorr between all pairs of channels within a region
 
-    base_intra_region_xcorr_list = [np.array([\
-            norm_zero_lag_xcorr(region[ind[0]],region[ind[1]]) \
-            for ind in this_pair_list]) \
-            for this_pair_list, region in zip(pair_list, base_split_amplitude_list)]
+    #base_intra_region_xcorr_list = [np.array([\
+    #        norm_zero_lag_xcorr(region[ind[0]],region[ind[1]]) \
+    #        for ind in this_pair_list]) \
+    #        for this_pair_list, region in zip(pair_list, base_split_amplitude_list)]
 
-    base_shuffled_intra_region_xcorr_list = [np.array([\
-            norm_zero_lag_xcorr(\
-                   region[ind[0]]
-                        [:,np.random.permutation(\
-                                    np.arange(base_temp_split_amp_list[0].shape[2]))],
-                    region[ind[1]]) \
-            for ind in this_pair_list]) \
-            for this_pair_list, region in zip(pair_list, base_split_amplitude_list)]
+    #base_shuffled_intra_region_xcorr_list = [np.array([\
+    #        norm_zero_lag_xcorr(\
+    #               region[ind[0]]
+    #                    [:,np.random.permutation(\
+    #                                np.arange(base_temp_split_amp_list[0].shape[2]))],
+    #                region[ind[1]]) \
+    #        for ind in this_pair_list]) \
+    #        for this_pair_list, region in zip(pair_list, base_split_amplitude_list)]
 
     ########################################
     ## Save arrays 
@@ -376,14 +381,14 @@ if (not present_bool) or recalculate_xcorr:
             gen_df(inter_region_xcorr,'inter_region'),
             gen_df(shuffled_inter_region_xcorr,'shuffled_inter_region')])
 
-    base_inter_region_frame = pd.concat([\
-            gen_df(base_inter_region_xcorr,'base_inter_region'),
-            gen_df(base_shuffled_inter_region_xcorr,'base_shuffled_inter_region')])
+    #base_inter_region_frame = pd.concat([\
+    #        gen_df(base_inter_region_xcorr,'base_inter_region'),
+    #        gen_df(base_shuffled_inter_region_xcorr,'base_shuffled_inter_region')])
 
-    binned_inter_region_frame = pd.concat([\
-            gen_df_bin(binned_inter_region_xcorr,'binned_inter_region'),
-            gen_df_bin(shuffled_binned_inter_region_xcorr,
-                            'shuffled_binned_inter_region')])
+    #binned_inter_region_frame = pd.concat([\
+    #        gen_df_bin(binned_inter_region_xcorr,'binned_inter_region'),
+    #        gen_df_bin(shuffled_binned_inter_region_xcorr,
+    #                        'shuffled_binned_inter_region')])
 
     intra_region_frame = pd.concat(
             [gen_df(x,'intra_'+region_name) for x,region_name in \
@@ -391,31 +396,31 @@ if (not present_bool) or recalculate_xcorr:
             [gen_df(x,'shuffled_intra_'+region_name) for x,region_name \
                     in zip(shuffled_intra_region_xcorr_list, dat.region_names)])
 
-    base_intra_region_frame = pd.concat(
-            [gen_df(x,'base_intra_'+region_name) for x,region_name in \
-                    zip(base_intra_region_xcorr_list, dat.region_names)] + \
-            [gen_df(x,'base_shuffled_intra_'+region_name) for x,region_name \
-                    in zip(base_shuffled_intra_region_xcorr_list, dat.region_names)])
+    #base_intra_region_frame = pd.concat(
+    #        [gen_df(x,'base_intra_'+region_name) for x,region_name in \
+    #                zip(base_intra_region_xcorr_list, dat.region_names)] + \
+    #        [gen_df(x,'base_shuffled_intra_'+region_name) for x,region_name \
+    #                in zip(base_shuffled_intra_region_xcorr_list, dat.region_names)])
 
-    binned_intra_region_frame = pd.concat(
-            [gen_df_bin(x,'intra_'+region_name) for x,region_name in \
-                zip(binned_intra_region_xcorr_list, dat.region_names)] + \
-            [gen_df_bin(x,'shuffled_intra_'+region_name) for x,region_name \
-                in zip(shuffled_binned_intra_region_xcorr_list, dat.region_names)])
+    #binned_intra_region_frame = pd.concat(
+    #        [gen_df_bin(x,'intra_'+region_name) for x,region_name in \
+    #            zip(binned_intra_region_xcorr_list, dat.region_names)] + \
+    #        [gen_df_bin(x,'shuffled_intra_'+region_name) for x,region_name \
+    #            in zip(shuffled_binned_intra_region_xcorr_list, dat.region_names)])
 
     frame_name_list = ['inter_region_frame',
-                            'binned_inter_region_frame',
-                            'intra_region_frame',
-                            'binned_intra_region_frame',
-                            'base_inter_region_frame',
-                            'base_intra_region_frame']
+                            #'binned_inter_region_frame',
+                            'intra_region_frame']#,
+                            #'binned_intra_region_frame',
+                            #'base_inter_region_frame',
+                            #'base_intra_region_frame']
 
-    with tables.open_file(dat.hdf5_name,'r+') as hf5:
+    with tables.open_file(dat.hdf5_path,'r+') as hf5:
         for frame_name in frame_name_list:
             # Will only remove if array already there
             remove_node(os.path.join(save_path, frame_name),hf5, recursive=True)
 
     for frame_name in frame_name_list:
         # Save transformed array to HDF5
-        eval(frame_name).to_hdf(dat.hdf5_name,  
+        eval(frame_name).to_hdf(dat.hdf5_path,  
                 os.path.join(save_path, frame_name))
