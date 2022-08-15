@@ -148,6 +148,7 @@ def gen_bin_df(corr_array, p_val_array, percentiles, pair_list, label):
 ################################################### 
 
 data_dir = sys.argv[1]
+print(data_dir)
 #data_dir = '/media/bigdata/Abuzar_Data/AM26/AM26_4Tastes_200829_100535'
 name_splits = os.path.basename(data_dir[:-1]).split('_')
 fin_name = name_splits[0]+'_'+name_splits[2]
@@ -224,32 +225,32 @@ if not present_bool:
     shuffle_inter_region_frame = gen_df(out[2], out[3], None,
                                 pair_inds,'shuffle_inter_region')
 
-    ##################################################
-    ## BINNED Inter-Region 
-    ##################################################
-    # Sama pair_inds as above, add additional loop for bins
-    bin_width = 500
-    bin_count = np.diff(time_lims)[0]//bin_width 
-    binned_spikes = [np.array(np.split(x,bin_count,axis=-1)) for x in temp_region_spikes]
-    binned_sum_spikes = [np.sum(x,axis=-1) for x in binned_spikes]
-    # Try detrending with 1st order difference before corr
-    diff_bin_sum_spikes = [np.diff(region,axis=2) for region in binned_sum_spikes]
-    # Zscore along trial axis to normalize values across neurons
-    diff_bin_sum_spikes = [stats.zscore(region,axis=2) for region in diff_bin_sum_spikes]
-    diff_bin_sum_spikes = [np.moveaxis(x,-1,1) for x in diff_bin_sum_spikes]
+    ###################################################
+    ### BINNED Inter-Region 
+    ###################################################
+    ## Sama pair_inds as above, add additional loop for bins
+    #bin_width = 500
+    #bin_count = np.diff(time_lims)[0]//bin_width 
+    #binned_spikes = [np.array(np.split(x,bin_count,axis=-1)) for x in temp_region_spikes]
+    #binned_sum_spikes = [np.sum(x,axis=-1) for x in binned_spikes]
+    ## Try detrending with 1st order difference before corr
+    #diff_bin_sum_spikes = [np.diff(region,axis=2) for region in binned_sum_spikes]
+    ## Zscore along trial axis to normalize values across neurons
+    #diff_bin_sum_spikes = [stats.zscore(region,axis=2) for region in diff_bin_sum_spikes]
+    #diff_bin_sum_spikes = [np.moveaxis(x,-1,1) for x in diff_bin_sum_spikes]
 
-    # Better way to handle this list-nesting???
-    out = [parallelize(taste_calc_corrs,this_bin,pair_inds) \
-            for this_bin in zip(*diff_bin_sum_spikes)]
-    out= [list(zip(*x)) for x in out]
-    out= [[np.array(array) for array in this_bin] for this_bin in out]
-    out= list(zip(*out))
-    out= [np.array(x) for x in out]
+    ## Better way to handle this list-nesting???
+    #out = [parallelize(taste_calc_corrs,this_bin,pair_inds) \
+    #        for this_bin in zip(*diff_bin_sum_spikes)]
+    #out= [list(zip(*x)) for x in out]
+    #out= [[np.array(array) for array in this_bin] for this_bin in out]
+    #out= list(zip(*out))
+    #out= [np.array(x) for x in out]
 
-    bin_inter_region_frame = gen_bin_df(out[0],out[1],out[-1],
-                                        pair_inds, 'inter_region')
-    shuffle_bin_inter_region_frame = gen_bin_df(out[2],out[3],None,
-                                        pair_inds, 'shuffle_inter_region')
+    #bin_inter_region_frame = gen_bin_df(out[0],out[1],out[-1],
+    #                                    pair_inds, 'inter_region')
+    #shuffle_bin_inter_region_frame = gen_bin_df(out[2],out[3],None,
+    #                                    pair_inds, 'shuffle_inter_region')
 
     ##################################################
     ## INTRA-Region Whole Trial
@@ -279,68 +280,68 @@ if not present_bool:
         zip([out0,out1],pair_list,sorted_region_names)])
 
 
-    ##################################################
-    ## BASELINE Whole Trial Inter-Region 
-    ##################################################
-    time_lims = [0,2000]
+    ###################################################
+    ### BASELINE Whole Trial Inter-Region 
+    ###################################################
+    #time_lims = [0,2000]
 
-    base_temp_spikes = spikes[...,time_lims[0]:time_lims[1]]
-    base_region_spikes = [base_temp_spikes.swapaxes(0,2)[region_inds]\
-            for region_inds in dat.region_units]
-    base_temp_region_spikes = [base_region_spikes[x] for x in wanted_order]
-    base_sum_spikes = [np.sum(x,axis=-1) for x in base_temp_region_spikes]
-    # Try detrending with 1st order difference before corr
-    base_diff_sum_spikes = [np.diff(region,axis=1) for region in base_sum_spikes]
-    # Zscore along trial axis to normalize values across neurons
-    base_diff_sum_spikes = [stats.zscore(region,axis=1) for region in base_diff_sum_spikes]
-    base_diff_sum_spikes = [np.moveaxis(x,-1,0) for x in base_diff_sum_spikes]
+    #base_temp_spikes = spikes[...,time_lims[0]:time_lims[1]]
+    #base_region_spikes = [base_temp_spikes.swapaxes(0,2)[region_inds]\
+    #        for region_inds in dat.region_units]
+    #base_temp_region_spikes = [base_region_spikes[x] for x in wanted_order]
+    #base_sum_spikes = [np.sum(x,axis=-1) for x in base_temp_region_spikes]
+    ## Try detrending with 1st order difference before corr
+    #base_diff_sum_spikes = [np.diff(region,axis=1) for region in base_sum_spikes]
+    ## Zscore along trial axis to normalize values across neurons
+    #base_diff_sum_spikes = [stats.zscore(region,axis=1) for region in base_diff_sum_spikes]
+    #base_diff_sum_spikes = [np.moveaxis(x,-1,0) for x in base_diff_sum_spikes]
 
-    base_out = list(zip(*parallelize(taste_calc_corrs,base_diff_sum_spikes,pair_inds)))
-    base_out = [np.array(x) for x in base_out]
+    #base_out = list(zip(*parallelize(taste_calc_corrs,base_diff_sum_spikes,pair_inds)))
+    #base_out = [np.array(x) for x in base_out]
 
-    baseline_inter_region_frame = gen_df(base_out[0], base_out[1], base_out[-1],
-                                pair_inds,'inter_region')
+    #baseline_inter_region_frame = gen_df(base_out[0], base_out[1], base_out[-1],
+    #                            pair_inds,'inter_region')
 
-    baseline_shuffle_inter_region_frame = gen_df(base_out[2], base_out[3], None,
-                                pair_inds,'shuffle_inter_region')
+    #baseline_shuffle_inter_region_frame = gen_df(base_out[2], base_out[3], None,
+    #                            pair_inds,'shuffle_inter_region')
 
-    ##################################################
-    ## BASELINE INTRA-Region 
-    ##################################################
+    ###################################################
+    ### BASELINE INTRA-Region 
+    ###################################################
 
-    #this_save_path = os.path.join(save_path,'intra_region')
+    ##this_save_path = os.path.join(save_path,'intra_region')
 
-    base_out0 = list(zip(*parallelize(taste_calc_corrs,\
-                        [base_diff_sum_spikes[0],base_diff_sum_spikes[0]],pair_list[0])))
-    base_out1 = list(zip(*parallelize(taste_calc_corrs,\
-                        [base_diff_sum_spikes[1],base_diff_sum_spikes[1]],pair_list[1])))
+    #base_out0 = list(zip(*parallelize(taste_calc_corrs,\
+    #                    [base_diff_sum_spikes[0],base_diff_sum_spikes[0]],pair_list[0])))
+    #base_out1 = list(zip(*parallelize(taste_calc_corrs,\
+    #                    [base_diff_sum_spikes[1],base_diff_sum_spikes[1]],pair_list[1])))
 
-    base_out0 = [np.array(x) for x in base_out0]
-    base_out1 = [np.array(x) for x in base_out1]
+    #base_out0 = [np.array(x) for x in base_out0]
+    #base_out1 = [np.array(x) for x in base_out1]
 
-    baseline_intra_region_frame = pd.concat([\
-        gen_df(this_dat[0],this_dat[1],this_dat[-1],this_inds,region_name) \
-        for this_dat,this_inds,region_name in \
-        zip([base_out0,base_out1],pair_list,sorted_region_names)])
+    #baseline_intra_region_frame = pd.concat([\
+    #    gen_df(this_dat[0],this_dat[1],this_dat[-1],this_inds,region_name) \
+    #    for this_dat,this_inds,region_name in \
+    #    zip([base_out0,base_out1],pair_list,sorted_region_names)])
 
-    baseline_shuffle_intra_region_frame = pd.concat([\
-        gen_df(this_dat[2],this_dat[3],None,this_inds,'shuffle_'+region_name) \
-        for this_dat,this_inds,region_name in \
-        zip([base_out0,base_out1],pair_list,sorted_region_names)])
+    #baseline_shuffle_intra_region_frame = pd.concat([\
+    #    gen_df(this_dat[2],this_dat[3],None,this_inds,'shuffle_'+region_name) \
+    #    for this_dat,this_inds,region_name in \
+    #    zip([base_out0,base_out1],pair_list,sorted_region_names)])
 
     ########################################
     ## Save arrays 
     ########################################
-    frame_name_list = ['inter_region_frame',
+    frame_name_list = [     'inter_region_frame',
                             'shuffle_inter_region_frame',
                             'intra_region_frame',
-                            'shuffle_intra_region_frame',
-                            'bin_inter_region_frame',
-                            'shuffle_bin_inter_region_frame',
-                            'baseline_inter_region_frame',
-                            'baseline_shuffle_inter_region_frame',
-                            'baseline_intra_region_frame',
-                            'baseline_shuffle_intra_region_frame']
+                            'shuffle_intra_region_frame']#,
+                            #'bin_inter_region_frame',
+                            #'shuffle_bin_inter_region_frame']#,
+                            #'baseline_inter_region_frame',
+                            #'baseline_shuffle_inter_region_frame',
+                            #'baseline_intra_region_frame',
+                            #'baseline_shuffle_intra_region_frame']
 
    #region_names_dict = {'note' : 'Dict contains region order after sorting'\
    #                             'for region with 
@@ -350,8 +351,8 @@ if not present_bool:
             # Will only remove if array already there
             remove_node(os.path.join(save_path, frame_name),hf5, recursive=True)
             remove_node(os.path.join(save_path, 'region_names'),hf5)
-            hf5.create_array(save_path,'region_names', 
-                    [str(region_names_dict)])
+            #hf5.create_array(save_path,'region_names', 
+            #        [str(region_names_dict)])
 
     for frame_name in frame_name_list:
         # Save transformed array to HDF5
