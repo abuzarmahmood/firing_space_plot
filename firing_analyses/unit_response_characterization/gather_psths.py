@@ -176,6 +176,8 @@ for ind in trange(len(dir_list)):
     discrim_frame['discrim_bool_cons'] = \
             np.convolve(discrim_frame['discrim_bool'], box_kern, mode = 'same') == 1
     discrim_frame['discrim_bool_cons'] *= 1 
+    discrim_frame['p_vals_conv'] = \
+            np.convolve(discrim_frame['discrim_p_vals'], box_kern, mode = 'same') 
 
     # Also calculate palatability correlation for sinle neurons
     taste_pal_broad = np.expand_dims(taste_pals, (1,2,3))
@@ -212,6 +214,10 @@ for ind in trange(len(dir_list)):
                 corr_rhos = corr_rhos
                 )
             )
+
+    corr_frame['pvals_cons'] = \
+            np.convolve(corr_frame['corr_pvals'], box_kern, mode = 'same') 
+    corr_frame['sig_bool'] = corr_frame['pvals_cons'] <= alpha
 
     #corr_array = corr_frame.pivot(
     #                    index = 'neurons', 
@@ -322,11 +328,33 @@ for ind in trange(len(dir_list)):
             #ax[1].set_xlim([-500, 1500])
             #ax[2].set_xlim([-500, 1500])
 
+            cmap = plt.get_cmap('binary')
+
             #ax[1].plot(unit_discrim_frame.time, unit_discrim_frame['bool'])
-            ax[1].plot(unit_discrim_frame.time, unit_discrim_frame['discrim_bool_cons'])
+            ax[1].plot(unit_discrim_frame.time, 
+                    unit_discrim_frame['discrim_bool_cons'],
+                    color = cmap(0.5))
+            ax[1].fill_between(
+                    x = unit_discrim_frame.time, 
+                    y1 = unit_discrim_frame['discrim_bool_cons'],
+                    y2 = 0,
+                    alpha = 0.7,
+                    color = cmap(0.5))
+            #ax[1].plot(unit_discrim_frame.time, 
+            #        np.log10(unit_discrim_frame['p_vals_conv']))
+            #ax[1].axhline(np.log10(0.05))
             ax[1].set_ylabel('Discrim sig')
-            ax[2].plot(unit_corr_frame.time, unit_corr_frame.corr_rhos)
-            ax[2].plot(unit_sig_corr.time, unit_sig_corr.corr_rhos, 'x')
+            ax[2].plot(unit_corr_frame.time, unit_corr_frame.corr_rhos,
+                    color = cmap(0.7))
+            ax[2].fill_between(
+                    x = unit_corr_frame.time, 
+                    y1 = unit_corr_frame['corr_rhos'],
+                    #where = unit_corr_frame['corr_pvals'] <= 0.05,
+                    where = unit_corr_frame['sig_bool'], 
+                    y2 = 0,
+                    alpha = 0.7,
+                    color = cmap(0.7))
+            #ax[2].plot(unit_sig_corr.time, unit_sig_corr.corr_rhos, 'x')
             ax[2].set_ylabel('Pal Corr sig')
 
             #ax[0].tick_params(axis='x', which = 'both', bottom = False)

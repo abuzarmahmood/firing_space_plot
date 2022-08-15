@@ -256,8 +256,8 @@ mean_gape_frame = pd.concat(
             ]
         ).sort_values('vals')
 
-inds = list(zip(mean_gape_frame.session_num, mean_gape_frame.trial_num))
-stacked_gapes = np.stack([process_gape_array[x][y] for x,y in inds])
+trial_sort_inds = list(zip(mean_gape_frame.session_num, mean_gape_frame.trial_num))
+stacked_gapes = np.stack([process_gape_array[x][y] for x,y in trial_sort_inds])
 vz.imshow(stacked_gapes);plt.show()
 
 ############################################################
@@ -316,8 +316,8 @@ for this_session_ind in range(len(fin_file_list)):
 
 
     # Template epoch x test epochs x trials
-    quin_sim = np.zeros((2,*mean_norm_quin.shape[:-1]))
-    suc_sim = np.zeros((2,*mean_norm_suc.shape[:-1]))
+    quin_sim = np.zeros(mean_norm_quin.shape[:-1])
+    suc_sim = np.zeros(mean_norm_suc.shape[:-1])
 
     quin_iters = list(np.ndindex(quin_sim.shape))
     suc_iters = list(np.ndindex(suc_sim.shape))
@@ -325,12 +325,12 @@ for this_session_ind in range(len(fin_file_list)):
     for this_iter in quin_iters:
         quin_sim[this_iter] = cos_sim(
                                 norm_quin_template[this_iter[0]],
-                                mean_norm_quin[this_iter[1:]])
+                                mean_norm_quin[this_iter])
 
     for this_iter in suc_iters:
         suc_sim[this_iter] = cos_sim(
                                 norm_suc_template[this_iter[0]],
-                                mean_norm_suc[this_iter[1:]])
+                                mean_norm_quin[this_iter])
 
     quin_sim_flat = np.reshape(quin_sim, (-1, quin_sim.shape[-1]))
     suc_sim_flat = np.reshape(suc_sim, (-1, suc_sim.shape[-1]))
@@ -339,7 +339,7 @@ for this_session_ind in range(len(fin_file_list)):
     diff_sim_list.append(diff_sim_flat)
 
 # Stack similarities similar to emg
-stacked_sim = np.stack([diff_sim_list[x][:,y] for x,y in inds])
+stacked_sim = np.stack([diff_sim_list[x][:,y] for x,y in sorted(trial_sort_inds)])
 
 fig,ax = plt.subplots(1,2)
 ax[0].imshow(stacked_gapes, 
@@ -349,3 +349,31 @@ ax[1].imshow(stacked_sim,
 plt.show()
 
 plt.plot(stacked_sim);plt.show()
+
+############################################################
+## Sanity checking cosine similarity for tastes
+############################################################
+#this_session_ind = 1
+for this_session_ind in range(len(fin_dirnames)):
+    this_dir = fin_dirnames[this_session_ind]
+    this_basename = fin_basenames[this_session_ind]
+    dat = ephys_data(this_dir)
+    dat.firing_rate_params = dat.default_firing_params
+    dat.get_spikes()
+    dat.check_laser()
+    dat.separate_laser_firing()
+    #vz.firing_overview(dat.all_off_firing.swapaxes(0,1));plt.show()
+    vz.firing_overview(dat.all_normalized_firing)
+plt.show()
+
+data_dir = '/media/bigdata/Abuzar_Data/bla_gc/AM11/AM11_4Tastes_191029_171714'
+dat = ephys_data(this_dir)
+dat.firing_rate_params = dat.default_firing_params
+dat.get_spikes()
+dat.get_firing_rates()
+#dat.get_spikes()
+#dat.check_laser()
+#dat.separate_laser_firing()
+#vz.firing_overview(dat.all_off_firing.swapaxes(0,1));plt.show()
+vz.firing_overview(dat.all_firing_array)
+plt.show()

@@ -1,9 +1,9 @@
-FROM conda/miniconda3
+FROM conda/miniconda3:latest
 
-RUN     conda install -c conda-forge -y mamba &&\
-        mamba install -y numpy scipy mkl &&\
-        conda install -c conda-forge -y scikit-learn &&\
-        mamba install -c conda-forge -y theano-pymc &&\
-        mamba install -c conda-forge -y pymc3 &&\
-        mamba install -c conda-forge -y python-graphviz &&\
-        mamba install -c conda-forge -y notebook
+RUN     conda install -c conda-forge -y mamba
+RUN     mamba install -y numpy scipy mkl
+RUN     conda install -c conda-forge -y scikit-learn
+RUN     mamba install -c conda-forge -y theano-pymc
+RUN     mamba install -c conda-forge -y pymc3
+RUN     mamba install -c conda-forge -y python-graphviz
+RUN     mamba install -c conda-forge -y notebook

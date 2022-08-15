@@ -79,17 +79,6 @@ class pkl_handler():
         self.metadata = self.data['metadata']
         self.pretty_metadata = pd.json_normalize(self.data['metadata']).T
 
-        self.tau = _tau(self.tau_array, self.metadata)
-        self.firing = _firing(self.tau, self.processed_spikes, self.metadata)
+        #self.tau = _tau(self.tau_array, self.metadata)
+        #self.firing = _firing(self.tau, self.processed_spikes, self.metadata)
 
-        
-###########################################################################
-## LOAD DATA
-###########################################################################
-
-FIT_PKL = '/media/bigdata/firing_space_plot/changepoint_mcmc/'\
-        'saved_models/natasha_gc_binary/natasha_gc_binary_0296f33c.info'
-
-model_dat = pkl_handler(FIT_PKL)
-print(model_dat.tau.scaled_mode_tau.shape)
-print(model_dat.firing.state_firing.shape)

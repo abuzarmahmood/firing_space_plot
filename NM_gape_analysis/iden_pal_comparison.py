@@ -35,6 +35,9 @@ from scipy.stats import (
 import xarray as xr
 from sklearn.decomposition import PCA
 from sklearn.discriminant_analysis import LinearDiscriminantAnalysis as LDA
+from sklearn.preprocessing import StandardScaler
+from scipy.spatial.distance import pdist
+from scipy.spatial import distance_matrix
 
 sys.path.append('/media/bigdata/firing_space_plot/ephys_data')
 from ephys_data import ephys_data
@@ -59,9 +62,9 @@ long_off_firing = [x.reshape((-1, *x.shape[2:])).swapaxes(1,0) for x in off_firi
 # Downsample for easier plotting
 long_off_firing = [x[...,::10] for x in long_off_firing]
 
-for x in long_off_firing:
-    vz.firing_overview(x);
-plt.show()
+#for x in long_off_firing:
+#    vz.firing_overview(x);
+#plt.show()
 
 quin_gape_array = [x[1] for x in off_gape_array]
 cluster_sort_inds = [np.argsort(x) for x in cluster_inds]
@@ -84,17 +87,117 @@ suc_firing_list = [x[taste_dict['suc']] for x in off_firing_list]
 iden_lims = [300,750]
 pal_lims = [750,1250]
 epoch_names = ['iden','pal']
+stim_t = 2000
 epoch_lims = [iden_lims, pal_lims]
+epoch_lims = [[x+stim_t for x in y] for y in epoch_lims]
 
+# Use spikes rather than firing to avoid temporal bleeding
+# We're also only looking at mean firing, so mean spikes should be fine
 firing_epochs = [[x[...,lims[0]:lims[1]].mean(axis=-1) for lims in epoch_lims]
-    for x in off_firing_list] 
+    for x in off_spikes_list] 
+
+firing_epochs = [[x+(np.random.random(x.shape)*1e-3) for x in y]\
+        for y in firing_epochs]
+
 quin_epochs = [np.stack([this_epoch[taste_dict['quin']] for this_epoch in this_session])
         for this_session in firing_epochs]
 suc_epochs = [np.stack([this_epoch[taste_dict['suc']] for this_epoch in this_session])
         for this_session in firing_epochs]
 
-# PCA plots for suc and quin for each session
+############################################################
+## Number of neurons which show significant differences between quinine
+## clusters in each epoch
+firing_frame_list=  []
+for epoch_num in range(len(epoch_lims)):
+    for session_num in range(len(quin_epochs)):
+        quin_dat = quin_epochs[session_num][epoch_num]
+        this_cluster_div = cluster_div[session_num]
+        cluster_labels = np.zeros(quin_dat.shape[0])
+        cluster_labels[this_cluster_div:] = 1
+        inds = np.array(list(np.ndindex(quin_dat.shape)))
+        this_frame = pd.DataFrame(
+                dict(
+                    trial = inds[:,0],
+                    neuron = inds[:,1],
+                    cluster = cluster_labels[inds[:,0]],
+                    value = quin_dat.flatten(),
+                    epoch = epoch_num,
+                    session = session_num
+                    )
+                )
+        firing_frame_list.append(this_frame)
+firing_frame = pd.concat(firing_frame_list)
+
+# Look at individual epochs first, and then sum of epochs
+alpha = 0.05
+grouped_list = list(firing_frame.groupby(['epoch','session','neuron']))
+group_labels = [x[0] for x in grouped_list]
+group_data = [x[1] for x in grouped_list]
+p_val_list = [pg.kruskal(
+                data = x,
+                dv = 'value',
+                between = 'cluster'
+                )['p-unc'].values[0] for x in group_data]
+pval_frame = pd.DataFrame(
+        group_labels,
+        columns = ['epoch','session','neuron']
+        )
+pval_frame['p_val'] = p_val_list
+pval_frame['sig_bool'] = pval_frame['p_val'] < alpha
+
+epoch_sig_comparisons = pval_frame.groupby(['epoch','session'])\
+        .mean().reset_index()[['epoch','session','sig_bool']]
+epoch_sig_comparisons['emg_diff'] = clustered_quin_diff[epoch_sig_comparisons['session']]
+
+g = sns.lmplot(
+        data = epoch_sig_comparisons,
+        x = 'emg_diff',
+        y = 'sig_bool',
+        col = 'epoch',
+        height = 4,
+        aspect = 1,
+        robust = True,
+        n_boot = 100
+        )
+for this_ax in g.axes[0]: 
+    this_ax.set_ylabel('# of Sig Neurons')
+plt.tight_layout()
+fig = plt.gcf()
+fig.savefig(os.path.join(plot_dir, f'sig_neurons_per_epoch_vs_emg_diff.png'))
+plt.close(fig)
+#plt.show()
+
+epochwise_or_sig = [bool(x[1]['sig_bool'].sum()) \
+        for x in list(pval_frame.groupby(['session', 'neuron']))]
+all_sig = pval_frame.groupby(['session', 'neuron']).mean().reset_index()
+all_sig['sig_bool'] = epochwise_or_sig
+all_sig = pval_frame.groupby(['session'])\
+        .mean().reset_index()[['session','sig_bool']]
+all_sig['emg_diff'] = clustered_quin_diff[all_sig['session']]
+
+sns.lmplot(
+        data = all_sig,
+        x = 'emg_diff',
+        y = 'sig_bool',
+        robust = True,
+        )
+plt.tight_layout()
+plt.title('Iden or Pal Sig')
+plt.ylabel('# of Sig Neurons')
+fig = plt.gcf()
+fig.savefig(os.path.join(plot_dir, f'sig_neurons_both_epochs_vs_emg_diff.png'))
+plt.close(fig)
+#plt.show()
+
+########################################
+# Run anova over full response (0-2500 ms post-stim)
+
+
+############################################################
+
+# LDA plots for suc and quin for each session
 # To confirm there is separability from the get-go
+quin_cluster_labels = ['low_emg','high_emg']
 mean_diffs = np.zeros((len(quin_epochs), len(epoch_lims)))
 quin_entropy_list = [[],[]]
 #cmap = plt.get_cmap('tab10')
@@ -129,8 +232,10 @@ for epoch_num in range(len(epoch_lims)):
         mean_diffs[session_num, epoch_num] = np.diff(cluster_quin_mean)
         for num,x in enumerate(cluster_quin_mean):
             ax.flatten()[session_num].axvline(x, 
-                    c=vline_colors[num], linewidth = 5, alpha = 0.7)
-        ax.flatten()[session_num].legend()
+                    c=vline_colors[num], linewidth = 5, alpha = 0.7,
+                    label = quin_cluster_labels[num])
+        if session_num == 0:
+            ax.flatten()[session_num].legend()
         #ax.flatten()[session_num].scatter(pca_dat[:,0], pca_dat[:,1], c = labels)
     fig.suptitle(epoch_names[epoch_num])
     fig.savefig(os.path.join(plot_dir, f'quin_suc_lda_{epoch_names[epoch_num]}.png'))
@@ -142,8 +247,9 @@ plt.hist(mean_diffs[:,0], alpha = 0.7, bins = 20, label = 'Identity')
 plt.hist(mean_diffs[:,1], alpha = 0.7, bins = 20, label = 'Palatability')
 plt.axvline(0, color = 'red')
 plt.legend()
-plt.xlabel('LDA Diff')
+plt.xlabel('LDA Diff' + '\n -ve = low_emg less like Suc, +ve = low_emg more like suc')
 plt.ylabel('Frequency')
+plt.tight_layout()
 plt.savefig(os.path.join(plot_dir, 'quin_suc_lda_diff.png'))
 plt.close()
 #plt.show()
@@ -256,7 +362,6 @@ for epoch_num in range(len(epoch_lims)):
 
 #############################################################
 ## Mean (Isotropic) variance of clusters
-from sklearn.preprocessing import StandardScaler
 
 taste_order = ['low_quin','high_quin','total_quin','suc']
 var_list = [[],[]] 
@@ -305,8 +410,6 @@ plt.close(fig)
 
 ############################################################
 # Calculate distances b/w all groups
-from scipy.spatial.distance import pdist
-from scipy.spatial import distance_matrix
 
 im_kwargs = dict(interpolation = 'nearest', aspect = 'auto', cmap = 'viridis')
 line_kwargs = dict(color = 'red', linewidth = 2, linestyle = '--')
@@ -401,7 +504,6 @@ fig.savefig(os.path.join(plot_dir, f'quin_suc_mean_mean_dists_bar.png'))
 plt.close(fig)
 #plt.show()
 
-
 #############################################################
 ## Replot emg activity to make sure output is correct
 #
@@ -413,10 +515,11 @@ plt.close(fig)
 #    this_ax.axhline(line_pos - 0.5, color = 'red')
 #fig.savefig(os.path.join(plot_dir, 'test_emg_plots.png'))
 #
-#fig, ax = vz.gen_square_subplots(len(off_gape_array))
-#for num, (this_ax, this_dat) in enumerate(zip(ax.flatten(), cut_sorted_quin)):
-#    line_pos = cluster_div[num] 
-#    this_ax.imshow(this_dat, 
-#            aspect='auto', interpolation = 'nearest', cmap = 'viridis')
-#    this_ax.axhline(line_pos - 0.5, color = 'red')
+fig, ax = vz.gen_square_subplots(len(off_gape_array))
+for num, (this_ax, this_dat) in enumerate(zip(ax.flatten(), cut_sorted_quin)):
+    line_pos = cluster_div[num] 
+    this_ax.imshow(this_dat, 
+            aspect='auto', interpolation = 'nearest', cmap = 'viridis')
+    this_ax.axhline(line_pos - 0.5, color = 'red')
+plt.show()
 #fig.savefig(os.path.join(plot_dir, 'test_emg_plots_cut.png'))

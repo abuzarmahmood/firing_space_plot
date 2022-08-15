@@ -33,6 +33,8 @@ import tensortools as tt
 from scipy.spatial.distance import pdist, squareform
 from sklearn.decomposition import PCA
 import xarray as xr
+from sklearn.cluster import KMeans
+from collections import Counter
 
 sys.path.append('/media/bigdata/firing_space_plot/ephys_data')
 from ephys_data import ephys_data
@@ -267,9 +269,6 @@ fig.savefig(os.path.join(plot_dir, 'sucrose_sub_quin_emg_cut.png'))
 #plt.show()
 
 # Simply dividing into equally sized groups doesn't make sense
-from sklearn.cluster import KMeans
-from collections import Counter
-
 groups = 2
 group_labels = np.arange(groups)
 cluster_inds = [KMeans(n_clusters=groups).fit(dat.reshape(-1,1)).labels_ \
@@ -354,6 +353,7 @@ plt.show()
 fig.savefig(os.path.join(plot_dir, 'sorted_whole_emg_reponses.png'))
 plt.close(fig)
 
+fin_gape_lims = [x+time_lims[0] for x in gape_t_lims]
 # Plot clustered emg from cut data for trials
 fig,ax = vz.gen_square_subplots(len(wanted_quin_array), sharex=True)
 for num, this_dat in enumerate(process_gape_array):
@@ -425,7 +425,6 @@ for this_session_ind in range(len(fin_file_list)):
 
     # Cut to same time duration as gapes (for consistency)
 
-    fin_gape_lims = [x+time_lims[0] for x in gape_t_lims]
     kern_width = 250
 
     quin_firing = time_box_conv(quin_off_spikes, kern_width)

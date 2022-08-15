@@ -246,7 +246,8 @@ class fit_handler():
         self.database_handler.write_to_database()
 
         print('Saving inference output to : \n'
-                f'{self.database_handler.model_save_dir}')
+                f'{self.database_handler.model_save_dir}' 
+                "\n" + "================================" + '\n')
         
 class database_handler():
     
