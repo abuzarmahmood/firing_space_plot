@@ -84,17 +84,24 @@ def parallel_return_corr_percentile(tau_list):
 ########################################
 ## Run test example
 ########################################
-def gen_tau_array(trials = 30, transitions = 3):
-    x = np.random.random((trials, transitions, 1))
-    tau_array = np.concatenate([x,x],axis=-1).T
-    return tau_array
-
-# Make sure corr_percentile_single works
-perc, corr, shuff = corr_percentile_single(*tau_array[:,0])
-
-perc, corr, shuff = return_corr_percentile(tau_array)
-# perc should show high percentiles for only matched transitions
-print(perc)
-
-tau_list = [gen_tau_array() for i in range(10)]
-outs = parallel_return_corr_percentile(tau_list) 
+#def gen_tau_array(trials = 30, transitions = 3):
+#    x = np.random.random((trials, transitions, 1))
+#    tau_array = np.concatenate([x,x],axis=-1).T
+#    return tau_array
+#
+## Make sure corr_percentile_single works
+#perc, corr, shuff = corr_percentile_single(*tau_array[:,0])
+#
+#perc, corr, shuff = return_corr_percentile(tau_array)
+## perc should show high percentiles for only matched transitions
+#print(perc)
+#
+#tau_list = [gen_tau_array() for i in range(100)]
+#outs = parallel_return_corr_percentile(tau_list) 
+#
+#perc_list, corr_list, shuffle_list = list(zip(*outs))
+#
+#perc_array = np.stack(perc_list)
+#
+## Calculate fraction of SIGNIFICANT correlations
+#np.mean(perc_array > 90,axis=0)

@@ -21,7 +21,7 @@ sys.path.append('/media/bigdata/firing_space_plot/ephys_data')
 from ephys_data import ephys_data
 
 sys.path.append('/media/bigdata/firing_space_plot/'\
-        'firing_analyses/transition_corrs')
+        'firing_analyses/transition_corrs/all_tastes')
 from check_data import check_data 
 
 ##################################################
@@ -40,8 +40,19 @@ wanted_names = ['rho_percentiles','rho_shuffles',
 
 # Load pkl detailing which recordings have split changepoints
 data_dir_pkl = '/media/bigdata/firing_space_plot/firing_analyses/'\
-        'transition_corrs/single_region_split_frame.pkl'
+        'transition_corrs/all_tastes/split_region/single_region_split_frame.pkl'
 split_frame = pd.read_pickle(data_dir_pkl)
+
+# Fix paths for gc_only files
+all_paths = list(split_frame.path)
+gc_path_inds = [num for num,x in enumerate(all_paths) if 'gc_only' in x]
+gc_paths = [all_paths[i] for i in gc_path_inds]
+fixed_pc_paths = ['/media/storage/gc_only' + x.split('gc_only')[1] \
+        for x in gc_paths]
+for num, val in enumerate(fixed_pc_paths):
+    all_paths[gc_path_inds[num]]  = val
+split_frame.path = all_paths
+
 
 dat_list = []
 session_num_list = []
@@ -143,7 +154,7 @@ for session_num in trange(len(all_rho_percentiles)):
 
 # Aggregate percentiles
 plot_dir = '/media/bigdata/firing_space_plot/firing_analyses/'\
-        'transition_corrs/plots/single_region_split/aggregate'
+        'transition_corrs/all_tastes/plots/single_region_split/aggregate'
 if not os.path.exists(plot_dir):
     os.makedirs(plot_dir)
 
@@ -241,28 +252,32 @@ abs_diff_perc = ((abs_diff_perc*2)/100)*comparisons
 bonf_sig = abs_diff_perc <= alpha 
 
 x = np.arange(len(bonf_sig))
-fig,ax = plt.subplots(figsize=(5,7))
+fig,ax = plt.subplots(figsize=(5,5))
 cmap = plt.get_cmap('tab10')
 #ax.bar(x, rho_perc_counts.flatten(), label = 'Actual', 
 ax.bar(x, rho_perc_frac.flatten(), label = 'Actual', 
         color = cmap(0), edgecolor = None, alpha = 0.7, linewidth = 2)
         #color = cmap(0), edgecolor = cmap(0), alpha = 0.7, linewidth = 2)
 #ax.errorbar(x, mean_hist_counts, std_hist_counts, 
-ax.errorbar(x, mean_hist_frac.flatten(), std_hist_frac.flatten(), 
-        label = 'Shuffle', color = 'k', linewidth = 5, alpha = 0.7)
-        #label = 'Shuffle', color = cmap(1), linewidth = 5, alpha = 0.7)
-for num,(perc,sig) in enumerate(zip(abs_diff_perc,bonf_sig)):
-    #ax.text(x[num], np.max(rho_perc_counts) - 1, 
-    ax.text(x[num], np.max(rho_perc_frac)*0.9, 
-            np.round(perc[0],3), ha = 'center', rotation = 45)
-    if sig:
-        #ax.text(x[num], np.max(rho_perc_counts) - 2, 
-        ax.text(x[num], np.max(rho_perc_frac)*0.8, 
-            '*', ha = 'center', fontweight = 'bold',
-            fontsize = 'xx-large')
+#ax.errorbar(x, mean_hist_frac.flatten(), std_hist_frac.flatten(), 
+#        label = 'Shuffle', color = 'k', linewidth = 5, alpha = 0.7)
+#        #label = 'Shuffle', color = cmap(1), linewidth = 5, alpha = 0.7)
+#for num,(perc,sig) in enumerate(zip(abs_diff_perc,bonf_sig)):
+#    #ax.text(x[num], np.max(rho_perc_counts) - 1, 
+#    ax.text(x[num], np.max(rho_perc_frac)*0.9, 
+#            np.round(perc[0],3), ha = 'center', rotation = 45)
+#    if sig:
+#        #ax.text(x[num], np.max(rho_perc_counts) - 2, 
+#        ax.text(x[num], np.max(rho_perc_frac)*0.8, 
+#            '*', ha = 'center', fontweight = 'bold',
+#            fontsize = 'xx-large')
+plt.subplots_adjust(top = 0.8)
 ax.legend(bbox_to_anchor=(1, 1), loc='upper left', ncol=1)
 ax.set_xlabel('Transition Number')
 ax.set_ylabel('Frequency Number')
+ax.axhline(5/16, color = 'red', alpha = 0.7, linestyle = '--', linewidth = 5)
+ax.set_xticks([0,1,2])
+plt.ylim([0,0.9])
 #ax[0,1].set_title('MSE Percentiles')
 plt.suptitle(f'Aggregate transition hist : Bin = {sig_hist_bins}' + \
         "\n" + "Numbers = Bonf Corrected 2-tailed p-vals" + "\n" +\
@@ -270,7 +285,7 @@ plt.suptitle(f'Aggregate transition hist : Bin = {sig_hist_bins}' + \
         f' ::: alpha = {alpha}')
 fig.savefig(os.path.join(plot_dir, 
     f'sig_hist_bins_transition_max{np.diff(sig_hist_bins)[0]}'), 
-    bbox_inches = 'tight')
+    bbox_inches = 'tight', dpi = 300)
 plt.close(fig)
 #plt.show()
 
