@@ -83,6 +83,14 @@ intra_save_path = '/stft/analyses/phase_coherence/diff_intra_phase_coherence_arr
 #
 #mean_amp_array = np.stack(mean_amp_list)
 
+# Get region orders so intra-region coherence can be sorted by region
+region_order_list = []
+for this_dir in tqdm(dir_list):
+    dat = ephys_data(this_dir)
+    dat.get_region_electrodes()
+    region_order = np.argsort(dat.region_names)
+    region_order_list.append(region_order)
+
 # Write out final phase channels and channel numbers 
 coherence_list = []
 shuffle_list = []
@@ -93,6 +101,9 @@ for this_file in tqdm(file_list):
         coherence_list.append(hf5.get_node(coherence_save_path)[:])
         shuffle_list.append(hf5.get_node(shuffle_save_path)[:])
         intra_list.append(hf5.get_node(intra_save_path)[:])
+
+# Sort intra_list
+intra_list = [x[:,y] for x,y in zip(intra_list, region_order_list)]
 
 coherence_array = np.stack(coherence_list)
 shuffle_array = np.stack(shuffle_list)
@@ -344,6 +355,96 @@ for this_ind in tqdm(inds):
 ## Coherence Plots
 ########################################
 
+stim_t = 2
+post_stim_time = (time_vec - stim_t)*1000
+
+# Plot dynamics of intra-region coherence
+fig,ax = plt.subplots(len(mean_intra_array),2, sharex=True, sharey=True)
+inds = list(np.ndindex(ax.shape))
+for this_ind in inds:
+    this_dat = mean_intra_array[this_ind[0],:,this_ind[1]]
+    zscore_dat = zscore(this_dat,axis=-1)
+    ax[this_ind].plot(
+            post_stim_time, 
+            zscore_dat.mean(axis=0),
+            color = 'k',
+            label = 'Mean Change',
+            zorder = 10)
+    ax[this_ind].plot(
+            post_stim_time,
+            zscore_dat.T,
+            alpha = 0.5,
+            color = 'grey',
+            zorder = 1)
+    ax[this_ind].axvline(0, color = 'red', linestyle = '--', linewidth = 2)
+    if this_ind[1] == 0:
+        ax[this_ind].set_ylabel('Norm. Coherence')
+    if this_ind[1] == 1:
+        ax[this_ind].set_ylabel(f'Freq : {freq_bands_lims[this_ind[0]]}')
+ax[0,0].set_title(np.sort(dat.region_names)[0])
+ax[0,1].set_title(np.sort(dat.region_names)[1])
+ax[-1,0].set_xlabel('Time post-stim (ms')
+ax[-1,1].set_xlabel('Time post-stim (ms')
+plt.suptitle('Mean intra-region coherence')
+fig.savefig(os.path.join(plot_dir, 'mean_intraregion_coherence'))
+plt.close(fig)
+#plt.show()
+
+# Plot mean coherence by epoch
+epoch_lims = (np.stack([[1500,2000],[2000,2300],[2300,2850],[2850,3300]]) - 2000)
+epoch_names = np.array(['pre_stim','stim','iden','pal'])
+inds = np.array(list(np.ndindex(mean_intra_array.shape)))
+intra_coherence_frame = pd.DataFrame(
+        dict(
+            time = post_stim_time[inds[:,-1]],
+            freq_band = inds[:,0],
+            session = inds[:,1],
+            region = inds[:,2],
+            coh = zscore(mean_intra_array,axis=-1).flatten(),
+            )
+        )
+intra_coherence_frame = intra_coherence_frame[
+        np.logical_and(
+            intra_coherence_frame.time > epoch_lims.min(),
+            intra_coherence_frame.time < epoch_lims.max(),
+            )
+        ]
+
+intra_coherence_frame['epoch'] = pd.cut(intra_coherence_frame.time, 
+                        np.unique(epoch_lims), 
+                        labels = np.arange(len(np.unique(epoch_lims))-1))
+intra_coherence_frame = intra_coherence_frame.\
+                                groupby(['session','epoch', 'region','freq_band']).\
+                                mean().\
+                                reset_index(drop=False)
+intra_coherence_frame['epoch_name'] = epoch_names[intra_coherence_frame.epoch]
+intra_coherence_frame['region_name'] = np.sort(dat.region_names)[intra_coherence_frame.region]
+freq_band_array = np.stack([str(x) for x in freq_bands_lims])
+intra_coherence_frame['band_freqs'] = freq_band_array[intra_coherence_frame.freq_band]
+
+g = sns.catplot(
+        data = intra_coherence_frame,
+        x = 'epoch_name',
+        y = 'coh',
+        col = 'region_name',
+        row = 'band_freqs',
+        kind = 'box'
+        )
+ax_inds = list(np.ndindex(g.axes.shape))
+for this_ind in ax_inds:
+    g.axes[this_ind].axhline(0, color = 'k', linestyle = '--', alpha = 0.5, zorder = -1)
+    if this_ind[1] == 0:
+        g.axes[this_ind].set_ylabel('Coherence')
+    if this_ind[0] == len(freq_bands_lims)-1:
+        g.axes[this_ind].set_xlabel('Epoch')
+fig = plt.gcf()
+plt.suptitle('Mean intra-region epoch coherence')
+plt.tight_layout()
+fig.savefig(os.path.join(plot_dir, 'mean_intraregion_epoch_coherence'))
+plt.close(fig)
+#plt.show()
+
+# Plot everything
 for band_num, this_band_lims in tqdm(enumerate(freq_bands_lims)):
 
     band_str = '-'.join([str(x) for x in this_band_lims])
