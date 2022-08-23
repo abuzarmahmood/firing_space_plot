@@ -45,6 +45,44 @@ coherence_save_path = '/stft/analyses/phase_coherence/diff_phase_coherence_array
 shuffle_save_path = '/stft/analyses/phase_coherence/diff_shuffle_phase_coherence_array'
 intra_save_path = '/stft/analyses/phase_coherence/diff_intra_phase_coherence_array'
 
+#mean_amp_list = []
+#std_amp_list = []
+#sorted_regions = []
+#for this_dir in tqdm(dir_list):
+#    dat = ephys_data(this_dir)
+#    dat.get_stft(recalculate = False, dat_type = ['amplitude'])
+#    dat.get_lfp_electrodes()
+#
+#    #stft_array = dat.stft_array
+#    amplitude_array = dat.amplitude_array
+#    mean_amplitude = amplitude_array.mean(axis=(0,2))
+#    #stft_array = np.concatenate(np.swapaxes(stft_array, 1,2))
+#    time_vec = dat.time_vec
+#    freq_vec = dat.freq_vec
+#    region_electrodes = dat.lfp_region_electrodes
+#    region_amplitude = [mean_amplitude[x] for x in region_electrodes]
+#    mean_region_amp = [x.mean(axis=0) for x in region_amplitude]
+#    region_amp_diff = [np.abs(x-y).mean(axis=(1,2)) \
+#            for x,y in zip(region_amplitude, mean_region_amp)]
+#    closest_inds = [region_elecs[np.argmin(x)] \
+#            for region_elecs,x in zip(region_electrodes, region_amp_diff)]
+#
+#    region_order = np.argsort(dat.region_names)
+#    sorted_regions.append(np.array(dat.region_names)[region_order])
+#
+#    fin_region_dat = np.stack([amplitude_array[:,x] for x in closest_inds])
+#    fin_region_dat = fin_region_dat[region_order]
+#    fin_region_long = np.reshape(fin_region_dat, 
+#            (fin_region_dat.shape[0], -1, *fin_region_dat.shape[3:]))
+#
+#    region_mean_amp = fin_region_long.mean(axis=1)
+#    region_std_amp = fin_region_long.std(axis=1)
+#
+#    mean_amp_list.append(region_mean_amp)
+#    std_amp_list.append(region_std_amp)
+#
+#mean_amp_array = np.stack(mean_amp_list)
+
 # Write out final phase channels and channel numbers 
 coherence_list = []
 shuffle_list = []
@@ -82,6 +120,52 @@ coherence_band_list = np.stack([coherence_array[:,:,x].mean(axis=2) for x in fre
 shuffle_band_list = np.stack([shuffle_array[:,:,x].mean(axis=2) for x in freq_inds])
 intra_band_list = np.stack([intra_array[:,:,:,x].mean(axis=3) for x in freq_inds])
 #mean_band_coherence = np.stack([x.mean(axis=2) for x in coherence_band_list])
+
+######################################## 
+## Plot amplitude for all sessions by band 
+######################################## 
+#band_mean_amp = np.stack([mean_amp_array[:,:,x].mean(axis=2) for x in freq_inds])
+#zscore_band_mean_amp = zscore(band_mean_amp, axis=-1)
+#
+#imshow_kwargs = dict(
+#        vmin = -3,#band_mean_amp.min(),
+#        vmax = 3,#band_mean_amp.max(),
+#        interpolation = 'nearest',
+#        aspect = 'auto'
+#        )
+#fig,ax = plt.subplots(len(band_mean_amp),2, sharex=True, sharey=True)
+#for num, (this_ax, this_dat) in enumerate(zip(ax, zscore_band_mean_amp)):
+#    this_ax[0].imshow(this_dat[:,0], **imshow_kwargs) 
+#    this_ax[1].imshow(this_dat[:,1], **imshow_kwargs) 
+#    this_ax[0].set_title(f'Freq : {freq_bands_lims[num]}')
+#    this_ax[0].set_ylabel('Sessions')
+#plt.tight_layout()
+#plt.show()
+#
+#mean_zscore_band_mean = zscore_band_mean_amp.mean(axis=1)
+#std_zscore_band_mean = zscore_band_mean_amp.std(axis=1)
+#
+#stim_t = 2
+#post_stim_time = (time_vec - stim_t)*1000
+#fig,ax = plt.subplots(len(band_mean_amp),2, sharex=True, sharey=True)
+#for num, this_ax in enumerate(ax):
+#    this_mean = mean_zscore_band_mean[num]
+#    this_std = std_zscore_band_mean[num]
+#    for fin_ax, fin_mean, fin_std in zip(this_ax, this_mean, this_std):
+#        fin_ax.plot(post_stim_time, fin_mean)
+#        fin_ax.fill_between(
+#                x = post_stim_time, 
+#                y1 = fin_mean + fin_std,
+#                y2 = fin_mean - fin_std,
+#                alpha = 0.5)
+#        fin_ax.axvline(0, color = 'red', linestyle = '--')
+#    this_ax[0].set_ylabel('Normalized power')
+#    this_ax[1].set_ylabel(f'Freq : {freq_bands_lims[num]}')
+#ax[-1,0].set_xlabel('Time post-stim (ms)')
+#ax[-1,1].set_xlabel('Time post-stim (ms)')
+#ax[0,0].set_title(sorted_regions[0][0])
+#ax[0,1].set_title(sorted_regions[0][1])
+#plt.show()
 
 
 ####################################### 
@@ -309,8 +393,13 @@ for band_num, this_band_lims in tqdm(enumerate(freq_bands_lims)):
                         linestyle = '--')
         ax.axvline(time_vec[baseline_inds[0]], color = 'red',
                         linestyle = '--')
+        ax.axvline(baseline_t, color = 'black',
+                        linestyle = '--', linewidth = 2,
+                        label = 'Stim Delivery')
         ax.set_ylim([0,1])
-        plt.legend()
+        ax.set_xlabel("Time (sec)")
+        ax.set_ylabel("Coherence (0-1)")
+        plt.legend(loc='lower left')
         fig.suptitle(title_str)
         fig.savefig(os.path.join(plot_dir,
                         "_".join([f'freq_{band_str}', this_basename])))
