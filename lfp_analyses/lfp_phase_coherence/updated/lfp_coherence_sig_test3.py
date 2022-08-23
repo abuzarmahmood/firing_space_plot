@@ -83,6 +83,7 @@ shuffle_band_list = np.stack([shuffle_array[:,:,x].mean(axis=2) for x in freq_in
 intra_band_list = np.stack([intra_array[:,:,:,x].mean(axis=3) for x in freq_inds])
 #mean_band_coherence = np.stack([x.mean(axis=2) for x in coherence_band_list])
 
+
 ####################################### 
 # Comparison of shuffle vs actual for evoked response 
 ####################################### 
@@ -166,6 +167,37 @@ dev_array = \
         (mean_coherence_array > ci_array[...,1][...,np.newaxis]) * +1
 
 
+# Calculate summaries for intra and shuffle datasets
+mean_shuffle_array = np.stack([x.mean(axis=(1)) for x in shuffle_band_list])
+std_shuffle_array = np.stack([x.std(axis=(1)) for x in shuffle_band_list])
+
+mean_intra_array = np.stack([x.mean(axis=(1)) for x in intra_band_list])
+std_intra_array = np.stack([x.std(axis=(1)) for x in intra_band_list])
+
+####################################### 
+# Coherence is higher than shuffle 
+####################################### 
+# Mean coherence is higher than mean_shuffle + 3*std_shuffle
+coherence_bool = mean_coherence_array > (mean_shuffle_array + 3*std_shuffle_array)
+frac_coherence_bool = coherence_bool.mean(axis=1)
+
+fig,ax = plt.subplots(frac_coherence_bool.shape[0],1, sharex=True, sharey=True)
+for num, (this_dat, this_ax) in enumerate(zip(frac_coherence_bool, ax)):
+    this_ax.plot((time_vec - baseline_t)*1000, this_dat)
+    this_ax.set_title(f'Freq range : {freq_bands_lims[num]}')
+    this_ax.set_ylim([0,1.1])
+    this_ax.axvline(0, color = 'red', linestyle = '--', linewidth = 2,
+            label = 'Stimulus delivery')
+ax[1].set_ylabel('Fraction of sessions')
+ax[-1].set_xlabel("Time post-stimulus delivery (ms)")
+ax[-1].legend()
+plt.suptitle('Fraction of sessions with mean_coherence > mean_shuffle + 3*shuffle_std' + '\n' +\
+        f'Total sessions : {coherence_bool.shape[1]}')
+plt.tight_layout()
+fig.savefig(os.path.join(plot_dir, 'deviance_from_shuffle_agg.png'))
+plt.close(fig)
+#plt.show()
+
 #fig, ax = plt.subplots(len(mean_coherence_array))
 #for num, this_dat in enumerate(mean_coherence_array):
 #    this_mean = this_dat.mean(axis=0)
@@ -240,14 +272,32 @@ for band_num, this_band_lims in tqdm(enumerate(freq_bands_lims)):
         this_dev = dev_array[band_num, session_num]
         highlight_chunks = extract_contiguous_chunks(this_dev) 
 
+        this_mean_shuffle = mean_shuffle_array[band_num, session_num]
+        this_std_shuffle = std_shuffle_array[band_num, session_num]
+
+        this_mean_intra = mean_intra_array[band_num, session_num]
+        this_std_intra = std_intra_array[band_num, session_num]
+
         title_str = this_basename + '\n' + f'Freq : {band_str}'
 
         fig,ax = plt.subplots()
-        ax.plot(time_vec, this_mean_coherence)
+        ax.plot(time_vec, this_mean_coherence, label = 'Inter')
         ax.fill_between(x = time_vec,
-                y1 = this_mean_coherence + this_std_coherence,
-                y2 = this_mean_coherence - this_std_coherence,
+                y1 = this_mean_coherence + 3*this_std_coherence,
+                y2 = this_mean_coherence - 3*this_std_coherence,
                 alpha = 0.5)
+        ax.plot(time_vec, this_mean_shuffle, label = 'Shuffle')
+        ax.fill_between(x = time_vec,
+                y1 = this_mean_shuffle + 3*this_std_shuffle,
+                y2 = this_mean_shuffle - 3*this_std_shuffle,
+                alpha = 0.5)
+        for num, (region_mean, region_std) \
+                in enumerate(zip(this_mean_intra, this_std_intra)):
+            ax.plot(time_vec, region_mean, label = f'Intra{num}')
+            ax.fill_between(x = time_vec,
+                    y1 = region_mean + region_std,
+                    y2 = region_mean - region_std,
+                    alpha = 0.5)
         for this_lim in ci_array[band_num, session_num]:
             ax.axhline(this_lim, color = 'red')
         if len(highlight_chunks):
@@ -259,6 +309,8 @@ for band_num, this_band_lims in tqdm(enumerate(freq_bands_lims)):
                         linestyle = '--')
         ax.axvline(time_vec[baseline_inds[0]], color = 'red',
                         linestyle = '--')
+        ax.set_ylim([0,1])
+        plt.legend()
         fig.suptitle(title_str)
         fig.savefig(os.path.join(plot_dir,
                         "_".join([f'freq_{band_str}', this_basename])))
