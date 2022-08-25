@@ -17,6 +17,7 @@ import matplotlib as mpl
 import pandas as pd
 import pingouin as pg
 import seaborn as sns
+import xarray as xr
 
 # ___       _ _   _       _ _          _   _             
 #|_ _|_ __ (_) |_(_) __ _| (_)______ _| |_(_) ___  _ __  
@@ -82,6 +83,17 @@ intra_save_path = '/stft/analyses/phase_coherence/diff_intra_phase_coherence_arr
 #    std_amp_list.append(region_std_amp)
 #
 #mean_amp_array = np.stack(mean_amp_list)
+# Get time and freq_vecs
+with tables.open_file(file_list[0],'r') as hf5:
+    time_vec = hf5.get_node('/stft/time_vec')[:]
+    freq_vec = hf5.get_node('/stft/freq_vec')[:]
+
+# Convert to bands
+freq_bands_lims = [[3,8] , [8,13], [13, 30],[30,70],[70,100]] 
+freq_map = np.array(['Theta', 'Alpha', 'Beta','low_Gamme','high_Gamma'])
+freq_bands = [np.arange(*x) for x in freq_bands_lims]
+freq_inds = [np.array([i for i,val in enumerate(freq_vec) if int(val) in band]) \
+                    for band in freq_bands]
 
 # Get region orders so intra-region coherence can be sorted by region
 region_order_list = []
@@ -96,41 +108,32 @@ coherence_list = []
 shuffle_list = []
 intra_list = []
 
+# Process separately to preserve memory
 for this_file in tqdm(file_list):
     with tables.open_file(this_file,'r') as hf5:
         coherence_list.append(hf5.get_node(coherence_save_path)[:])
-        shuffle_list.append(hf5.get_node(shuffle_save_path)[:])
-        intra_list.append(hf5.get_node(intra_save_path)[:])
-
-# Sort intra_list
-intra_list = [x[:,y] for x,y in zip(intra_list, region_order_list)]
-
 coherence_array = np.stack(coherence_list)
-shuffle_array = np.stack(shuffle_list)
-intra_array = np.stack(intra_list)
-
-## Smooth out by convolving with flat kernel
-#kern_len = 1000
-#kern = np.ones(kern_len)/kern_len
-#inds = list(np.ndindex(coherence_array.shape[:-1]))
-#for this_ind in tqdm(inds):
-#    coherence_array[this_ind] = np.convolve(kern, coherence_array[this_ind], mode = 'same')
-
-# Get time and freq_vecs
-with tables.open_file(this_file,'r') as hf5:
-    time_vec = hf5.get_node('/stft/time_vec')[:]
-    freq_vec = hf5.get_node('/stft/freq_vec')[:]
-
-# Convert to bands
-freq_bands_lims = [[3,8] , [8,13], [13, 30],[30,70],[70,100]] 
-freq_bands = [np.arange(*x) for x in freq_bands_lims]
-freq_inds = [np.array([i for i,val in enumerate(freq_vec) if int(val) in band]) \
-                    for band in freq_bands]
-
+del coherence_list
 coherence_band_list = np.stack([coherence_array[:,:,x].mean(axis=2) for x in freq_inds])
+del coherence_array
+
+for this_file in tqdm(file_list):
+    with tables.open_file(this_file,'r') as hf5:
+        shuffle_list.append(hf5.get_node(shuffle_save_path)[:])
+shuffle_array = np.stack(shuffle_list)
+del shuffle_list
 shuffle_band_list = np.stack([shuffle_array[:,:,x].mean(axis=2) for x in freq_inds])
+del shuffle_array
+
+for this_file in tqdm(file_list):
+    with tables.open_file(this_file,'r') as hf5:
+        intra_list.append(hf5.get_node(intra_save_path)[:])
+# Sort intra_list
+intra_list = [x[:,y] for x,y in tqdm(zip(intra_list, region_order_list))]
+intra_array = np.stack(intra_list)
+del intra_list
 intra_band_list = np.stack([intra_array[:,:,:,x].mean(axis=3) for x in freq_inds])
-#mean_band_coherence = np.stack([x.mean(axis=2) for x in coherence_band_list])
+del intra_array
 
 ######################################## 
 ## Plot amplitude for all sessions by band 
@@ -208,8 +211,8 @@ intra_frame = pd.DataFrame(dict(
                     comp_type = 'Intra-Region',
                     values = evoked_intra.flatten()))
 fin_frame = pd.concat([evoked_frame, shuffle_frame, intra_frame])
-freq_map = np.array(['Theta', 'Alpha', 'Beta'])
 fin_frame['freq_name'] = freq_map[fin_frame['band']]
+del evoked_frame, shuffle_frame, intra_frame
 
 g = sns.stripplot(data = fin_frame, x = 'freq_name', y = 'values', 
         hue = 'comp_type', size = 7, alpha = 0.5, dodge = True, color = 'grey',
@@ -546,9 +549,9 @@ x = (time_vec*1000) - 2000 #np.arange(dev_array.shape[-1])
 y = np.arange(dev_array.shape[1])
 xlims = [-1000, 2500]
 
-fig, ax = plt.subplots(2, len(freq_bands[:2]), 
-        sharex=True, figsize = (15,10))
-for col, dat in enumerate(dev_array[:2]):
+fig, ax = plt.subplots(2, len(freq_bands), 
+        sharex=True, figsize = (25,10))
+for col, dat in enumerate(dev_array):
     #im = ax[0,col].imshow(dat, interpolation = 'nearest', aspect = 'auto',
     #                cmap = cmap)#, norm = norm)
     im = ax[0,col].pcolormesh(x,y,dat,cmap = cmap, shading = 'nearest')
