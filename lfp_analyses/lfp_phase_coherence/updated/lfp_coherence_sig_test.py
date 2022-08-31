@@ -18,6 +18,7 @@ import pandas as pd
 import pingouin as pg
 import seaborn as sns
 import xarray as xr
+from sklearn.decomposition import PCA
 
 # ___       _ _   _       _ _          _   _             
 #|_ _|_ __ (_) |_(_) __ _| (_)______ _| |_(_) ___  _ __  
@@ -536,6 +537,65 @@ for band_num, this_band_lims in tqdm(enumerate(freq_bands_lims)):
 #plt.show()
 
 ############################################################
+# PCA of dev_array to show differences in epochs
+dev_bool_array = np.mean(np.abs(dev_array) > 0, axis=1)
+
+xlims = np.array([-1000, 2500])
+x = (time_vec*1000) - 2000 #np.arange(dev_array.shape[-1])
+lim_inds = np.squeeze([np.squeeze(np.where(x == y)) for y in xlims])
+fin_x = x[lim_inds[0]:lim_inds[1]] 
+fin_dev_bool = dev_bool_array[..., lim_inds[0]: lim_inds[1]]
+filtered_fin_dev = np.stack([savgol_filter(x, 201, 2) for x in fin_dev_bool])
+
+fig,ax = plt.subplots(2,1)
+ax[0].imshow(fin_dev_bool, interpolation = 'nearest', aspect = 'auto'); 
+ax[1].imshow(filtered_fin_dev, interpolation = 'nearest', aspect = 'auto'); 
+#plt.xlim(lim_inds)
+plt.show()
+
+epoch_lims = (np.stack([[1000,2000],[2000,2300],[2300,2850],[2850,3300],[3300, 4500]]) - 2000)
+epoch_mid_t = np.mean(epoch_lims,axis=-1)
+epoch_mid_inds = np.squeeze([np.argmin((fin_x - y)**2) for y in epoch_mid_t])
+epoch_mid_inds[1] = 1200
+epoch_mid_inds[2] = 1450
+cmap_names = ['Greys','Purples','Greens','Blues','Reds']
+fin_c = []
+for lims, x in zip(epoch_lims, cmap_names):
+    cmap = plt.get_cmap(x)
+    fin_c.append(cmap(np.arange(lims[0],lims[1])/lims[1]))
+fin_c = np.concatenate(fin_c)
+
+#pca_dev = PCA(n_components = 3).fit_transform(fin_dev_bool.T).T
+pca_dev = PCA(n_components = 3).fit_transform(filtered_fin_dev.T).T
+epoch_mid_pca = pca_dev[:, epoch_mid_inds]
+
+#plt.scatter(*pca_dev[:2], c = fin_x)
+#plt.colorbar()
+#plt.show()
+
+fig = plt.figure(figsize = (10,20))
+ax = fig.add_subplot(2,1,1, projection='3d')
+sct = ax.scatter(*pca_dev, c = fin_c)
+#ax.scatter(*epoch_mid_pca, s = 200, c = fin_c[epoch_mid_inds])
+ax.scatter(*epoch_mid_pca, s = 400, c = 'k', alpha = 1) 
+ax.set_xlabel('PC 1', fontsize = 10, rotation = 0)
+ax.set_ylabel('PC 2', fontsize = 10, rotation = 0)
+ax.set_zlabel('PC 3', fontsize = 10, rotation = 90)
+ax.plot(*pca_dev, color = 'k', alpha = 0.3) 
+ax2 = fig.add_subplot(8,1,5)
+#ax2.scatter(fin_x ,[1]*len(fin_c), c = fin_c)
+ax2.vlines(fin_x ,0,1, colors = fin_c)
+ax2.vlines(fin_x[epoch_mid_inds] ,0,1, colors = 'k', linewidth = 2)
+ax2.set_xlabel('Time post-stim (ms)')
+#fig.colorbar(sct, ax = ax)
+#plt.tight_layout()
+fig.suptitle('PCA of Aggregate Phase Coherence Deviation')
+fig.savefig(os.path.join(plot_dir,'aggregate_phase_coherence_pca'),
+                dpi = 300, format = 'png', bbox_inches = 'tight')
+plt.close(fig)
+#plt.show()
+
+############################################################
 
 cmap = mpl.cm.viridis
 bounds = [-1, 0, 1, 2] 
@@ -550,7 +610,7 @@ y = np.arange(dev_array.shape[1])
 xlims = [-1000, 2500]
 
 fig, ax = plt.subplots(2, len(freq_bands), 
-        sharex=True, figsize = (25,10))
+        sharex=True, figsize = (25,5))
 for col, dat in enumerate(dev_array):
     #im = ax[0,col].imshow(dat, interpolation = 'nearest', aspect = 'auto',
     #                cmap = cmap)#, norm = norm)
