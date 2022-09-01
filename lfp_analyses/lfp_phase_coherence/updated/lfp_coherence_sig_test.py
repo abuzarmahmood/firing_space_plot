@@ -595,6 +595,43 @@ fig.savefig(os.path.join(plot_dir,'aggregate_phase_coherence_pca'),
 plt.close(fig)
 #plt.show()
 
+##############################
+# Plot only post-stim data
+stim_epoch_mids = epoch_mid_inds[np.array([1,2,3])]
+stim_inds = np.arange(1000, 2500)
+fig = plt.figure(figsize = (10,20))
+ax = fig.add_subplot(2,1,1)
+ax.scatter(*pca_dev[1:,stim_inds], c = fin_c[stim_inds])
+ax.scatter(*epoch_mid_pca[1:,np.array([1,2,3])], s = 400, c = 'k', alpha = 1) 
+ax2 = fig.add_subplot(8,1,5)
+ax2.vlines(fin_x[stim_inds] ,0,1, colors = fin_c[stim_inds])
+ax2.vlines(fin_x[stim_epoch_mids] ,0,1, colors = 'k', linewidth = 2)
+ax2.set_xlabel('Time post-stim (ms)')
+plt.show()
+
+##############################
+# Reproject only post-stim data 
+pca_dev_stim = PCA(n_components = 2).fit_transform(filtered_fin_dev[:, stim_inds].T).T
+stim_epoch_mids2 = stim_epoch_mids.copy()
+stim_epoch_mids2[0] = 1100
+epoch_mid_pca_stim = pca_dev_stim[:, stim_epoch_mids2 - 1000]
+
+fig = plt.figure(figsize = (10,20))
+ax = fig.add_subplot(2,1,1)
+ax.scatter(*pca_dev_stim, c = fin_c[stim_inds])
+ax.scatter(*epoch_mid_pca_stim, s = 400, c = 'k', alpha = 1) 
+ax.set_xlabel('PC 1', fontsize = 10, rotation = 0)
+ax.set_ylabel('PC 2', fontsize = 10, rotation = 90)
+ax2 = fig.add_subplot(8,1,5)
+ax2.vlines(fin_x[stim_inds] ,0,1, colors = fin_c[stim_inds])
+ax2.vlines(fin_x[stim_epoch_mids2] ,0,1, colors = 'k', linewidth = 2)
+ax2.set_xlabel('Time post-stim (ms)')
+fig.suptitle('PCA of Aggregate Phase Coherence Deviation')
+fig.savefig(os.path.join(plot_dir,'aggregate_phase_coherence_pca_post_stim'),
+                dpi = 300, format = 'png', bbox_inches = 'tight')
+plt.close(fig)
+#plt.show()
+
 ############################################################
 
 cmap = mpl.cm.viridis
