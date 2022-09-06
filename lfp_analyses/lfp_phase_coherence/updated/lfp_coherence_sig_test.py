@@ -17,7 +17,6 @@ import matplotlib as mpl
 import pandas as pd
 import pingouin as pg
 import seaborn as sns
-import xarray as xr
 from sklearn.decomposition import PCA
 
 # ___       _ _   _       _ _          _   _             
@@ -448,11 +447,10 @@ fig.savefig(os.path.join(plot_dir, 'mean_intraregion_epoch_coherence'))
 plt.close(fig)
 #plt.show()
 
-# Plot everything
+time_vec_ms = (time_vec*1000) - 2000
+# Plot coherence and shuffle ONLY
 for band_num, this_band_lims in tqdm(enumerate(freq_bands_lims)):
-
     band_str = '-'.join([str(x) for x in this_band_lims])
-
     for session_num in range(mean_coherence_array.shape[1]): 
         this_basename = basenames[session_num]
 
@@ -464,50 +462,37 @@ for band_num, this_band_lims in tqdm(enumerate(freq_bands_lims)):
         this_mean_shuffle = mean_shuffle_array[band_num, session_num]
         this_std_shuffle = std_shuffle_array[band_num, session_num]
 
-        this_mean_intra = mean_intra_array[band_num, session_num]
-        this_std_intra = std_intra_array[band_num, session_num]
-
         title_str = this_basename + '\n' + f'Freq : {band_str}'
 
-        fig,ax = plt.subplots()
-        ax.plot(time_vec, this_mean_coherence, label = 'Inter')
-        ax.fill_between(x = time_vec,
+        fig,ax = plt.subplots(figsize = (12.6/2,5.5/2))
+        ax.plot(time_vec_ms, this_mean_coherence, label = 'Inter Region')
+        ax.fill_between(x = time_vec_ms,
                 y1 = this_mean_coherence + 3*this_std_coherence,
                 y2 = this_mean_coherence - 3*this_std_coherence,
-                alpha = 0.5)
-        ax.plot(time_vec, this_mean_shuffle, label = 'Shuffle')
-        ax.fill_between(x = time_vec,
+                alpha = 0.3)
+        ax.plot(time_vec_ms, this_mean_shuffle, label = 'Shuffle')
+        ax.fill_between(x = time_vec_ms,
                 y1 = this_mean_shuffle + 3*this_std_shuffle,
                 y2 = this_mean_shuffle - 3*this_std_shuffle,
                 alpha = 0.5)
-        for num, (region_mean, region_std) \
-                in enumerate(zip(this_mean_intra, this_std_intra)):
-            ax.plot(time_vec, region_mean, label = f'Intra{num}')
-            ax.fill_between(x = time_vec,
-                    y1 = region_mean + region_std,
-                    y2 = region_mean - region_std,
-                    alpha = 0.5)
         for this_lim in ci_array[band_num, session_num]:
-            ax.axhline(this_lim, color = 'red')
+            ax.axhline(this_lim, color = 'red', alpha = 0.5)
         if len(highlight_chunks):
             for this_chunk in highlight_chunks:
-                ax.axvspan(time_vec[this_chunk.min()], 
-                        time_vec[this_chunk.max()], 
-                        color = 'yellow', alpha = 0.5)
-        ax.axvline(time_vec[baseline_inds[-1]], color = 'red',
-                        linestyle = '--')
-        ax.axvline(time_vec[baseline_inds[0]], color = 'red',
-                        linestyle = '--')
-        ax.axvline(baseline_t, color = 'black',
-                        linestyle = '--', linewidth = 2,
-                        label = 'Stim Delivery')
-        ax.set_ylim([0,1])
+                ax.axvspan(time_vec_ms[this_chunk.min()], 
+                        time_vec_ms[this_chunk.max()], 
+                        color = 'yellow', alpha = 0.3)
+        #ax.set_ylim([0,1])
+        ax.set_xlim([-1000, 2500])
         ax.set_xlabel("Time (sec)")
-        ax.set_ylabel("Coherence (0-1)")
-        plt.legend(loc='lower left')
+        ax.set_ylabel("Coherence")
+        #plt.legend(loc='lower left')
+        plt.tight_layout()
+        plt.subplots_adjust(top = 0.8)
         fig.suptitle(title_str)
         fig.savefig(os.path.join(plot_dir,
-                        "_".join([f'freq_{band_str}', this_basename])))
+                        "_".join([f'freq_{band_str}', this_basename + '.svg'])),
+                        format = 'svg', dpi =300)
         plt.close(fig)
         #plt.show()
 
@@ -613,24 +598,39 @@ plt.show()
 # Reproject only post-stim data 
 pca_dev_stim = PCA(n_components = 3).fit_transform(filtered_fin_dev[:, stim_inds].T).T
 
+epoch_colors = ["#FFD2DA", "#FFBF4C", "#A64CA6", "#ff0000"]
+stim_epochs = epoch_lims[1:]
+
+import matplotlib.colors as mplc
+epoch_rgb = [mplc.to_rgb(x) for x in epoch_colors]
+
+epoch_rgba = np.concatenate([[(*this_col, this_a) for this_a in np.linspace(1,1,y[1]-y[0])] \
+        for this_col, y in zip(epoch_rgb, stim_epochs)])
+kern = np.ones(50)/50
+epoch_rgba = np.stack([np.convolve(x,kern, mode = 'valid') for x in epoch_rgba.T]).T
 epoch_mid_inds = np.squeeze([np.argmin((fin_x - y)**2) for y in epoch_mid_t])
 epoch_mid_inds[1] = 1200
 epoch_mid_inds[2] = 1600
 stim_epoch_mids = epoch_mid_inds[np.array([1,2,3])]
 stim_epoch_mids2 = stim_epoch_mids.copy()
 epoch_mid_pca_stim = pca_dev_stim[:, stim_epoch_mids2 - 1000]
-fig = plt.figure(figsize = (7,15))
+fig = plt.figure(figsize = (7,10))
 ax = fig.add_subplot(2,1,1, projection='3d')
-ax.scatter(*pca_dev_stim, c = fin_c[stim_inds])
+#ax.scatter(*pca_dev_stim, c = fin_c[stim_inds])
+ax.scatter(*pca_dev_stim, c = epoch_rgba[:len(stim_inds)])
 ax.scatter(*epoch_mid_pca_stim, s = 400, c = 'k', alpha = 1) 
 ax.set_xlabel('PC 1', fontsize = 10, rotation = 0)
 ax.set_ylabel('PC 2', fontsize = 10, rotation = 0)
 ax.set_zlabel('PC 3', fontsize = 10, rotation = 90)
 ax2 = fig.add_subplot(8,1,5)
-ax2.vlines(fin_x[stim_inds] ,0,1, colors = fin_c[stim_inds])
+#ax2.vlines(fin_x[stim_inds] ,0,1, colors = fin_c[stim_inds])
+ax2.vlines(fin_x[stim_inds] ,0,1, colors = epoch_rgba[:len(stim_inds)])
 ax2.vlines(fin_x[stim_epoch_mids2] ,0,1, colors = 'k', linewidth = 2)
 ax2.set_xlabel('Time post-stim (ms)')
+#ax2.set_xticks(ax2.get_xticks())
+#ax2.set_xticklabels(ax2.get_xticklabels(), rotation = 90)
 ax.set_title('PCA of Aggregate Phase Coherence Deviation')
+#plt.show()
 fig.savefig(os.path.join(plot_dir,'aggregate_phase_coherence_pca_post_stim_3D.png'),
                 dpi = 300, format = 'png', bbox_inches = 'tight')
 plt.close(fig)
