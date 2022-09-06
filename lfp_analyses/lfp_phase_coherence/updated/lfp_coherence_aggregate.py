@@ -44,6 +44,27 @@ def calc_coherence(stft_a, stft_b, trial_axis = 0):
     coherence = np.abs(cross_spec)/np.sqrt(a_power_spectrum*b_power_spectrum)
     return coherence
 
+def gen_intra_diff_resamples(x):
+    this_inds =  np.random.choice(range(phase_diff.shape[0]),
+                            phase_diff.shape[0], 
+                            replace = True)
+    this_diff_list = np.stack([x[this_inds] for x in intra_region_diff])
+    return np.abs(np.mean(this_diff_list,axis=(1)))
+
+def gen_diff_resamples(x):
+    this_phase_diff = phase_diff[
+                            np.random.choice(range(phase_diff.shape[0]),
+                            phase_diff.shape[0], 
+                            replace = True)]
+    return np.abs(np.mean(this_phase_diff,axis=(0)))
+
+def gen_diff_shuffle_resamples(x):
+    this_inds =  np.random.choice(range(phase_diff.shape[0]),
+                            phase_diff.shape[0], 
+                            replace = True)
+    this_shuff_diff = np.exp(1.j*(min_err_phase[0][this_inds] - min_err_phase[1]))
+    return np.abs(np.mean(this_shuff_diff,axis=(0)))
+
 ##################################################
 ## Read in data 
 ##################################################
@@ -99,36 +120,6 @@ for this_dir in tqdm(dir_list):
     
     bootstrap_samples = 500
 
-    #coherence_boot_array = np.zeros(\
-    #        (bootstrap_samples,*phase_diff.shape[1:])) 
-
-    #for repeat in trange(bootstrap_samples):
-    #    this_phase_diff = phase_diff[
-    #                            np.random.choice(range(phase_diff.shape[0]),
-    #                            phase_diff.shape[0], 
-    #                            replace = True)]
-    #    coherence_boot_array[repeat] = \
-    #            np.abs(np.mean(this_phase_diff,axis=(0)))
-    def gen_intra_diff_resamples(x):
-        this_inds =  np.random.choice(range(phase_diff.shape[0]),
-                                phase_diff.shape[0], 
-                                replace = True)
-        this_diff_list = np.stack([x[this_inds] for x in intra_region_diff])
-        return np.abs(np.mean(this_diff_list,axis=(1)))
-
-    def gen_diff_resamples(x):
-        this_phase_diff = phase_diff[
-                                np.random.choice(range(phase_diff.shape[0]),
-                                phase_diff.shape[0], 
-                                replace = True)]
-        return np.abs(np.mean(this_phase_diff,axis=(0)))
-
-    def gen_diff_shuffle_resamples(x):
-        this_inds =  np.random.choice(range(phase_diff.shape[0]),
-                                phase_diff.shape[0], 
-                                replace = True)
-        this_shuff_diff = np.exp(1.j*(min_err_phase[0][this_inds] - min_err_phase[1]))
-        return np.abs(np.mean(this_shuff_diff,axis=(0)))
 
     stft_save_path = '/stft/analyses/phase_coherence'
 
@@ -163,46 +154,3 @@ for this_dir in tqdm(dir_list):
              diff_coherence_shuffle_array, createparents = True)
     del diff_coherence_shuffle_array
 
-
-    # Not using boot_stft_coherence
-    ############################################################## 
-    #selected_stft_array = stft_array[:,np.array(select_region_electrodes)]
-
-    ## Resample to get confidence intervals and store percentiles for every timebin
-    ##boot_stft_coherence = np.empty((resamples, *selected_stft_array.shape[2:]))
-    ##for i in trange(resamples):
-
-    #def gen_stft_resamples(x):
-    #    trial_num = selected_stft_array.shape[0]
-    #    inds = np.random.choice(np.arange(trial_num), trial_num)
-    #    temp_stft_array = selected_stft_array[inds]
-    #    #boot_stft_coherence[i] = calc_coherence(temp_stft_array[:,0],
-    #    return calc_coherence(temp_stft_array[:,0],
-    #                temp_stft_array[:,1], trial_axis = 0)
-
-    #boot_stft_coherence = np.stack(
-    #        parallelize(gen_stft_resamples, np.arange(bootstrap_samples)))
-
-    ######################################## 
-    ## Write out data 
-    ######################################## 
-    #stft_save_path = '/stft/analyses/phase_coherence'
-
-    ## Write out final phase channels and channel numbers 
-    #with tables.open_file(dat.hdf5_path,'r+') as hf5:
-    #    #remove_node(os.path.join(
-    #    #        stft_save_path,'stft_phase_coherence_array'),hf5)
-    #    remove_node(os.path.join(
-    #            stft_save_path,'diff_phase_coherence_array'),hf5)
-    #    remove_node(os.path.join(
-    #            stft_save_path,'diff_shuffle_phase_coherence_array'),hf5)
-    #    remove_node(os.path.join(
-    #            stft_save_path,'diff_intra_phase_coherence_array'),hf5)
-    #    #hf5.create_array(stft_save_path, 'stft_phase_coherence_array', 
-    #    #     boot_stft_coherence, createparents = True)
-    #    hf5.create_array(stft_save_path, 'diff_phase_coherence_array', 
-    #         diff_coherence_boot_array, createparents = True)
-    #    hf5.create_array(stft_save_path, 'diff_shuffle_phase_coherence_array', 
-    #         diff_coherence_shuffle_array, createparents = True)
-    #    hf5.create_array(stft_save_path, 'diff_intra_phase_coherence_array', 
-    #         diff_intra_coherence_boot, createparents = True)
