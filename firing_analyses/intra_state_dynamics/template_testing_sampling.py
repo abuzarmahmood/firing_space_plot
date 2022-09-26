@@ -9,6 +9,7 @@ import pandas as pd
 import pylab as plt
 from scipy.ndimage import gaussian_filter1d as gauss_filt1d
 from tqdm import tqdm, trange
+import seaborn as sns
 
 ############################################################
 # Sample transitions with weights
@@ -230,10 +231,13 @@ def cost_func(transition_array):
 max_cost_per_state = np.array([cost_func(np.array([x]).T) for x in transition_inds])
 
 
+
 ############################################################
 ## In batches
 samples_per_batch = 100
 batches = 500
+base_transition_prior = [np.ones(x.shape)*10 for x in cost_per_transition]
+base_states_prior = np.ones(len(n_states)) * 30
 transition_prior = [np.ones(x.shape)*10 for x in cost_per_transition]
 states_prior = np.ones(len(n_states)) * 30
 for this_batch in trange(batches):
@@ -285,6 +289,97 @@ for this_batch in trange(batches):
     # Update with max cost for now
     # Might change to single samples (without batch)
     states_prior[this_n_transitions - 2] += cost_array.mean()
+#plt.show()
+sub_transition_prior = [x-y for x,y in zip(transition_prior,base_transition_prior)]
+sub_states_prior = states_prior - base_states_prior
+fig,ax = plt.subplots(len(transition_inds) +1, 2)
+ax[0,0].bar(n_states, sub_states_prior / sub_states_prior.sum())
+ax[0,1].bar(n_states, max_cost_per_state.flatten() / max_cost_per_state.sum())
+for num in range(len(sub_transition_prior)):
+    temp_prior = sub_transition_prior[num]
+    temp_normal_prior = temp_prior / temp_prior.sum()
+    ax[num+1,0].plot(temp_normal_prior.T)
+    ax[num+1,1].plot((cost_per_transition[num] / cost_per_transition[num].sum()).T)
+plt.show()
+
+############################################################
+## In batches
+## Normalize updates ACROSS states
+samples_per_batch = 100
+batches = 500
+transition_prior = [np.ones(x.shape)*10 for x in cost_per_transition]
+states_prior = np.ones(len(n_states)) * 30
+for this_batch in trange(batches):
+    state_list = np.random.choice(
+            a = n_states,
+            size = samples_per_batch,
+            replace = True,
+            p = states_prior / states_prior.sum()
+            ) 
+    #for s in range(samples_per_batch):
+    all_transition_inds = []
+    for this_n_states in state_list: 
+        #this_n_states = np.random.choice(
+        #        a = n_states,
+        #        size = 1,
+        #        replace = False,
+        #        p = states_prior / states_prior.sum()
+        #        )[0]
+        this_n_transitions = this_n_states - 1
+        trans_max_list = [len(grid) - this_n_transitions + i \
+                for i in range(this_n_transitions)]
+        this_transition_inds = []
+        for transition in range(this_n_transitions):
+            this_prior = transition_prior[this_n_transitions - 2][transition] 
+            if transition == 0:
+                cut_prior = this_prior[:trans_max_list[transition]]
+                this_trans = np.random.choice(
+                        a = grid[:trans_max_list[transition]],
+                        size = 1,
+                        replace = False,
+                        p = cut_prior / cut_prior.sum() 
+                        )[0]
+            else:
+                cut_min = this_transition_inds[transition-1]
+                cut_max = trans_max_list[transition]
+                cut_prior = this_prior[cut_min:cut_max]
+                this_trans = np.random.choice(
+                        a = grid[cut_min:cut_max],
+                        size = 1,
+                        replace = False,
+                        p = cut_prior / cut_prior.sum() 
+                        ).flatten()[0]
+            this_transition_inds.append(this_trans)
+        all_transition_inds.append(this_transition_inds)
+    # Make sure cost_array normalization doesnt' create zeros
+    cost_array = np.array([cost_func(x) for x in all_transition_inds])
+    #cost_frame = pd.DataFrame(
+    #        dict(
+    #            states = state_list,
+    #            costs = cost_array,
+    #            )
+    #        )
+    #fig,ax = plt.subplots(1,2)
+    #sns.barplot(
+    #        data = cost_frame,
+    #        x = 'states',
+    #        y = 'costs',
+    #        ax = ax[0],
+    #        ci = None,
+    #        )
+    #ax[1].bar(n_states, state_multipliers)
+    #plt.show()
+    if cost_array.max():
+        norm_cost_array = cost_array / cost_array.max()
+    # Update transition prior
+    #broadcasted_cost = np.tile(norm_cost_array, (len(inds) // len(cost_array)))
+    for this_cost, this_inds in zip(norm_cost_array, all_transition_inds):
+        state_inds = np.arange(len(this_inds))
+        transition_prior[len(this_inds)-2][state_inds, this_inds] += [this_cost]*len(this_inds) 
+        # Update states_prior
+        # Update with max cost for now
+        # Might change to single samples (without batch)
+        states_prior[len(this_inds) - 2] += this_cost 
 #plt.show()
 fig,ax = plt.subplots(len(transition_inds) +1, 2)
 ax[0,0].bar(n_states, states_prior / states_prior.sum())
