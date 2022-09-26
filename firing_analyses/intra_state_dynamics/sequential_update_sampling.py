@@ -362,7 +362,9 @@ new_transitions = [new_transitions[x] for x in inds]
 
 unique_new_states = np.unique(new_states)
 fig,ax = plt.subplots(len(unique_new_states) + 1, 2, sharex = 'col', figsize = (5,10))
-ax[0,0].hist(new_states)
+this_ax = fig.add_subplot(len(unique_new_states) + 1, 2,1)
+ax[0,0].axis('off')
+this_ax.hist(new_states)
 for num, state in enumerate(unique_new_states):
     wanted_inds = np.where(new_states == state)[0]
     min_ind, max_ind = wanted_inds.min(), wanted_inds.max()
@@ -440,7 +442,9 @@ new_transitions = [new_transitions[x] for x in inds]
 
 unique_new_states = np.unique(new_states)
 fig,ax = plt.subplots(len(unique_new_states) + 1, 2, sharex = 'col', figsize = (5,10))
-ax[0,0].hist(new_states)
+this_ax = fig.add_subplot(len(unique_new_states) + 1, 2,1)
+ax[0,0].axis('off')
+this_ax.hist(new_states)
 for num, state in enumerate(unique_new_states):
     wanted_inds = np.where(new_states == state)[0]
     min_ind, max_ind = wanted_inds.min(), wanted_inds.max()
