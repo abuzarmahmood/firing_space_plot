@@ -10,6 +10,9 @@ import pylab as plt
 from scipy.ndimage import gaussian_filter1d as gauss_filt1d
 from tqdm import tqdm, trange
 import seaborn as sns
+import os
+
+plot_dir = '/media/bigdata/firing_space_plot/firing_analyses/intra_state_dynamics/plots/sequential_sampling'
 
 ############################################################
 # Sample transitions with weights
@@ -189,6 +192,18 @@ plt.show()
 
 ############################################################
 # Sample transitions with weights
+# Cost function
+# Note, a single draw will have a single cost
+# Different transitions will not have different costs
+def cost_func(transition_array):
+    """transition_array : transitions x samples
+    """
+    # Evaluate costs
+    this_cost_per_transition = cost_per_transition[len(transition_array)-2]
+    cost_array = np.stack([this_cost[this_inds] for this_cost,this_inds \
+            in zip(this_cost_per_transition, transition_array)] )
+    return cost_array.sum(axis=0)
+
 grid_len = 100
 transition_inds = [
         [30,60],
@@ -204,9 +219,13 @@ cost_per_transition = [np.zeros((x,grid_len)) for x in n_transitions]
 for state_i,transition_list in enumerate(transition_inds):
     for i, val in enumerate(transition_list):
         cost_per_transition[state_i][i,val] = 1
-state_multipliers = [0.1,1,5,1.5,20]
+wanted_state_ratios = np.array([0.1,1,5,1.5,5])
+wanted_state_ratios = wanted_state_ratios / wanted_state_ratios.max()
+max_cost_per_state = np.array([cost_func(np.array([x]).T) for x in transition_inds])
 cost_per_transition = [gauss_filt1d(x, 3, axis=-1)*mult\
         for x,mult in zip(cost_per_transition, state_multipliers)]
+cost_per_transition = [(x/y)*z for x,y,z in \
+        zip(cost_per_transition, max_cost_per_state, wanted_state_ratios)]
 fig,ax = plt.subplots(len(cost_per_transition), 1, sharey=True)
 for dat, this_ax in zip(cost_per_transition, ax):
     #this_ax.imshow(dat, aspect = 'auto')
@@ -215,20 +234,8 @@ plt.show()
 
 grid = np.arange(grid_len)
 
-# Cost function
-# Note, a single draw will have a single cost
-# Different transitions will not have different costs
-def cost_func(transition_array):
-    """transition_array : transitions x samples
-    """
-    # Evaluate costs
-    this_cost_per_transition = cost_per_transition[len(transition_array)-2]
-    cost_array = np.stack([this_cost[this_inds] for this_cost,this_inds \
-            in zip(this_cost_per_transition, transition_array)] )
-    return cost_array.sum(axis=0)
-
-#transition_array = np.array(transition_inds[0]).T[:,np.newaxis]
-max_cost_per_state = np.array([cost_func(np.array([x]).T) for x in transition_inds])
+fin_cost_per_state = np.array([cost_func(np.array([x]).T) for x in transition_inds])
+cost_per_state_ratio = np.round(fin_cost_per_state / fin_cost_per_state.max(),3).flatten()
 
 
 
@@ -294,7 +301,7 @@ sub_transition_prior = [x-y for x,y in zip(transition_prior,base_transition_prio
 sub_states_prior = states_prior - base_states_prior
 fig,ax = plt.subplots(len(transition_inds) +1, 2)
 ax[0,0].bar(n_states, sub_states_prior / sub_states_prior.sum())
-ax[0,1].bar(n_states, max_cost_per_state.flatten() / max_cost_per_state.sum())
+ax[0,1].bar(n_states, cost_per_state_ratio)
 for num in range(len(sub_transition_prior)):
     temp_prior = sub_transition_prior[num]
     temp_normal_prior = temp_prior / temp_prior.sum()
@@ -303,116 +310,25 @@ for num in range(len(sub_transition_prior)):
 plt.show()
 
 ############################################################
-## In batches
-## Normalize updates ACROSS states
-samples_per_batch = 100
-batches = 500
-transition_prior = [np.ones(x.shape)*10 for x in cost_per_transition]
-states_prior = np.ones(len(n_states)) * 30
-for this_batch in trange(batches):
-    state_list = np.random.choice(
-            a = n_states,
-            size = samples_per_batch,
-            replace = True,
-            p = states_prior / states_prior.sum()
-            ) 
-    #for s in range(samples_per_batch):
-    all_transition_inds = []
-    for this_n_states in state_list: 
-        #this_n_states = np.random.choice(
-        #        a = n_states,
-        #        size = 1,
-        #        replace = False,
-        #        p = states_prior / states_prior.sum()
-        #        )[0]
-        this_n_transitions = this_n_states - 1
-        trans_max_list = [len(grid) - this_n_transitions + i \
-                for i in range(this_n_transitions)]
-        this_transition_inds = []
-        for transition in range(this_n_transitions):
-            this_prior = transition_prior[this_n_transitions - 2][transition] 
-            if transition == 0:
-                cut_prior = this_prior[:trans_max_list[transition]]
-                this_trans = np.random.choice(
-                        a = grid[:trans_max_list[transition]],
-                        size = 1,
-                        replace = False,
-                        p = cut_prior / cut_prior.sum() 
-                        )[0]
-            else:
-                cut_min = this_transition_inds[transition-1]
-                cut_max = trans_max_list[transition]
-                cut_prior = this_prior[cut_min:cut_max]
-                this_trans = np.random.choice(
-                        a = grid[cut_min:cut_max],
-                        size = 1,
-                        replace = False,
-                        p = cut_prior / cut_prior.sum() 
-                        ).flatten()[0]
-            this_transition_inds.append(this_trans)
-        all_transition_inds.append(this_transition_inds)
-    # Make sure cost_array normalization doesnt' create zeros
-    cost_array = np.array([cost_func(x) for x in all_transition_inds])
-    #cost_frame = pd.DataFrame(
-    #        dict(
-    #            states = state_list,
-    #            costs = cost_array,
-    #            )
-    #        )
-    #fig,ax = plt.subplots(1,2)
-    #sns.barplot(
-    #        data = cost_frame,
-    #        x = 'states',
-    #        y = 'costs',
-    #        ax = ax[0],
-    #        ci = None,
-    #        )
-    #ax[1].bar(n_states, state_multipliers)
-    #plt.show()
-    if cost_array.max():
-        norm_cost_array = cost_array / cost_array.max()
-    # Update transition prior
-    #broadcasted_cost = np.tile(norm_cost_array, (len(inds) // len(cost_array)))
-    for this_cost, this_inds in zip(norm_cost_array, all_transition_inds):
-        state_inds = np.arange(len(this_inds))
-        transition_prior[len(this_inds)-2][state_inds, this_inds] += [this_cost]*len(this_inds) 
-        # Update states_prior
-        # Update with max cost for now
-        # Might change to single samples (without batch)
-        states_prior[len(this_inds) - 2] += this_cost 
-#plt.show()
-fig,ax = plt.subplots(len(transition_inds) +1, 2)
-ax[0,0].bar(n_states, states_prior / states_prior.sum())
-ax[0,1].bar(n_states, max_cost_per_state.flatten() / max_cost_per_state.sum())
-for num in range(len(transition_prior)):
-    temp_prior = transition_prior[num]
-    temp_normal_prior = temp_prior / temp_prior.sum()
-    ax[num+1,0].plot(temp_normal_prior.T)
-    ax[num+1,1].plot((cost_per_transition[num] / cost_per_transition[num].sum()).T)
-plt.show()
-
-############################################################
-## Online updates 
-total_samples = 50000
-transition_prior = [np.ones(x.shape)*10 for x in cost_per_transition]
-states_prior = np.ones(len(n_states)) * 10
-#for this_batch in trange(batches):
-for s in trange(total_samples):
+# Sampling from the updated priors
+n_new_samples = 5000
+new_states= []
+new_costs = []
+new_transitions = []
+for s in trange(n_new_samples):
     this_n_states = np.random.choice(
             a = n_states,
             size = 1,
             replace = False,
-            p = states_prior / states_prior.sum()
+            p = sub_states_prior / sub_states_prior.sum(), 
             )[0]
     this_n_transitions = this_n_states - 1
     trans_max_list = [len(grid) - this_n_transitions + i \
             for i in range(this_n_transitions)]
-    #all_transition_inds = []
-    #for s in range(samples_per_batch):
     this_transition_inds = []
     for transition in range(this_n_transitions):
         if transition == 0:
-            this_prior = transition_prior[this_n_transitions - 2][transition] 
+            this_prior = sub_transition_prior[this_n_transitions - 2][transition] 
             cut_prior = this_prior[:trans_max_list[transition]]
             this_trans = np.random.choice(
                     a = grid[:trans_max_list[transition]],
@@ -421,7 +337,7 @@ for s in trange(total_samples):
                     p = cut_prior / cut_prior.sum() 
                     )[0]
         else:
-            this_prior = transition_prior[this_n_transitions - 2][transition] 
+            this_prior = sub_transition_prior[this_n_transitions - 2][transition] 
             cut_min = this_transition_inds[transition-1]
             cut_max = trans_max_list[transition]
             cut_prior = this_prior[cut_min:cut_max]
@@ -432,33 +348,118 @@ for s in trange(total_samples):
                     p = cut_prior / cut_prior.sum() 
                     ).flatten()[0]
         this_transition_inds.append(this_trans)
-        #all_transition_inds.append(this_transition_inds)
-    this_transition_inds = np.array(this_transition_inds)
-    #all_transition_inds = np.stack(all_transition_inds).T
     # Make sure cost_array normalization doesnt' create zeros
-    #cost_array = cost_func(all_transition_inds)
     cost_array = cost_func(this_transition_inds)
-    #if cost_array.max():
-    #    norm_cost_array = cost_array / cost_array.max()
-    # Update transition prior
-    #inds = np.array(list(np.ndindex(all_transition_inds.shape)))
-    #broadcasted_cost = np.tile(norm_cost_array, (len(inds) // len(cost_array)))
-    #transition_prior[this_n_transitions-2][inds[:,0], all_transition_inds.flatten()] += broadcasted_cost 
-    inds = np.arange(len(this_transition_inds))
-    broadcasted_cost = np.tile(cost_array, (len(inds))) 
-    transition_prior[this_n_transitions-2][tuple((inds, this_transition_inds))] += broadcasted_cost 
-    # Update states_prior
-    # Update with max cost for now
-    # Might change to single samples (without batch)
-    #states_prior[this_n_transitions - 2] += cost_array.mean()
-    states_prior[this_n_transitions - 2] += cost_array
+    new_states.append(this_n_states)
+    new_transitions.append(this_transition_inds)
+    new_costs.append(cost_array)
+
+new_states = np.array(new_states)
+inds = np.argsort(new_states)
+new_states = new_states[inds]
+new_costs = [new_costs[x] for x in inds]
+new_transitions = [new_transitions[x] for x in inds]
+
+unique_new_states = np.unique(new_states)
+fig,ax = plt.subplots(len(unique_new_states) + 1, 2, sharex = 'col', figsize = (5,10))
+ax[0,0].hist(new_states)
+for num, state in enumerate(unique_new_states):
+    wanted_inds = np.where(new_states == state)[0]
+    min_ind, max_ind = wanted_inds.min(), wanted_inds.max()
+    wanted_costs = new_costs[min_ind:max_ind]
+    cost_inds = np.argsort(wanted_costs)
+    sorted_costs = np.array(wanted_costs)[cost_inds]
+    if len(wanted_inds) > 1:
+        wanted_transitions = np.stack(new_transitions[min_ind:max_ind])
+    sorted_transitions = wanted_transitions[cost_inds]
+    x = np.tile(np.arange(sorted_transitions.shape[0]), (sorted_transitions.shape[1],1))
+    ax[num+1,0].set_title(f'States = {state}')
+    ax[num+1, 0].scatter(sorted_transitions, x.T, 
+            color = 'grey', alpha = 0.3, s = 2)
+    ax[num+1, 0].set_xlim([0, grid_len])
+    ax[num+1, 1].plot(sorted_costs, x[0])
+    ax[num+1, 1].axvline(fin_cost_per_state[np.where(n_states == state)[0][0]], 
+            color = 'red', linestyle = '--')
+    #for x in wanted_transitions.T:
+    #    ax[num+1].hist(x, bins = 50)
+plt.tight_layout()
+fig.savefig(os.path.join(plot_dir,'sampling_updated_prior.png'))
+plt.close(fig)
 #plt.show()
-fig,ax = plt.subplots(len(transition_inds) +1, 2)
-ax[0,0].bar(n_states, states_prior / states_prior.sum())
-ax[0,1].bar(n_states, max_cost_per_state.flatten() / max_cost_per_state.sum())
-for num in range(len(transition_prior)):
-    temp_prior = transition_prior[num]
-    temp_normal_prior = temp_prior / temp_prior.sum()
-    ax[num+1,0].plot(temp_normal_prior.T)
-    ax[num+1,1].plot((cost_per_transition[num] / cost_per_transition[num].sum()).T)
-plt.show()
+
+############################################################
+# Same for flat priors
+n_new_samples = 5000
+new_states= []
+new_costs = []
+new_transitions = []
+for s in trange(n_new_samples):
+    this_n_states = np.random.choice(
+            a = n_states,
+            size = 1,
+            replace = False,
+            p = base_states_prior / base_states_prior.sum(), 
+            )[0]
+    this_n_transitions = this_n_states - 1
+    trans_max_list = [len(grid) - this_n_transitions + i \
+            for i in range(this_n_transitions)]
+    this_transition_inds = []
+    for transition in range(this_n_transitions):
+        if transition == 0:
+            this_prior = base_transition_prior[this_n_transitions - 2][transition] 
+            cut_prior = this_prior[:trans_max_list[transition]]
+            this_trans = np.random.choice(
+                    a = grid[:trans_max_list[transition]],
+                    size = 1,
+                    replace = False,
+                    p = cut_prior / cut_prior.sum() 
+                    )[0]
+        else:
+            this_prior = base_transition_prior[this_n_transitions - 2][transition] 
+            cut_min = this_transition_inds[transition-1]
+            cut_max = trans_max_list[transition]
+            cut_prior = this_prior[cut_min:cut_max]
+            this_trans = np.random.choice(
+                    a = grid[cut_min:cut_max],
+                    size = 1,
+                    replace = False,
+                    p = cut_prior / cut_prior.sum() 
+                    ).flatten()[0]
+        this_transition_inds.append(this_trans)
+    # Make sure cost_array normalization doesnt' create zeros
+    cost_array = cost_func(this_transition_inds)
+    new_states.append(this_n_states)
+    new_transitions.append(this_transition_inds)
+    new_costs.append(cost_array)
+
+new_states = np.array(new_states)
+inds = np.argsort(new_states)
+new_states = new_states[inds]
+new_costs = [new_costs[x] for x in inds]
+new_transitions = [new_transitions[x] for x in inds]
+
+unique_new_states = np.unique(new_states)
+fig,ax = plt.subplots(len(unique_new_states) + 1, 2, sharex = 'col', figsize = (5,10))
+ax[0,0].hist(new_states)
+for num, state in enumerate(unique_new_states):
+    wanted_inds = np.where(new_states == state)[0]
+    min_ind, max_ind = wanted_inds.min(), wanted_inds.max()
+    wanted_costs = new_costs[min_ind:max_ind]
+    cost_inds = np.argsort(wanted_costs)
+    sorted_costs = np.array(wanted_costs)[cost_inds]
+    wanted_transitions = np.stack(new_transitions[min_ind:max_ind])
+    sorted_transitions = wanted_transitions[cost_inds]
+    x = np.tile(np.arange(sorted_transitions.shape[0]), (sorted_transitions.shape[1],1))
+    ax[num+1,0].set_title(f'States = {state}')
+    ax[num+1, 0].scatter(sorted_transitions, x.T, 
+            color = 'grey', alpha = 0.3, s = 2)
+    ax[num+1, 0].set_xlim([0, grid_len])
+    ax[num+1, 1].plot(sorted_costs, x[0])
+    ax[num+1, 1].axvline(fin_cost_per_state[np.where(n_states == state)[0][0]], 
+            color = 'red', linestyle = '--')
+    #for x in wanted_transitions.T:
+    #    ax[num+1].hist(x, bins = 50)
+plt.tight_layout()
+fig.savefig(os.path.join(plot_dir,'sampling_base_prior.png'))
+plt.close(fig)
+#plt.show()
