@@ -49,6 +49,34 @@ off_gape_array, cluster_inds, bool_inds = return_gape_data()
 off_spikes_list, off_firing_list, off_firing_time = return_neural_data()
 file_list, basename_list = return_names()
 
+temporal_wilcoxon = pg.wilcoxon(*list(zip(*mean_cluster_inds)))
+
+# Is there a temporal component to the clustering?
+mean_cluster_inds = []
+fig,ax = plt.subplots(len(cluster_inds) + 1, 1, 
+        sharex=True, sharey=True, figsize = (4,15))
+for x, this_ax, in zip(cluster_inds,ax[:-1]):
+    x_vals = np.linspace(0,1,len(x))
+    this_ax.plot(x_vals,x)
+    mean_cluster_inds.append((np.mean(x_vals[x==0]),np.mean(x_vals[x>0])))
+    this_ax.set_ylabel('Cluster')
+ax[-1].set_xlabel('Trial location')
+ax[-1].scatter(*list(zip(*mean_cluster_inds)), alpha = 0.5)
+ax[-1].set_xlabel('Zero cluster mean')
+ax[-1].set_ylabel('One cluster mean')
+ax[-1].set_aspect('equal')
+x_lin = np.linspace(0,1)
+ax[-1].plot(x_lin, x_lin, color = 'red', alpha = 0.7, linestyle = '--')
+plt.suptitle('Temporal effect on cluster membership' + '\n' + \
+    f'Wilcoxon paired : p_val = {np.round(temporal_wilcoxon["p-val"][0],3)}')
+#ax[-1].hist(mean_cluster_inds, alpha = 0.7)
+#ax[-1].axvline(0.5, color = 'red', linestyle = '--', linewidth = 2)
+fig.savefig(os.path.join(plot_dir, 'temporal_cluster_membership_test.png'))
+plt.close(fig)
+#plt.show()
+
+
+############################################################
 quin_gape_array = [x[1] for x in off_gape_array]
 cluster_sort_inds = [np.argsort(x) for x in cluster_inds]
 cluster_div = [np.sum(x==0) for x in cluster_inds]
@@ -61,6 +89,8 @@ quin_spikes_list = [x[y] for x,y in zip(quin_spikes_list, cluster_sort_inds)]
 quin_spikes_clusters = [
         [x[:num], x[num:]] for x,num in zip(quin_spikes_list, cluster_div)
         ]
+
+# Changes in mean firing rate across clusters and epochs
 
 quin_clust_flat = [x for y in quin_spikes_clusters for x in y]
 
