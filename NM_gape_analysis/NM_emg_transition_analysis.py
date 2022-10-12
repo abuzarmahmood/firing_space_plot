@@ -179,6 +179,52 @@ fig.savefig(os.path.join(plot_dir, 'transition_latency_comp.png'))
 plt.close(fig)
 #plt.show()
 
+fin_frame['basename'] = fin_frame['basename'].astype('category')
+fin_frame['dat_num'] = fin_frame.basename.cat.codes
+fin_frame['cluster'] = pd.Categorical(fin_frame['cluster'], categories = ['low','high'], ordered = True)
+
+mean_fin_frame = fin_frame.groupby(['dat_num','transition','cluster']).mean().reset_index(drop=False)
+
+fig,ax = plt.subplots(2, len(mean_fin_frame.transition.unique()), sharey = 'row', sharex='row')
+for num, this_ax in enumerate(ax.T):
+    this_dat = mean_fin_frame.loc[mean_fin_frame.transition == num]
+    this_ax[0].hist(this_dat.groupby('dat_num')['mode'].diff().dropna())
+    this_ax[0].axvline(0, color = 'red', linestyle = '--')
+    this_ax[1].scatter(this_dat.cluster, this_dat['mode'])
+    this_ax[1].set_xlabel("EMG cluster")
+    this_ax[0].set_xlabel("Diff bw clusters")
+    for x,y in this_dat.groupby('dat_num'):
+        this_ax[1].plot(y['cluster'],y['mode'], color = 'grey')
+ax[0,0].set_ylabel('Frequency')
+ax[1,0].set_ylabel('Mean Transition')
+plt.suptitle('Mean transition location per session')
+ax[0,1].set_title('Difference in mean location per cluster')
+ax[1,1].set_title('Paired mean locations per cluster')
+plt.tight_layout()
+fig.savefig(os.path.join(plot_dir, 'agg_transition_latency_comp.png'))
+plt.close(fig)
+#plt.show()
+
+fig,ax = plt.subplots(2, len(mean_fin_frame.transition.unique()), sharey = 'row', sharex='row')
+for num, this_ax in enumerate(ax.T):
+    this_dat = mean_fin_frame.loc[mean_fin_frame.transition == num]
+    this_ax[0].hist(this_dat.groupby('dat_num')['std'].diff().dropna())
+    this_ax[0].axvline(0, color = 'red', linestyle = '--')
+    this_ax[1].scatter(this_dat.cluster, this_dat['std'])
+    this_ax[1].set_xlabel("EMG cluster")
+    this_ax[0].set_xlabel("Diff bw clusters")
+    for x,y in this_dat.groupby('dat_num'):
+        this_ax[1].plot(y['cluster'],y['std'], color = 'grey')
+ax[0,0].set_ylabel('Frequency')
+ax[1,0].set_ylabel('Mean Transition Variance')
+plt.suptitle('Mean transition variance location per session')
+ax[0,1].set_title('Difference in mean variance per cluster')
+ax[1,1].set_title('Paired mean variances per cluster')
+plt.tight_layout()
+fig.savefig(os.path.join(plot_dir, 'agg_transition_std_comp.png'))
+plt.close(fig)
+#plt.show()
+
 sns.catplot(
         data = fin_frame,
         col = 'basename',
