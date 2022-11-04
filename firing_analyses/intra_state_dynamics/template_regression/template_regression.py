@@ -16,8 +16,7 @@ import matplotlib.pyplot as plt
 import matplotlib as mpl
 #from joblib import Parallel, cpu_count, delayed
 import seaborn as sns
-from scipy.stats import zscore
-from scipy.stats import mode
+from scipy.stats import zscore, mode, spearmanr
 import numpy as np
 import matplotlib as mpl
 import matplotlib.patches as mpatches
@@ -419,48 +418,71 @@ preprocess_parameters = dict(zip(preprocess_parameters_keys,
 model_parameters['states'] = states
 preprocess_parameters['time_lims'] = time_lims
 
-mode_tau_list = []
-raw_tau_list = []
-for num, this_spikes in enumerate(tqdm(flat_spikes)):
-    try:
-        pre_dat = preprocess_single_taste(this_spikes, **preprocess_parameters)
-        model = single_taste_poisson(pre_dat, **model_parameters)
-        with model:
-            inference = pm.ADVI('full-rank')
-            approx = pm.fit(n=model_parameters['fit'], method=inference)
-            trace = approx.sample(draws=model_parameters['samples'])
-        #tau_trial = np.squeeze(mode(np.vectorize(np.int)(trace['tau_trial']))[0])
-        raw_tau = trace['tau']
-        mode_tau = np.squeeze(mode(np.vectorize(np.int)(raw_tau))[0])
-        mode_tau_list.append(mode_tau)
-        raw_tau_list.append(raw_tau)
-        np.save(os.path.join(model_outs_dir, f'raw_tau_{num}.npy'), raw_tau, allow_pickle = True)
-        np.save(os.path.join(model_outs_dir, f'mode_tau_{num}.npy'), mode_tau, allow_pickle = True)
-    except:
-        print(f'Error with run {num}')
+#mode_tau_list = []
+#raw_tau_list = []
+#for num, this_spikes in enumerate(tqdm(flat_spikes)):
+#    try:
+#        pre_dat = preprocess_single_taste(this_spikes, **preprocess_parameters)
+#        model = single_taste_poisson(pre_dat, **model_parameters)
+#        with model:
+#            inference = pm.ADVI('full-rank')
+#            approx = pm.fit(n=model_parameters['fit'], method=inference)
+#            trace = approx.sample(draws=model_parameters['samples'])
+#        #tau_trial = np.squeeze(mode(np.vectorize(np.int)(trace['tau_trial']))[0])
+#        raw_tau = trace['tau']
+#        mode_tau = np.squeeze(mode(np.vectorize(np.int)(raw_tau))[0])
+#        mode_tau_list.append(mode_tau)
+#        raw_tau_list.append(raw_tau)
+#        np.save(os.path.join(model_outs_dir, f'raw_tau_{num}.npy'), raw_tau, allow_pickle = True)
+#        np.save(os.path.join(model_outs_dir, f'mode_tau_{num}.npy'), mode_tau, allow_pickle = True)
+#    except:
+#        print(f'Error with run {num}')
 
 # Get inds
-file_list = glob(os.path.join(model_outs_dir, '*raw_tau*'))
-inds = [os.path.basename(x).split('_')[-1].split('.')[0] for x in file_list]
-inds = sorted([int(x) for x in inds])
+raw_file_list = glob(os.path.join(model_outs_dir, '*raw_tau*'))
+mode_file_list = glob(os.path.join(model_outs_dir, '*mode_tau*'))
+raw_tau_list = [np.load(x) for x in raw_file_list]
+mode_tau_list = [np.load(x) for x in mode_file_list]
+inds = [os.path.basename(x).split('_')[-1].split('.')[0] for x in raw_file_list]
+inds = [int(x) for x in inds]
+sort_inds = np.argsort(inds)
+raw_tau_list = [raw_tau_list[x] for x in sort_inds]
+mode_tau_list = [mode_tau_list[x] for x in sort_inds]
+inds = [inds[x] for x in sort_inds]
+
+#inds = sorted([int(x) for x in inds])
 
 tau_var = [np.std(x,axis=0) for x in raw_tau_list]
 mean_tau_var = [x.mean(axis=None) for x in tau_var]
+std_tau_var = [x.std(axis=None) for x in tau_var]
 
 sim_frame.loc[inds, 'mean_var'] = mean_tau_var
+sim_frame.loc[inds, 'std_var'] = std_tau_var
+
+
+AM_frame = sim_frame.loc[sim_frame['experimenter'] == 'AM']
+sim_var_corr = spearmanr(AM_frame.similarity, AM_frame.mean_var)
+sim_var_corr = [np.round(x,4) for x in sim_var_corr]
 
 # Only use AM data because NM data also has laser
 sns.regplot(
         x = 'similarity',
         y = 'mean_var',
-        data = sim_frame.loc[sim_frame['experimenter'] == 'AM']
+        data = AM_frame 
         )
+plt.errorbar(x = AM_frame.similarity,
+                y = AM_frame.mean_var,
+                yerr = AM_frame.std_var,
+                fmt = 'o',
+                zorder = -10)
 fig = plt.gcf()
 plt.xlabel('Dynamicity')
 plt.ylabel('Changepoint uncertainty')
-fig.savefig(os.path.join(plot_dir,'dynamicity_vs_changepoint_uncertainty.png'))
-plt.close(fig)
+plt.title('SpearmanR' + '\n' + f'Corr : {sim_var_corr[0]}, p_val : {sim_var_corr[1]}')
 #plt.show()
+fig.savefig(os.path.join(plot_dir,'dynamicity_vs_changepoint_uncertainty.png'),
+        dpi = 300)
+plt.close(fig)
 
 #inds = np.array(list(np.ndindex(tau_var.shape)))
 #tau_var_frame = pd.DataFrame(
