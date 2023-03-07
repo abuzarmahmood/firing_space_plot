@@ -35,8 +35,9 @@ from pytau.changepoint_preprocess import preprocess_single_taste
 from pytau.changepoint_model import (single_taste_poisson, 
                                     advi_fit)
 
-plot_dir = '/media/bigdata/firing_space_plot/firing_analyses/'\
-        'intra_state_dynamics/template_regression/plots'
+base_dir = '/media/bigdata/firing_space_plot/firing_analyses/'\
+        'intra_state_dynamics/template_regression/'
+plot_dir = os.path.join(base_dir,'plots') 
 
 ############################################################
 ## Simulation
@@ -55,6 +56,7 @@ basis_funcs = np.stack([np.zeros(2000) for i in range(4)] )
 for this_func, this_lims in zip(basis_funcs, epoch_lims):
     this_func[this_lims[0]:this_lims[1]] = 1
 basis_funcs = basis_funcs / norm(basis_funcs,axis=-1)[:,np.newaxis] 
+long_template = np.tile(basis_funcs, (1,trials))
 
 vz.imshow(basis_funcs);plt.show()
 
@@ -79,13 +81,25 @@ img_kwargs = dict(interpolation = 'nearest', aspect = 'auto')
 #long_firing = np.tile(firing, (1,trials))
 long_firing = np.reshape(firing_array, (len(firing_array),-1)) 
 long_firing = np.abs(long_firing)
-vz.imshow(long_firing);plt.colorbar();plt.show()
+
+fig,ax = plt.subplots(2,1, figsize = (13,6), sharex=True)
+ax[0].imshow(long_template, interpolation = 'nearest', aspect = 'auto')
+ax[0].set_ylabel('Template #')
+ax[0].set_title('Concatenated Templates')
+im = ax[1].imshow(long_firing, interpolation = 'nearest', aspect = 'auto')
+ax[1].set_xlabel('Time (ms)')
+ax[1].set_ylabel('Neuron #')
+ax[1].set_title('Concatenated Data')
+cax = fig.add_axes([0.92,0.15,0.02,0.3])
+plt.colorbar(im, cax=cax, label = 'Firing Rate');
+fig.savefig(os.path.join(plot_dir,'concat_trials.png'))
+plt.close(fig)
+#plt.show()
 
 long_spikes = np.random.random(long_firing.shape)*long_firing.max(axis=None) < long_firing 
 vz.imshow(long_spikes);plt.show()
 long_firing = long_spikes.copy()
 
-long_template = np.tile(basis_funcs, (1,trials))
 
 ## Inference
 def estimate_weights(firing, template):
@@ -143,7 +157,7 @@ file_list_path = '/media/bigdata/projects/pytau/pytau/data/fin_inter_list_3_14_2
 NM_file_list_path = '/media/bigdata/firing_space_plot/NM_gape_analysis/fin_NM_emg_dat.txt'
 file_list = [x.strip() for x in open(file_list_path,'r').readlines()]
 NM_file_list = [x.strip() for x in open(NM_file_list_path,'r').readlines()]
-file_list = file_list + NM_file_list
+#file_list = file_list + NM_file_list
 basenames = [os.path.basename(x) for x in file_list]
 
 #normal_firing_list = []
@@ -286,24 +300,40 @@ sim_frame = pd.DataFrame(
 sim_frame['experimenter'] = [x[:2] for x in sim_frame['basenames']]
 mean_sim_exp = sim_frame.groupby('experimenter').mean()['similarity']
 
+sim_frame['session'] = ["_".join(x.split('_')[:3]) for x in sim_frame.basenames]
+sim_frame['session_cat'] = sim_frame['session'].copy().astype('category').cat.codes
+sim_frame['taste_num'] = [x.split('_')[-1] for x in sim_frame.basenames]
+sim_frame['fin_ind'] = sim_frame['session_cat'] + sim_frame['taste_num'].astype('float')*0.1
+sim_frame['fin_ind'] = [np.round(x,1) for x in sim_frame['fin_ind']]
+sim_frame.sort_values(by = 'fin_ind', inplace=True)
+sim_frame['fin_ind'] = sim_frame['fin_ind'].astype('category')
+
 fig,ax = plt.subplots(figsize = (15,5))
-im = ax.scatter(sim_frame.basenames, sim_frame.similarity, c = sim_frame.nrn_count)
+x_ticks=  np.arange(len(sim_frame.fin_ind))
+im = ax.scatter(x_ticks, sim_frame.similarity, c = sim_frame.nrn_count)
+ax.set_xticks(x_ticks)
+ax.set_xticklabels([str(x) for x in sim_frame.fin_ind])
 NM_inds = np.where(sim_frame.basenames.str.contains('NM'))
 NM_vals = sim_frame.basenames.loc[NM_inds]
 #plt.axvspan(NM_vals.iloc[0], NM_vals.iloc[-1], color = 'y', alpha = 0.3)
-ax.axvline(NM_vals.iloc[0], color = 'red', alpha = 0.3)
-ax.plot([sim_frame.basenames.iloc[0], NM_vals.iloc[0]], 
-        [mean_sim_exp[0], mean_sim_exp[0]], 
-        color = 'k', alpha = 0.3) 
-ax.plot([NM_vals.iloc[0], NM_vals.iloc[-1]],
-        [mean_sim_exp[1], mean_sim_exp[1]],
-        color = 'k', alpha = 0.3) 
+#ax.axvline(NM_vals.iloc[0], color = 'red', alpha = 0.3)
+#ax.plot([sim_frame.basenames.iloc[0], NM_vals.iloc[0]], 
+#        [mean_sim_exp[0], mean_sim_exp[0]], 
+#        color = 'k', alpha = 0.3) 
+ax.set_ylabel('Similarity (0-1)')
+ax.set_xlabel('Session Index (Session # . Taste #)')
+#ax.plot([NM_vals.iloc[0], NM_vals.iloc[-1]],
+#        [mean_sim_exp[1], mean_sim_exp[1]],
+#        color = 'k', alpha = 0.3) 
 plt.xticks(rotation = 90)
 fig.tight_layout()
 fig.colorbar(im, ax=ax, label = 'Neuron Count')
 #plt.show()
 fig.savefig(os.path.join(plot_dir,'across_session_comparison.png'))
 plt.close(fig)
+
+# Drop NM data from sim_frame
+sim_frame = sim_frame.loc[sim_frame.experimenter == 'AM']
 
 fig, ax = plt.subplots()
 sns.regplot(data = sim_frame,
