@@ -84,8 +84,10 @@ if not os.path.exists(plot_dir):
     os.makedirs(plot_dir)
 
 # Load pkl detailing which recordings have split changepoints
+#data_dir_pkl = '/media/bigdata/firing_space_plot/firing_analyses/'\
+#        'transition_corrs/all_tastes/multi_region_frame.pkl'
 data_dir_pkl = '/media/bigdata/firing_space_plot/firing_analyses/'\
-        'transition_corrs/all_tastes/multi_region_frame.pkl'
+        'transition_corrs/all_tastes/inter_region/multi_region_frame.pkl'
 inter_frame = pd.read_pickle(data_dir_pkl)
 inter_frame['animal_name'] = [x.split('_')[0] for x in inter_frame['name']]
 
@@ -243,8 +245,8 @@ stat_bins = 20
 #stat_tau_diff_hist = [np.histogram(x,bins=stat_bins) for x in stat_tau_diff.T]
 #min_x = np.min([np.min(x[1]) for x in stat_tau_diff_hist])
 #max_x = np.max([np.max(x[1]) for x in stat_tau_diff_hist])
-
-fig, ax = plt.subplots(2,tau_diff_hists.shape[1], sharex = 'row', figsize = (10,10))
+fig, ax = plt.subplots(2,tau_diff_hists.shape[1], 
+                       sharex = 'row', figsize = (10,10))
 for num in range(tau_diff_hists.shape[1]):
     ax[0,num].pcolormesh(bins, np.arange(tau_diff_hists.shape[0]),tau_diff_hists[:,num])
     ax[0,num].axvline(0, color = 'red', linestyle = 'dashed')
@@ -260,12 +262,64 @@ for num in range(tau_diff_hists.shape[1]):
             f'eta : {stat_tau_diff_effect[num]}')
     #ax[1,num].set_xlim(min_x,max_x)
 ax[-1,-1].legend()
-ax[0,0].set_ylabel('Tau Diff Hists')
-ax[1,0].set_ylabel('Median Tau Diff')
+ax[0,0].set_ylabel('Session #')
+ax[1,0].set_ylabel('Frequency')
+for num in range(tau_diff_hists.shape[1]):
+    ax[1,num].set_xlabel('<-- GC Leads, BLA Leads -->')
 plt.suptitle('Aggregate Tau difference')
 fig.savefig(os.path.join(plot_dir, 'agg_tau_diff'))
 plt.close(fig)
 #plt.show()
+
+# Plot only mean values
+cmap = plt.get_cmap('tab10')
+bin_size = 50
+font_size = 12
+plot_tau_diff_hists = tau_diff_hists * bin_size
+plot_stat_tau_diff = stat_tau_diff * bin_size
+plot_stat_tau_diff_stat = stat_tau_diff_stat * bin_size
+plot_boot_stat_diff_percs = boot_stat_diff_percs * bin_size
+fig, ax = plt.subplots(1,tau_diff_hists.shape[1], 
+                       sharex = True, sharey=True, 
+                       figsize = (8,4))
+for num in range(plot_tau_diff_hists.shape[1]):
+    ax[num].hist(plot_stat_tau_diff[:,num], alpha = 0.7,
+                 color = cmap(0)) #, bins = stat_bins)
+    ax[num].hist(plot_stat_tau_diff[:,num], histtype='step',
+                 color = cmap(0), linewidth = 2) #, bins = stat_bins)
+    ax[num].axvline(0, color = 'k', linewidth = 2, label = '0')
+    ax[num].axvline(plot_stat_tau_diff_stat[num], 
+          color = 'red', linewidth = 2, linestyle = 'dashed', 
+          label = 'Mean +/- 95 CI')
+    ax[num].axvspan(*plot_boot_stat_diff_percs[:,num], 
+          color = 'red', alpha = 0.3)
+    #ax[num].set_title(f'CI : {str(np.round(boot_stat_diff_percs[:,num],2))}, ' + \
+    #        f'eta : {stat_tau_diff_effect[num]}')
+    ax[num].set_title(f'Transition {num+1}')
+    #ax[1,num].set_xlim(min_x,max_x)
+# Flat legend at top of figure but make sure 
+# it doesn't overlap with other plots
+# Add box around legend
+handles, labels = ax[0].get_legend_handles_labels()
+fig.legend(handles, labels, loc = 'upper center',
+           edgecolor = 'black', facecolor = 'white',
+           ncol = 3, fontsize = font_size)
+ax[0].set_ylabel('Frequency')
+for num in range(tau_diff_hists.shape[1]):
+    ax[num].set_xlabel('Time (ms)' + '\n' + '<-- GC Leads, BLA Leads -->')
+    # Increase font size for ticks and axis labels, and legend
+    ax[num].tick_params(axis='both', which='major', labelsize=font_size)
+    ax[num].tick_params(axis='both', which='minor', labelsize=font_size)
+    ax[num].xaxis.label.set_size(font_size)
+    ax[num].yaxis.label.set_size(font_size)
+plt.suptitle('\n')
+plt.tight_layout()
+fig.savefig(os.path.join(plot_dir, 'agg_tau_diff_mean'),
+            bbox_inches = 'tight',
+            dpi = 300)
+plt.close(fig)
+#plt.show()
+
 
 ## Plot "GOOD" sessions aggregated
 stack_select_tau_diff = np.concatenate(select_tau_diff,axis=0)
@@ -275,7 +329,8 @@ bins = np.linspace(np.min(stack_select_tau_diff.flatten()),
 select_tau_diff_hists = [np.stack([np.histogram(x, bins = bins)[0] for x in y]) \
                 for y in select_tau_diff]
 
-fig, ax = plt.subplots(2,len(select_tau_diff_hists), sharex = 'row', figsize = (10,10))
+fig, ax = plt.subplots(2,len(select_tau_diff_hists), 
+                       sharex =True, sharey='row',figsize = (10,10))
 for num, (this_hist, this_tau) in enumerate(zip(select_tau_diff_hists, select_tau_diff)): 
     ax[0,num].pcolormesh(bins, np.arange(this_hist.shape[0]+1), this_hist)
     ax[0,num].axvline(0, color = 'red', linestyle = 'dashed')
@@ -298,8 +353,13 @@ for num, (this_hist, this_tau) in enumerate(zip(select_tau_diff_hists, select_ta
     ax[1,num].set_title(f'CI : {str(np.round(boot_stat_diff_percs,2))}, ' + \
             f'eta : {this_stat_effect}')
 ax[-1,-1].legend()
-ax[0,0].set_ylabel('Tau Diff Hists')
-ax[1,0].set_ylabel('Median Tau Diff')
+#ax[0,0].set_ylabel('Tau Diff Hists')
+#ax[1,0].set_ylabel('Median Tau Diff')
+ax[0,0].set_ylabel('Session #')
+ax[1,0].set_ylabel('Frequency')
+for num in range(tau_diff_hists.shape[1]):
+    ax[1,num].set_xlabel('<-- GC Leads, BLA Leads -->')
+    #ax[1,num].set_xlabel('<-- BLA lags GC , GC lags BLA -->')
 plt.suptitle('Aggregate Tau difference "GOOD"')
 fig.savefig(os.path.join(plot_dir, 'agg_tau_diff_good'))
 plt.close(fig)
