@@ -353,57 +353,113 @@ pivot_bla = bla_dat.pivot(index='freq', columns='time', values='scaled_z_stat')
 pivot_gc = pivot_gc.values
 pivot_bla = pivot_bla.values
 
+# Normalize by baseline
+# Then scale from 0-1
+baseline_lims = [-500, 0]
+baseline_inds = (time_vals >= baseline_lims[0]) & (time_vals < baseline_lims[1])
+baseline_vals_gc = pivot_gc[:, baseline_inds]
+mean_baseline_gc = baseline_vals_gc.mean(axis=-1)
+norm_pivot_gc = pivot_gc - mean_baseline_gc[:, None]
+norm_pivot_gc = norm_pivot_gc - norm_pivot_gc.min()
+norm_pivot_gc = norm_pivot_gc / norm_pivot_gc.max()
+
+baseline_vals_bla = pivot_bla[:, baseline_inds]
+mean_baseline_bla = baseline_vals_bla.mean(axis=-1)
+norm_pivot_bla = pivot_bla - mean_baseline_bla[:, None]
+norm_pivot_bla = norm_pivot_bla - norm_pivot_bla.min()
+norm_pivot_bla = norm_pivot_bla / norm_pivot_bla.max()
+
+# plot both
+plot_time_lims = [-500, 2500]
+plot_freq_lims = [0, 15]
+plot_time_inds = (time_vals >= plot_time_lims[0]) & (time_vals < plot_time_lims[1])
+plot_freq_inds = (freq_vec >= plot_freq_lims[0]) & (freq_vec < plot_freq_lims[1])
+plot_gc_dat = norm_pivot_gc[plot_freq_inds, :][:, plot_time_inds]
+plot_bla_dat = norm_pivot_bla[plot_freq_inds, :][:, plot_time_inds]
+plot_time_vals = time_vals[plot_time_inds]
+plot_freq_vals = freq_vec[plot_freq_inds]
+
+fig, ax = plt.subplots(2, 1, sharex=True, sharey=True,
+                       figsize = (7*0.75,5*0.75))
+im = ax[0].contourf(plot_time_vals, plot_freq_vals,
+                 plot_gc_dat, 
+                 cmap='viridis', vmin=0, vmax=1,
+                    levels = 10)
+# Colorbar limit from  0-1
+#cbar = plt.colorbar(im, ax = ax[0],
+#                    ticks = np.arange(0,1.2,0.2))
+im = ax[1].contourf(plot_time_vals, plot_freq_vals,
+                 plot_bla_dat, 
+                 cmap='viridis', vmin=0, vmax=1,
+                    levels = 10)
+# Create shared colorbar for both plots
+cbar_ax = fig.add_axes([1.02, 0.15, 0.02, 0.7])
+cbar = fig.colorbar(im, cax=cbar_ax)
+cbar.set_label('Normalized Phase Locking Value')
+ax[0].set_title('GC Spike --> BLA Field')
+ax[1].set_title('BLA Spike --> GC Field')
+ax[0].set_ylabel('Frequency (Hz)')
+ax[1].set_ylabel('Frequency (Hz)')
+ax[1].set_xlabel('Time post-stimulus (ms)')
+plt.tight_layout()
+plt.savefig(os.path.join(plot_dir, 'phase_locking_heatmap.png'),
+            bbox_inches='tight', dpi = 300)
+plt.close('all')
+# plt.show()
+
+
 # Plots by Epoch
-time_vals = pivot_gc.columns.values
-epochs = [[-500, 0], [0, 150], [0, 250], [250, 750], [750, 1250]]
+#time_vals = pivot_gc.columns.values
+epochs = [[-500,0], [0, 250], [250, 750], [750, 1250]]
 
 gc_epoch_list = []
 bla_epoch_list = []
 for this_epoch in epochs:
-    inds = (time_vals >= this_epoch[0]) & (time_vals < this_epoch[1])
-    gc_epoch_list.append(pivot_gc[:, inds])
-    bla_epoch_list.append(pivot_bla[:, inds])
+    inds = (plot_time_vals >= this_epoch[0]) & (plot_time_vals < this_epoch[1])
+    gc_epoch_list.append(plot_gc_dat[:, inds])
+    bla_epoch_list.append(plot_bla_dat[:, inds])
 region_list = list(zip(gc_epoch_list, bla_epoch_list))
 region_names = ['gc', 'bla']
-
-baseline_vals = region_list[0]
+baseline_vals = region_list.pop(0)
 mean_baseline_per_region = [x.mean(axis=-1) for x in baseline_vals]
 mean_baseline = np.mean(mean_baseline_per_region, axis=0)
 
+epochs.pop(0)
+
 cmap = plt.get_cmap('tab10')
-fig, ax = plt.subplots(len(epochs)-1, figsize=(4, 7),
+fig, ax = plt.subplots(len(region_list), figsize=(4, 7),
                        sharey=True, sharex=True)
-for num, (dat, this_ax) in enumerate(zip(region_list[1:], ax)):
-    mean_vals = [x.mean(axis=-1)-mean_baseline for x in dat]
+for num, (dat, this_ax) in enumerate(zip(region_list, ax)):
+    mean_vals = [x.mean(axis=-1) for x in dat]
     std_vals = [x.std(axis=-1) for x in dat]
+    this_ax.plot(plot_freq_vals, mean_baseline,
+                 color='r', linestyle='--',
+                 linewidth=2,
+                 label='Baseline')
     for region_num, (this_mean, this_std) in enumerate(zip(mean_vals, std_vals)):
-        this_ax.plot(freq_vec, this_mean,
-                     label=region_names[region_num].upper(),
+        this_ax.plot(plot_freq_vals, this_mean,
+                     #label=region_names[region_num].upper(),
                      color=cmap(region_num),
                      linewidth=2)
-        this_ax.axhline(color = 'k', linestyle = '--',
-                        linewidth = 2)
+        #this_ax.axhline(color = 'k', linestyle = '--',
+        #                linewidth = 2)
         # Plot mean (across both regions) values for baseline
         # on all plots for comparison
-        #if num != 0:
-        #    this_ax.plot(freq_vec, mean_baseline,
-        #                 color='r', linestyle='--',
-        #                 linewidth=2,
-        #                 label='Baseline')
-        this_ax.scatter(freq_vec, this_mean,
+        this_ax.scatter(plot_freq_vals, this_mean,
                         color=cmap(region_num))
         this_ax.fill_between(
-            x=freq_vec,
+            x=plot_freq_vals,
             y1=this_mean - this_std,
             y2=this_mean + this_std,
-            alpha=0.5
+            alpha=0.5,
+            label = region_names[region_num].upper()
         )
     this_ax.set_xlim([0, 15])
-    this_ax.set_ylabel('Phase Locking' + '\n' + '(A.U.)')
+    this_ax.set_ylabel('Scaled Phase' + '\n' + 'Locking (A.U.)')
     #this_ax.set_title(f'Epoch : {epochs[num]}')
     # Mark epoch as text on right side of plot
     # Add box around text
-    this_ax.text(1.02, 0.5, f'{epochs[num+1][0]} - {epochs[num+1][1]} ms',
+    this_ax.text(1.02, 0.5, f'{epochs[num][0]} - {epochs[num][1]} ms',
                  rotation=270, transform=this_ax.transAxes,
                  verticalalignment='center', horizontalalignment='left',
                  bbox=dict(facecolor='white',
@@ -430,88 +486,93 @@ plt.close(fig)
 
 
 ########################################
-# 2D Plots
+# Temporarily remove these plots below 
 ########################################
-vmin = imp_dat['scaled_z_stat'].min()
-vmax = imp_dat['scaled_z_stat'].max()
-levels = np.logspace(np.log10(vmin), np.log10(vmax), 10)
-fig, ax = plt.subplots(2, 1, sharey=True, sharex=True)
-im = ax[0].contourf(
-    # im = ax[0].pcolormesh(
-    time_vals,
-    freq_vec,
-    pivot_gc,
-    #levels = levels,
-    #vmin = vmin, vmax=vmax
-)
-fig.colorbar(im, ax=ax[0])
-im = ax[1].contourf(
-    # im = ax[1].pcolormesh(
-    time_vals,
-    freq_vec,
-    pivot_bla,
-    #levels = levels,
-    #vmin = vmin, vmax=vmax
-)
-fig.colorbar(im, ax=ax[1])
-ax[0].set_title('GC_spike-->BLA_field')
-ax[1].set_title('BLA_spike-->GC_field')
-ax[0].set_ylim([0, 15])
-ax[1].set_xlabel('Time post-stim (ms)')
-ax[0].set_ylabel('Frequency (Hz)')
-ax[1].set_ylabel('Frequency (Hz)')
-ax[0].axvline(0, color='red', linestyle='--')
-ax[1].axvline(0, color='red', linestyle='--')
-plt.tight_layout()
-plt.suptitle('BLA-GC Spike Field Coherence')
-plt.subplots_adjust(top=0.8)
-# plt.show()
-fig.savefig(os.path.join(plot_dir, 'sig_only_raw_spike_field_coherence.png'))
-plt.close(fig)
 
-norm_pivot_gc = pivot_gc.values
-norm_pivot_gc = zscore(norm_pivot_gc, axis=-1)
-norm_pivot_bla = pivot_bla.values
-norm_pivot_bla = zscore(norm_pivot_bla, axis=-1)
-norm_stack = np.stack([norm_pivot_gc, norm_pivot_bla])
 
-#vmin = np.nanmin(norm_stack, axis=None)
-#vmax = np.nanmax(norm_stack, axis=None)
-#levels = np.logspace(np.log10(vmin),np.log10(vmax),10)
-cmap = plt.get_cmap('viridis')
-level_colors = cmap(levels)
-fig, ax = plt.subplots(2, 1, sharey=True, sharex=True)
-im = ax[0].contourf(
-    # im = ax[0].pcolormesh(
-    time_vals,
-    freq_vec,
-    norm_pivot_gc,
-    #levels = levels,
-    #vmin = vmin, vmax=vmax,
-    #alpha = 0.3
-)
-fig.colorbar(im, ax=ax[0])
-im = ax[1].contourf(
-    # im = ax[1].pcolormesh(
-    time_vals,
-    freq_vec,
-    norm_pivot_bla,
-    #levels = levels,
-    #vmin = vmin, vmax=vmax,
-    #alpha = 0.1
-)
-fig.colorbar(im, ax=ax[1])
-ax[0].set_title('GC_spike-->BLA_field')
-ax[1].set_title('BLA_spike-->GC_field')
-ax[0].set_ylim([0, 15])
-ax[1].set_xlabel('Time post-stim (ms)')
-ax[0].set_ylabel('Frequency (Hz)')
-ax[1].set_ylabel('Frequency (Hz)')
-plt.tight_layout()
-plt.suptitle('BLA-GC Spike Field Coherence')
-plt.subplots_adjust(top=0.8)
-ax[0].axvline(0, color='red', linestyle='--')
-ax[1].axvline(0, color='red', linestyle='--')
-# plt.show()
-fig.savefig(os.path.join(plot_dir, 'sig_only_norm_spike_field_coherence.png'))
-plt.close(fig)
+#########################################
+## 2D Plots
+#########################################
+#vmin = imp_dat['scaled_z_stat'].min()
+#vmax = imp_dat['scaled_z_stat'].max()
+#levels = np.logspace(np.log10(vmin), np.log10(vmax), 10)
+#fig, ax = plt.subplots(2, 1, sharey=True, sharex=True)
+#im = ax[0].contourf(
+#    # im = ax[0].pcolormesh(
+#    time_vals,
+#    freq_vec,
+#    pivot_gc,
+#    #levels = levels,
+#    #vmin = vmin, vmax=vmax
+#)
+#fig.colorbar(im, ax=ax[0])
+#im = ax[1].contourf(
+#    # im = ax[1].pcolormesh(
+#    time_vals,
+#    freq_vec,
+#    pivot_bla,
+#    #levels = levels,
+#    #vmin = vmin, vmax=vmax
+#)
+#fig.colorbar(im, ax=ax[1])
+#ax[0].set_title('GC_spike-->BLA_field')
+#ax[1].set_title('BLA_spike-->GC_field')
+#ax[0].set_ylim([0, 15])
+#ax[1].set_xlabel('Time post-stim (ms)')
+#ax[0].set_ylabel('Frequency (Hz)')
+#ax[1].set_ylabel('Frequency (Hz)')
+#ax[0].axvline(0, color='red', linestyle='--')
+#ax[1].axvline(0, color='red', linestyle='--')
+#plt.tight_layout()
+#plt.suptitle('BLA-GC Spike Field Coherence')
+#plt.subplots_adjust(top=0.8)
+## plt.show()
+#fig.savefig(os.path.join(plot_dir, 'sig_only_raw_spike_field_coherence.png'))
+#plt.close(fig)
+#
+#norm_pivot_gc = pivot_gc.values
+#norm_pivot_gc = zscore(norm_pivot_gc, axis=-1)
+#norm_pivot_bla = pivot_bla.values
+#norm_pivot_bla = zscore(norm_pivot_bla, axis=-1)
+#norm_stack = np.stack([norm_pivot_gc, norm_pivot_bla])
+#
+##vmin = np.nanmin(norm_stack, axis=None)
+##vmax = np.nanmax(norm_stack, axis=None)
+##levels = np.logspace(np.log10(vmin),np.log10(vmax),10)
+#cmap = plt.get_cmap('viridis')
+#level_colors = cmap(levels)
+#fig, ax = plt.subplots(2, 1, sharey=True, sharex=True)
+#im = ax[0].contourf(
+#    # im = ax[0].pcolormesh(
+#    time_vals,
+#    freq_vec,
+#    norm_pivot_gc,
+#    #levels = levels,
+#    #vmin = vmin, vmax=vmax,
+#    #alpha = 0.3
+#)
+#fig.colorbar(im, ax=ax[0])
+#im = ax[1].contourf(
+#    # im = ax[1].pcolormesh(
+#    time_vals,
+#    freq_vec,
+#    norm_pivot_bla,
+#    #levels = levels,
+#    #vmin = vmin, vmax=vmax,
+#    #alpha = 0.1
+#)
+#fig.colorbar(im, ax=ax[1])
+#ax[0].set_title('GC_spike-->BLA_field')
+#ax[1].set_title('BLA_spike-->GC_field')
+#ax[0].set_ylim([0, 15])
+#ax[1].set_xlabel('Time post-stim (ms)')
+#ax[0].set_ylabel('Frequency (Hz)')
+#ax[1].set_ylabel('Frequency (Hz)')
+#plt.tight_layout()
+#plt.suptitle('BLA-GC Spike Field Coherence')
+#plt.subplots_adjust(top=0.8)
+#ax[0].axvline(0, color='red', linestyle='--')
+#ax[1].axvline(0, color='red', linestyle='--')
+## plt.show()
+#fig.savefig(os.path.join(plot_dir, 'sig_only_norm_spike_field_coherence.png'))
+#plt.close(fig)
