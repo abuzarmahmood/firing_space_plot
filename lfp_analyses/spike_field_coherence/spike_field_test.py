@@ -99,6 +99,12 @@ flat_frame = fin_phase_frame.reset_index(drop=False)
 flat_frame['nrn_index'] = flat_frame['nrn_num'].astype(str) + \
     flat_frame['spikes_region'].astype(str) + \
     flat_frame['basename'].astype(str)
+# Convert nrn_index to categorical codes and count nrn_index per spikes_region
+flat_frame['nrn_index'] = flat_frame['nrn_index'].astype('category')
+flat_frame['nrn_index'] = flat_frame['nrn_index'].cat.codes
+
+flat_frame.groupby('spikes_region').nrn_index.nunique()
+
 
 #test = fin_phase_frame.head(2000)
 #bin_width = 200
