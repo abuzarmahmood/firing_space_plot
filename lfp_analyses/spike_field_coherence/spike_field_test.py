@@ -9,7 +9,6 @@ from joblib import Parallel, delayed, cpu_count
 from pathlib import Path
 from scipy.stats import zscore
 from visualize import *
-from ephys_data import ephys_data
 import os
 import matplotlib.pyplot as plt
 import tables
@@ -19,6 +18,7 @@ from tqdm import tqdm, trange
 import shutil
 import sys
 sys.path.append('/media/bigdata/firing_space_plot/ephys_data')
+from ephys_data import ephys_data
 
 
 #import dask
@@ -88,13 +88,17 @@ fin_phase_frame = pd.concat(phase_list)
 #fin_phase_frame = fin_phase_frame.reset_index()
 #fin_phase_frame = from_pandas(fin_phase_frame, npartitions = 16)
 
-#fin_phase_frame = fin_phase_frame.reset_index(level = 'time')
+fin_phase_frame = fin_phase_frame.reset_index(level = 'time')
 fin_phase_frame['time'] = fin_phase_frame['time'] - 2000
 time_bool = np.logical_and(
     fin_phase_frame['time'] > -1000,
     fin_phase_frame['time'] < 2500)
 fin_phase_frame = fin_phase_frame.loc[time_bool.values]
 
+flat_frame = fin_phase_frame.reset_index(drop=False)
+flat_frame['nrn_index'] = flat_frame['nrn_num'].astype(str) + \
+    flat_frame['spikes_region'].astype(str) + \
+    flat_frame['basename'].astype(str)
 
 #test = fin_phase_frame.head(2000)
 #bin_width = 200
@@ -379,8 +383,9 @@ plot_bla_dat = norm_pivot_bla[plot_freq_inds, :][:, plot_time_inds]
 plot_time_vals = time_vals[plot_time_inds]
 plot_freq_vals = freq_vec[plot_freq_inds]
 
+epoch_markers = [300, 850, 1450]
 fig, ax = plt.subplots(2, 1, sharex=True, sharey=True,
-                       figsize = (7*0.75,5*0.75))
+                       figsize = (7*0.75,7*0.75))
 im = ax[0].contourf(plot_time_vals, plot_freq_vals,
                  plot_gc_dat, 
                  cmap='viridis', vmin=0, vmax=1,
@@ -392,6 +397,11 @@ im = ax[1].contourf(plot_time_vals, plot_freq_vals,
                  plot_bla_dat, 
                  cmap='viridis', vmin=0, vmax=1,
                     levels = 10)
+# Mark stimulus delivery at 0
+for this_ax in ax:
+    this_ax.axvline(color = 'red', linestyle = '--', linewidth = 2)
+    for this_marker in epoch_markers:
+        this_ax.axvline(this_marker, color = 'red', linewidth = 1)
 # Create shared colorbar for both plots
 cbar_ax = fig.add_axes([1.02, 0.15, 0.02, 0.7])
 cbar = fig.colorbar(im, cax=cbar_ax)
@@ -410,7 +420,7 @@ plt.close('all')
 
 # Plots by Epoch
 #time_vals = pivot_gc.columns.values
-epochs = [[-500,0], [0, 250], [250, 750], [750, 1250]]
+epochs = [[-500,0], [0, 300], [300, 850], [850, 1450]]
 
 gc_epoch_list = []
 bla_epoch_list = []
@@ -427,7 +437,7 @@ mean_baseline = np.mean(mean_baseline_per_region, axis=0)
 epochs.pop(0)
 
 cmap = plt.get_cmap('tab10')
-fig, ax = plt.subplots(len(region_list), figsize=(4, 7),
+fig, ax = plt.subplots(len(region_list), figsize=(4*0.9, 7*0.9),
                        sharey=True, sharex=True)
 for num, (dat, this_ax) in enumerate(zip(region_list, ax)):
     mean_vals = [x.mean(axis=-1) for x in dat]
