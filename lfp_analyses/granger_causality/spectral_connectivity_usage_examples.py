@@ -203,16 +203,15 @@ noise_scale = 0.1
 val_range = val_max - val_min
 time_series += np.random.normal(0, noise_scale * val_range, time_series.shape)
 
-time_halfbandwidth_product = 1
 
 def calc_granger(time_series):
     m = Multitaper(
         time_series,
         sampling_frequency=sampling_frequency,
-        time_halfbandwidth_product=time_halfbandwidth_product,
+        time_halfbandwidth_product=1,
         start_time=0,
         time_window_duration=0.3,
-        time_window_step=0.250,
+        time_window_step=0.1,
     )
     c = Connectivity.from_multitaper(m)
     granger = c.pairwise_spectral_granger_prediction()
@@ -221,7 +220,7 @@ def calc_granger(time_series):
 
 granger, c = calc_granger(time_series)
 
-n_shuffles = 1000
+n_shuffles = 50
 temp_series = [np.stack([np.random.permutation(x) for x in time_series.T]).T \
                                 for i in trange(n_shuffles)]
 
