@@ -101,6 +101,130 @@ class lfp_preprocessing():
             self.divide_by_std_across_trials()
         return self.std_across_trials_divided_data
 
+def run_adfuller_test(preprocessed_data, alpha = 0.05, wanted_fraction = 0.95):
+    """
+    alpha = threshold for single test (will be Bonferroni corrected internally)
+    wanted_fraction = minimum fraction of tests that should be significant (stationary)
+    """
+    inds = list(np.ndindex(preprocessed_data.shape[:-1]))
+    return_adfuller_pval = lambda this_ind: adfuller(preprocessed_data[this_ind])[1]
+    pval_list = np.array(parallelize(return_adfuller_pval, inds, n_jobs=30))
+    alpha = 0.05
+    threshold = alpha/len(pval_list)
+    wanted_fraction = 0.95
+    if np.sum(pval_list < threshold) > wanted_fraction * len(pval_list):
+        print('Data is stationary')
+    else:
+        raise ValueError('Data is not stationary')
+
+def calc_granger(time_series,
+                 sampling_frequency=1000,
+                 time_window_duration=0.3,
+                 time_window_step=0.05,
+                 ):
+    m = Multitaper(
+        time_series,
+        sampling_frequency=sampling_frequency, # in Hz
+        time_halfbandwidth_product=1,
+        start_time=0, 
+        time_window_duration=time_window_duration,
+        time_window_step=time_window_step,
+    )
+    c = Connectivity.from_multitaper(m)
+    granger = c.pairwise_spectral_granger_prediction()
+    return granger, c
+
+class granger_handler():
+    """
+    Class to handle granger causality and calculate
+    significance from shuffled data
+    """
+    def __init__(self, 
+                 good_lfp_data,
+                 #preprocessed_data,
+                 sampling_frequency=1000,
+                 n_shuffles=500,
+                 wanted_window = [1500,4000],
+                 alpha = 0.05,
+                 multitaper_time_window_duration=0.3,
+                 multitaper_time_window_step=0.05,
+                 ):
+        """
+        preprocessed_data = (n_channels, n_trials, n_timepoints)
+        sampling_frequency = in Hz
+        n_shuffles = number of shuffles to perform
+        wanted_window = window to calculate granger causality in
+        alpha = significance level
+        multitaper_time_window_duration = duration of time window for multitaper
+        multitaper_time_window_step = step of time window for multitaper
+        """
+        #self.preprocessed_data = preprocessed_data
+        #self.input_data = preprocessed_data.T[wanted_window[0]:wanted_window[1]]
+        self.good_lfp_data = good_lfp_data
+        self.sampling_frequency = sampling_frequency
+        self.n_shuffles = n_shuffles
+        self.wanted_window = wanted_window
+        self.alpha = alpha
+        self.multitaper_time_window_duration = multitaper_time_window_duration
+        self.multitaper_time_window_step = multitaper_time_window_step
+
+    def preprocess_and_check_stationarity(self):
+        self.preprocessed_data = \
+                lfp_preprocessing(self.good_lfp_data).return_preprocessed_data()
+        run_adfuller_test(self.preprocessed_data)
+        self.input_data = \
+                self.preprocessed_data.T[self.wanted_window[0]:self.wanted_window[1]]
+
+    def calc_granger_actual(self):
+        """
+        Calculate actual granger causality
+        """
+        if not hasattr(self,'input_data'):
+            self.preprocess_and_check_stationarity()
+        self.granger_actual, self.c_actual = \
+                calc_granger(self.input_data,
+                            sampling_frequency=self.sampling_frequency,
+                          time_window_duration=self.multitaper_time_window_duration,
+                          time_window_step=self.multitaper_time_window_step,
+                          )
+
+    def calc_granger_shuffle(self):
+        """
+        Calculate shuffled granger causality
+        """
+        if not hasattr(self,'input_data'):
+            self.preprocess_and_check_stationarity()
+        temp_series = [np.stack([np.random.permutation(x) \
+                                for x in self.input_data.T]).T \
+                                        for i in trange(self.n_shuffles)]
+        def temp_calc_granger(x):
+            return calc_granger(x,
+                            sampling_frequency=self.sampling_frequency,
+                          time_window_duration=self.multitaper_time_window_duration,
+                          time_window_step=self.multitaper_time_window_step,
+                          )[0]
+        self.shuffle_outs = np.array(
+                parallelize(temp_calc_granger, temp_series, n_jobs=30))
+
+    def calc_shuffle_threshold(self):
+        if not hasattr(self,'shuffle_outs'):
+            self.calc_granger_shuffle()
+        self.n_comparisons = self.shuffle_outs.shape[0] * self.shuffle_outs.shape[1]
+        corrected_alpha = self.alpha / self.n_comparisons
+        self.wanted_percentile = 100 - (corrected_alpha * 100)
+        self.percentile_granger = np.percentile(
+               self.shuffle_outs, self.wanted_percentile, axis=0)
+
+    def get_granger_sig_mask(self):
+        if not hasattr(self,'percentile_granger'):
+            self.calc_shuffle_threshold()
+        if not hasattr(self,'granger_actual'):
+            self.calc_granger_actual()
+        self.masked_granger = np.ma.masked_where(
+                self.granger_actual < self.percentile_granger, self.granger_actual)
+        self.mask_array = np.ma.getmask(self.masked_granger)
+
+
 ############################################################
 ## Load Data 
 ############################################################
@@ -150,17 +274,7 @@ plt.show()
 preprocessed_data = lfp_preprocessing(good_lfp_data).return_preprocessed_data()
 
 # Perform Augmented Dickey-Fuller test on each channel to check for stationarity
-inds = list(np.ndindex(preprocessed_data.shape[:-1]))
-
-return_adfuller_pval = lambda this_ind: adfuller(preprocessed_data[this_ind])[1]
-pval_list = np.array(parallelize(return_adfuller_pval, inds, n_jobs=30))
-alpha = 0.05
-threshold = alpha/len(pval_list)
-wanted_fraction = 0.95
-if np.sum(pval_list < threshold) > wanted_fraction * len(pval_list):
-    print('Data is stationary')
-else:
-    raise ValueError('Data is not stationary')
+run_adfuller_test(preprocessed_data)
 
 ############################################################
 ## Compute Granger Causality 
@@ -173,22 +287,6 @@ sampling_frequency = 1000
 wanted_window = [1500,4000]
 input_data = input_data[wanted_window[0]:wanted_window[1]]
 
-def calc_granger(time_series,
-                 time_window_duration=0.3,
-                 time_window_step=0.05,
-                 ):
-    m = Multitaper(
-        time_series,
-        sampling_frequency=sampling_frequency, # in Hz
-        time_halfbandwidth_product=1,
-        start_time=0, 
-        time_window_duration=time_window_duration,
-        time_window_step=time_window_step,
-    )
-    c = Connectivity.from_multitaper(m)
-    granger = c.pairwise_spectral_granger_prediction()
-    return granger, c
-
 granger, c = calc_granger(input_data)
 
 n_shuffles = 500
@@ -196,17 +294,9 @@ temp_series = [np.stack([np.random.permutation(x) for x in input_data.T]).T \
                                 for i in trange(n_shuffles)]
 
 # Calc shuffled granger
-temp_calc_granger = lambda i: calc_granger(temp_series[i])[0]
-#shuffle_outs = np.array(parallelize(temp_calc_granger, range(len(temp_series)), n_jobs=30))
-shuffle_outs = np.stack([calc_granger(temp_series[i])[0] for i in trange(n_shuffles)])
-
-#shuffle_outs = []
-#for i in trange(n_shuffles):
-#    # Shuffle trials (not actual timesteps)
-#    shuffle_outs.append(calc_granger(temp_series[i])[0])
-#shuffle_outs = np.stack(shuffle_outs)
-
-mean_shuffle = np.nanmean(shuffle_outs, axis=0)
+# Pass data as iterator, parallel doesn't like indexing itself
+temp_calc_granger = lambda x: calc_granger(x)[0]
+shuffle_outs = np.array(parallelize(temp_calc_granger, temp_series, n_jobs=30))
 
 # Calculate given percentile across all shuffled values 
 n_comparisons = shuffle_outs.shape[0] * shuffle_outs.shape[1]
@@ -215,11 +305,23 @@ corrected_alpha = alpha / n_comparisons
 wanted_percentile = 100 - (corrected_alpha * 100)
 percentile_granger = np.percentile(shuffle_outs, wanted_percentile, axis=0)
 
-cat_data = np.concatenate((granger, mean_shuffle), axis=3)
-vmin, vmax = np.nanmin(cat_data), np.nanmax(cat_data)
-
 # Create masked array for plotting
 masked_granger = np.ma.masked_where(granger < percentile_granger, granger)
+mask_array = np.ma.getmask(masked_granger)
+
+
+#this_granger = granger_handler(preprocessed_data)
+#this_granger.get_granger_sig_mask()
+#granger = this_granger.granger_actual
+#c = this_granger.c_actual
+#masked_granger = this_granger.masked_granger
+#mask_array = this_granger.mask_array
+#wanted_window = this_granger.wanted_window
+
+
+alpha_mask = np.empty(mask_array.shape)
+alpha_mask[~mask_array] = 1
+alpha_mask[mask_array] = 0.3
 
 # Plot values of granger
 # Show values less than shuffle in red
@@ -227,41 +329,68 @@ t_vec = np.linspace(wanted_window[0], wanted_window[1], masked_granger.shape[0])
 stim_t = 2000
 t_vec = t_vec - stim_t
 
-wanted_freqs = [0,30]
-freq_inds = np.where((c.frequencies > wanted_freqs[0]) & (c.frequencies < wanted_freqs[1]))[0]
+wanted_freqs = [0,60]
+freq_inds = np.where((c.frequencies > wanted_freqs[0]) & \
+        (c.frequencies < wanted_freqs[1]))[0]
 
 cmap = plt.cm.viridis
 cmap.set_bad(color='red')
 
 fig, ax = plt.subplots(2, 1, sharex=True, sharey=True)
-ax[0].pcolormesh(
-        t_vec, c.frequencies[freq_inds], masked_granger[:, freq_inds, 0, 1].T,
-    cmap=cmap, shading="auto",
-    vmin=vmin, vmax=vmax
+#im = ax[0].pcolormesh(
+im = ax[0].contourf(
+        #t_vec, c.frequencies[freq_inds], masked_granger[:, freq_inds, 0, 1].T,
+        t_vec, c.frequencies[freq_inds], granger[:, freq_inds, 0, 1].T,
+    cmap=cmap,
+    levels = 15,
+    #shading="gouraud",
+    #vmin=vmin, vmax=vmax
 )
+#im = ax[0].imshow(
+#        #t_vec, c.frequencies[freq_inds], masked_granger[:, freq_inds, 0, 1].T,
+#    granger[:, freq_inds, 0, 1].T,
+#    cmap='viridis', aspect="auto",
+#    origin = 'lower', alpha= alpha_mask[:, freq_inds, 0,1].T,
+#    #vmin=vmin, vmax=vmax
+#)
 ax[0].set_title("x1 -> x2")
 ax[0].set_ylabel("Frequency")
-ax[1].pcolormesh(
-        t_vec, c.frequencies[freq_inds], masked_granger[:, freq_inds, 1, 0].T,
-    cmap=cmap, shading="auto",
-    vmin=vmin, vmax=vmax
+ax[0].axvline(0, color='red', linestyle='--')
+plt.colorbar(im, ax = ax[0])
+#im = ax[1].pcolormesh(
+im = ax[1].contourf(
+        #t_vec, c.frequencies[freq_inds], masked_granger[:, freq_inds, 1, 0].T,
+        t_vec, c.frequencies[freq_inds], granger[:, freq_inds, 1, 0].T,
+    cmap=cmap, 
+    levels = 15,
+    #shading="auto",
+    #vmin=vmin, vmax=vmax
 )
+#im = ax[1].imshow(
+#        #t_vec, c.frequencies[freq_inds], masked_granger[:, freq_inds, 1, 0].T,
+#        granger[:, freq_inds, 1, 0].T,
+#    cmap='viridis', aspect="auto",
+#    origin = 'lower', alpha= alpha_mask[:, freq_inds, 1,0].T,
+#    #vmin=vmin, vmax=vmax
+#)
 ax[1].set_title("x2 -> x1")
 ax[1].set_xlabel("Time")
 ax[1].set_ylabel("Frequency")
+plt.colorbar(im, ax = ax[1])
+ax[1].axvline(0, color='red', linestyle='--')
 plt.show()
 
-# Plot values of granger summed across all frequencies
-sum_granger = np.nansum(granger, axis=1)
-sum_shuffle_granger = np.nansum(shuffle_outs, axis=2)
-percentile_thresh = 95
-percentile_sum_shuffle = np.percentile(sum_shuffle_granger, percentile_thresh, axis=0)
-fig, ax = plt.subplots(2, 2, sharex=True, sharey=True)
-inds = list(np.ndindex(ax.shape))
-for num, this_ind in enumerate(inds):
-    ax[this_ind].plot(t_vec, sum_granger.T[this_ind])
-    ax[this_ind].plot(t_vec, percentile_sum_shuffle.T[this_ind], color = 'red')
-    #ax[this_ind].set_title(region_names[num])
-    ax[this_ind].set_ylabel('Trial')
-    ax[this_ind].set_xlabel('Trial')
-plt.show()
+## Plot values of granger summed across all frequencies
+#sum_granger = np.nansum(granger, axis=1)
+#sum_shuffle_granger = np.nansum(shuffle_outs, axis=2)
+#percentile_thresh = 95
+#percentile_sum_shuffle = np.percentile(sum_shuffle_granger, percentile_thresh, axis=0)
+#fig, ax = plt.subplots(2, 2, sharex=True, sharey=True)
+#inds = list(np.ndindex(ax.shape))
+#for num, this_ind in enumerate(inds):
+#    ax[this_ind].plot(t_vec, sum_granger.T[this_ind])
+#    ax[this_ind].plot(t_vec, percentile_sum_shuffle.T[this_ind], color = 'red')
+#    #ax[this_ind].set_title(region_names[num])
+#    ax[this_ind].set_ylabel('Trial')
+#    ax[this_ind].set_xlabel('Trial')
+#plt.show()
