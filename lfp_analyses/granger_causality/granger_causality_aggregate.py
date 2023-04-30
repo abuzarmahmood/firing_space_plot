@@ -19,6 +19,11 @@ with open(dir_list_path, 'r') as f:
     dir_list = f.read().splitlines()
 
 basename_list = [os.path.basename(this_dir) for this_dir in dir_list]
+animal_name = [this_name.split('_')[0] for this_name in basename_list]
+animal_count = np.unique(animal_name, return_counts=True)
+session_count = len(basename_list)
+
+n_string = f'N = {session_count} sessions, {len(animal_count[0])} animals'
 
 save_path = '/ancillary_analysis/granger_causality'
 names = ['granger_actual',
@@ -64,6 +69,7 @@ mask_array = mask_array[:, :, wanted_freq_inds]
 
 masked_granger = [np.ma.masked_array(x, mask=y)
                   for x, y in zip(granger_actual, mask_array)]
+masked_granger = np.ma.stack(masked_granger)
 
 ############################################################
 # Plot Data
@@ -113,16 +119,24 @@ for dat_ind in trange(len(basename_list)):
     plt.close(fig)
     # plt.show()
 
-# Create plots of mean granger and summed mask for each direction
+############################################################
+# Aggregate Plots
+############################################################
+# Create plots of mean granger, mean_masked_granger, and summed mask for each direction
 mean_granger_actual = granger_actual.mean(axis=0)
+mean_granger_mask = masked_granger.mean(axis=0) 
 mean_mask = mask_array.mean(axis=0)
 
 fig, ax = plt.subplots(2, 2, figsize=(15, 7), sharex=True, sharey=True)
-fig.suptitle('Mean Granger and Mask')
+fig.suptitle('Mean Granger and Mask' + '\n' + n_string)
 ax[0, 0].pcolormesh(time_vec, freq_vec,
                     mean_granger_actual[:, :, 0, 1].T, **mesh_kwargs)
 ax[1, 0].pcolormesh(time_vec, freq_vec,
                     mean_granger_actual[:, :, 1, 0].T, **mesh_kwargs)
+# ax[0, 1].pcolormesh(time_vec, freq_vec,
+#                     mean_granger_mask[:, :, 0, 1].T, **mesh_kwargs)
+# ax[1, 1].pcolormesh(time_vec, freq_vec,
+#                     mean_granger_mask[:, :, 1, 0].T, **mesh_kwargs)
 im = ax[0, 1].pcolormesh(time_vec, freq_vec,
                     1-mean_mask[:, :, 0, 1].T, **mesh_kwargs,
                     vmin=0, vmax=1)
@@ -137,6 +151,38 @@ for this_ax in ax[-1, :]:
     this_ax.set_xlabel('Time post-stimulus (s)')
 for this_ax in ax.flatten():
     this_ax.axvline(0, color = 'red', linestyle = '--', linewidth = 2)
+#titles = ['Mean Granger', 'Mean Masked Granger', 'Summed Mask']
+titles = ['Mean Granger', 'Mean Mask']
+for this_ax, this_title in zip(ax[0, :], titles):
+    this_ax.set_title(this_title)
 fig.savefig(os.path.join(aggregate_plot_dir, 'mean_granger_mask.png'), dpi=300)
 plt.close(fig)
 # plt.show()
+
+# For BLA , plot in smaller frequency range
+bla_freq_range = [0,30]
+bla_freq_inds = np.where((freq_vec > bla_freq_range[0]) & (freq_vec < bla_freq_range[1]))[0]
+bla_freq_vec = freq_vec[bla_freq_inds]
+fig, ax = plt.subplots(1, 2, figsize=(15, 4), sharex=True, sharey=True)
+fig.suptitle('Mean Granger and Mask, BLA-->GC' + '\n' + n_string)
+ax[0].pcolormesh(time_vec, bla_freq_vec,
+                 mean_granger_actual[:,bla_freq_inds, 1, 0].T, **mesh_kwargs)
+im = ax[1].pcolormesh(time_vec, bla_freq_vec,
+                      1-mean_mask[:, bla_freq_inds, 1, 0].T, **mesh_kwargs,
+                      )
+                    #vmin=0, vmax=1)
+cbar_ax = fig.add_axes([0.92, 0.15, 0.02, 0.7])
+plt.colorbar(im, cax=cbar_ax)
+for this_ax in ax:
+    this_ax.set_ylabel('Freq. (Hz)')
+for this_ax in ax:
+    this_ax.set_xlabel('Time post-stimulus (s)')
+for this_ax in ax:
+    this_ax.axvline(0, color = 'red', linestyle = '--', linewidth = 2)
+#titles = ['Mean Granger', 'Mean Masked Granger', 'Summed Mask']
+titles = ['Mean Granger', 'Mean Mask']
+for this_ax, this_title in zip(ax, titles):
+    this_ax.set_title(this_title)
+fig.savefig(os.path.join(aggregate_plot_dir, 'mean_granger_mask_bla.png'), dpi=300)
+plt.close(fig)
+

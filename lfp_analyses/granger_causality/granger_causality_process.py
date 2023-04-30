@@ -74,7 +74,8 @@ for dir_name in dir_list:
         ############################################################
         # Compute Granger Causality
         ############################################################
-        this_granger = gu.granger_handler(good_lfp_data)
+        this_granger = gu.granger_handler(good_lfp_data, 
+                                          multitaper_time_halfbandwidth_product=1)
         this_granger.get_granger_sig_mask()
 
         ############################################################
@@ -101,7 +102,7 @@ for dir_name in dir_list:
                      'freq_vec']
             for val, name in zip(vals, names):
                 h5.create_array(save_path, name, val)
-
+        del this_granger, dat
     except:
         print(f'Failed to process {basename}')
         continue

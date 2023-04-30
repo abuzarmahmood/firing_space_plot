@@ -43,6 +43,10 @@ class lfp_preprocessing():
     """
 
     def __init__(self, lfp_data):
+        """
+        Initialize class with lfp data
+        lfp_data : (n_channels, n_trials, n_timepoints)
+        """
         self.lfp_data = lfp_data
 
     def detrend_data(self):
@@ -119,14 +123,19 @@ def run_adfuller_test(preprocessed_data, alpha=0.05, wanted_fraction=0.95):
 
 
 def calc_granger(time_series,
+                 time_halfbandwidth_product=1,
                  sampling_frequency=1000,
                  time_window_duration=0.3,
                  time_window_step=0.05,
                  ):
+    """
+    Calculate granger causality
+    time_series = time x trials x channels
+    """
     m = Multitaper(
         time_series,
         sampling_frequency=sampling_frequency,  # in Hz
-        time_halfbandwidth_product=1,
+        time_halfbandwidth_product=time_halfbandwidth_product,
         start_time=0,
         time_window_duration=time_window_duration, # in seconds
         time_window_step=time_window_step, # in seconds
@@ -149,6 +158,7 @@ class granger_handler():
                  n_shuffles=500,
                  wanted_window=[1500, 4000],
                  alpha=0.05,
+                 multitaper_time_halfbandwidth_product=1,
                  multitaper_time_window_duration=0.3,
                  multitaper_time_window_step=0.05,
                  ):
@@ -168,13 +178,26 @@ class granger_handler():
         self.n_shuffles = n_shuffles
         self.wanted_window = wanted_window
         self.alpha = alpha
+        self.multitaper_time_halfbandwidth_product = \
+                multitaper_time_halfbandwidth_product
         self.multitaper_time_window_duration = multitaper_time_window_duration
         self.multitaper_time_window_step = multitaper_time_window_step
+
+    def calc_granger(self, x):
+        granger, c = calc_granger(
+            x,
+            sampling_frequency=self.sampling_frequency,
+            time_halfbandwidth_product=self.multitaper_time_halfbandwidth_product,
+            time_window_duration=self.multitaper_time_window_duration,
+            time_window_step=self.multitaper_time_window_step,
+                )
+        return granger, c
 
     def preprocess_and_check_stationarity(self):
         self.preprocessed_data = \
             lfp_preprocessing(self.good_lfp_data).return_preprocessed_data()
         run_adfuller_test(self.preprocessed_data)
+        # Transform data to (n_timepoints, n_trials, n_channels)
         self.input_data = \
             self.preprocessed_data.T[self.wanted_window[0]:self.wanted_window[1]]
 
@@ -185,11 +208,7 @@ class granger_handler():
         if not hasattr(self, 'input_data'):
             self.preprocess_and_check_stationarity()
         self.granger_actual, self.c_actual = \
-            calc_granger(self.input_data,
-                         sampling_frequency=self.sampling_frequency,
-                         time_window_duration=self.multitaper_time_window_duration,
-                         time_window_step=self.multitaper_time_window_step,
-                         )
+            self.calc_granger(self.input_data)
 
     def calc_granger_shuffle(self):
         """
@@ -201,14 +220,9 @@ class granger_handler():
                                 for x in self.input_data.T]).T
                        for i in trange(self.n_shuffles)]
 
-        def temp_calc_granger(x):
-            return calc_granger(x,
-                                sampling_frequency=self.sampling_frequency,
-                                time_window_duration=self.multitaper_time_window_duration,
-                                time_window_step=self.multitaper_time_window_step,
-                                )[0]
-        self.shuffle_outs = np.array(
-            parallelize(temp_calc_granger, temp_series, n_jobs=30))
+        outs_temp = parallelize(self.calc_granger, temp_series, n_jobs=30)
+        outs_temp = [x[0] for x in outs_temp]
+        self.shuffle_outs = np.array(outs_temp)
 
     def calc_shuffle_threshold(self):
         if not hasattr(self, 'shuffle_outs'):
@@ -228,3 +242,56 @@ class granger_handler():
         self.masked_granger = np.ma.masked_where(
             self.granger_actual < self.percentile_granger, self.granger_actual)
         self.mask_array = np.ma.getmask(self.masked_granger)
+
+    def calc_granger_single_trial(self):
+        """
+        Calculate granger causality for single trials
+        """
+        if not hasattr(self, 'input_data'):
+            self.preprocess_and_check_stationarity()
+
+        single_trial_dat = self.input_data.copy()
+        single_trial_dat = np.moveaxis(single_trial_dat, 0, 1)
+        single_trial_dat = single_trial_dat[:, :, np.newaxis, :]
+
+        outs = parallelize(self.calc_granger, single_trial_dat, n_jobs=30)
+        granger_single_trial, c_single_trial = zip(*outs)
+        self.granger_single_trial = np.array(granger_single_trial)
+        self.c_single_trial = np.array(c_single_trial)
+
+    def calc_granger_shuffle_single_trial(self):
+        """
+        Calculate shuffled granger causality for single trials
+        Will have to make an "AVERAGE" shuffle since we can't shuffle
+        trials for a single metric. Instead, we'll make a dataset
+        with mismatched trials
+        """
+        if not hasattr(self, 'input_data'):
+            self.preprocess_and_check_stationarity()
+        temp_series = [np.stack([np.random.permutation(x)
+                                for x in self.input_data.T]).T
+                       for i in trange(self.n_shuffles)]
+
+        outs_temp = parallelize(self.calc_granger, temp_series, n_jobs=30)
+        outs_temp = [x[0] for x in outs_temp]
+        self.shuffle_outs = np.array(outs_temp)
+
+    def calc_shuffle_threshold_single_trial(self):
+        if not hasattr(self, 'shuffle_outs'):
+            self.calc_granger_shuffle()
+        self.n_comparisons = self.shuffle_outs.shape[0] * \
+            self.shuffle_outs.shape[1]
+        corrected_alpha = self.alpha / self.n_comparisons
+        self.wanted_percentile = 100 - (corrected_alpha * 100)
+        self.percentile_granger = np.percentile(
+            self.shuffle_outs, self.wanted_percentile, axis=0)
+
+    def get_granger_sig_mask_single_trial(self):
+        if not hasattr(self, 'percentile_granger'):
+            self.calc_shuffle_threshold()
+        if not hasattr(self, 'granger_actual'):
+            self.calc_granger_actual()
+        self.masked_granger = np.ma.masked_where(
+            self.granger_actual < self.percentile_granger, self.granger_actual)
+        self.mask_array = np.ma.getmask(self.masked_granger)
+
