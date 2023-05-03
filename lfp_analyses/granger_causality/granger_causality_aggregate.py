@@ -288,3 +288,22 @@ fig.savefig(
       dpi=300)
 plt.close(fig)
 
+
+# Plot summed mask and granger across all frequencies
+fig, ax = plt.subplots(2, 2, figsize=(10, 7), sharex=True)
+ax[0,0].plot(time_vec, 
+             mean_granger_actual[:,:,0,1].sum(axis=1), color='black')
+ax[1,0].plot(time_vec,
+             mean_granger_actual[:,:,1,0].sum(axis=1), color='black')
+ax[0,1].plot(time_vec, 
+             mean_mask[:, :, 0, 1].sum(axis=1), color='black')
+ax[1,1].plot(time_vec,
+             mean_mask[:, :, 1, 0].sum(axis=1), color='black')
+for num, this_ax in enumerate(ax[:, 0]):
+                    this_ax.set_ylabel(direction_names[num] + '\nFreq. (Hz)')
+ax[0,0].set_title('Summed Granger')
+ax[0,1].set_title('Summed Mask')
+fig.savefig(
+    os.path.join(aggregate_plot_dir, 'summed_granger_and_mask.png'),
+    dpi=300)
+plt.close(fig)
