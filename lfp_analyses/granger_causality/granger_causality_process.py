@@ -34,8 +34,8 @@ import granger_utils as gu
 from ephys_data import ephys_data
 
 # Log all stdout and stderr to a log file in results folder
-#sys.stdout = open(os.path.join(granger_causality_path, 'stdout.txt'), 'w')
-#sys.stderr = open(os.path.join(granger_causality_path, 'stderr.txt'), 'w')
+sys.stdout = open(os.path.join(granger_causality_path, 'stdout.txt'), 'w')
+sys.stderr = open(os.path.join(granger_causality_path, 'stderr.txt'), 'w')
 
 ############################################################
 # Load Data
@@ -65,25 +65,43 @@ for dir_name in dir_list:
 
         flat_region_lfps = np.reshape(
             region_lfps, (region_lfps.shape[0], -1, region_lfps.shape[-1]))
+        flat_taste_nums = np.repeat(np.arange(len(taste_names)),
+                                    taste_lfps[0].shape[1])
 
         lfp_set_names = taste_names.copy()
         lfp_set_names.append('all')
-
-        lfp_sets = taste_lfps.copy() 
-        lfp_sets.append(flat_region_lfps)
 
         ############################################################
         # Preprocessing
         ############################################################
 
+        # NOTE: Preprocess all tastes together so that separate
+        # preprocessing does not introduce systematic differences
+        # between tastes
+
         # 1) Remove trials with artifacts
-        #good_lfp_trials_bool = dat.lfp_processing.return_good_lfp_trial_inds(dat.all_lfp_array)
-        good_lfp_data = [dat.lfp_processing.return_good_lfp_trials(
-            x) for x in lfp_sets]
+        good_lfp_trials_bool = \
+                dat.lfp_processing.return_good_lfp_trial_inds(flat_region_lfps)
+        good_lfp_trials = flat_region_lfps[:,good_lfp_trials_bool]
+        good_taste_nums = flat_taste_nums[good_lfp_trials_bool]
+
+        
+        # 2) Preprocess data
+        this_granger = gu.granger_handler(good_lfp_trials)
+        this_granger.preprocess_and_check_stationarity()
+        preprocessed_data = this_granger.preprocessed_data
+
+        # Make list of data according to lfp_set_names 
+        preprocessed_lfp_data = [
+                preprocessed_data[:, good_taste_nums == x]\
+                for x in range(len(taste_names))
+                ]
+        preprocessed_lfp_data.append(preprocessed_data)
 
         ############################################################
         # Compute Granger Causality
         ############################################################
+        # Create group in h5 if needed
         with tables.open_file(h5_path, 'r+') as h5:
             save_path = '/ancillary_analysis/granger_causality'
             if save_path in h5:
@@ -92,10 +110,12 @@ for dir_name in dir_list:
                                recursive=True)
             h5.create_group(os.path.dirname(save_path), 'granger_causality')
 
-        for num, this_dat in enumerate(good_lfp_data):
+        for num, this_dat in enumerate(preprocessed_lfp_data):
             print(f'Processing {lfp_set_names[num]}')
-            this_granger = gu.granger_handler(this_dat, 
-                                              multitaper_time_halfbandwidth_product=1)
+            this_granger = gu.granger_handler(
+                                      this_dat,
+                                      multitaper_time_halfbandwidth_product=1,
+                                      preprocess=False)
             this_granger.get_granger_sig_mask()
 
             ############################################################
@@ -110,9 +130,7 @@ for dir_name in dir_list:
                         this_granger.masked_granger,
                         this_granger.mask_array,
                         this_granger.wanted_window,
-                        #this_granger.c_actual.time,
                         this_granger.time_vec,
-                        #this_granger.c_actual.frequencies]
                         this_granger.freq_vec]
                 names = ['granger_actual',
                          'masked_granger',

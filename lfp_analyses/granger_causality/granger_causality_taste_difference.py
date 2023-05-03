@@ -138,7 +138,7 @@ for this_granger in tqdm(granger_actual):
     temp_anova = lambda x: pg.anova(data=x[1], 
                                     dv='granger', 
                                     between='taste')['p-unc'].values[0]
-    pg.anova(data=this_group[1], dv='granger', between='taste')
+    #pg.anova(data=this_group[1], dv='granger', between='taste')
 
     anova_results = parallelize(temp_anova, grouped_dat, n_jobs=30)
 

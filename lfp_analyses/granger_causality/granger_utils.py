@@ -161,6 +161,7 @@ class granger_handler():
                  multitaper_time_halfbandwidth_product=1,
                  multitaper_time_window_duration=0.3,
                  multitaper_time_window_step=0.05,
+                 preprocess=True,
                  ):
         """
         preprocessed_data = (n_channels, n_trials, n_timepoints)
@@ -173,6 +174,7 @@ class granger_handler():
         """
         #self.preprocessed_data = preprocessed_data
         #self.input_data = preprocessed_data.T[wanted_window[0]:wanted_window[1]]
+        self.preprocess_flag = preprocess
         self.good_lfp_data = good_lfp_data
         self.sampling_frequency = sampling_frequency
         self.n_shuffles = n_shuffles
@@ -194,8 +196,11 @@ class granger_handler():
         return granger, c
 
     def preprocess_and_check_stationarity(self):
-        self.preprocessed_data = \
-            lfp_preprocessing(self.good_lfp_data).return_preprocessed_data()
+        if self.preprocess_flag:
+            self.preprocessed_data = \
+                lfp_preprocessing(self.good_lfp_data).return_preprocessed_data()
+        else:
+            self.preprocessed_data = self.good_lfp_data
         run_adfuller_test(self.preprocessed_data)
         # Transform data to (n_timepoints, n_trials, n_channels)
         self.input_data = \

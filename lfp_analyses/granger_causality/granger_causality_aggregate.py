@@ -184,36 +184,35 @@ plt.close(fig)
 zoom_freq_range = [0, 30]
 zoom_freq_inds = np.where((freq_vec > zoom_freq_range[0]) &
                           (freq_vec < zoom_freq_range[1]))[0]
-zoom_freq_vec = freq_vec[zoom_freq_inds]
 
-mean_granger_actual = mean_granger_actual[:, zoom_freq_inds]
-mean_mask = mean_mask[:, zoom_freq_inds]
-freq_vec = freq_vec[zoom_freq_inds]
+mean_granger_zoom = mean_granger_actual[:, zoom_freq_inds]
+mean_mask_zoom = mean_mask[:, zoom_freq_inds]
+freq_vec_zoom = freq_vec[zoom_freq_inds]
 
 fig, ax = plt.subplots(2, 4, figsize=(15, 7), sharex=True, sharey=True)
 fig.suptitle('Zoomed Mean Granger and Mask' + '\n' + n_string)
-ax[0, 0].pcolormesh(time_vec, freq_vec,
-                    mean_granger_actual[:, :, 0, 1].T, **mesh_kwargs)
-ax[1, 0].pcolormesh(time_vec, freq_vec,
-                    mean_granger_actual[:, :, 1, 0].T, **mesh_kwargs)
-ax[0, 1].pcolormesh(time_vec, freq_vec,
-                    zscore(mean_granger_actual[:, :, 0, 1].T, axis=-1),
+ax[0, 0].pcolormesh(time_vec, freq_vec_zoom,
+                    mean_granger_zoom[:, :, 0, 1].T, **mesh_kwargs)
+ax[1, 0].pcolormesh(time_vec, freq_vec_zoom,
+                    mean_granger_zoom[:, :, 1, 0].T, **mesh_kwargs)
+ax[0, 1].pcolormesh(time_vec, freq_vec_zoom,
+                    zscore(mean_granger_zoom[:, :, 0, 1].T, axis=-1),
                     **mesh_kwargs)
-ax[1, 1].pcolormesh(time_vec, freq_vec,
-                    zscore(mean_granger_actual[:, :, 1, 0].T, axis=-1),
+ax[1, 1].pcolormesh(time_vec, freq_vec_zoom,
+                    zscore(mean_granger_zoom[:, :, 1, 0].T, axis=-1),
                     **mesh_kwargs)
-ax[0, 2].pcolormesh(time_vec, freq_vec,
-                    zscore(1-mean_mask[:, :, 0, 1].T, axis=-1),
+ax[0, 2].pcolormesh(time_vec, freq_vec_zoom,
+                    zscore(1-mean_mask_zoom[:, :, 0, 1].T, axis=-1),
                     **mesh_kwargs)
-ax[1, 2].pcolormesh(time_vec, freq_vec,
-                    zscore(1-mean_mask[:, :, 1, 0].T, axis=-1),
+ax[1, 2].pcolormesh(time_vec, freq_vec_zoom,
+                    zscore(1-mean_mask_zoom[:, :, 1, 0].T, axis=-1),
                     **mesh_kwargs)
-im = ax[0, -1].pcolormesh(time_vec, freq_vec,
-                          1-mean_mask[:, :, 0, 1].T, **mesh_kwargs)
+im = ax[0, -1].pcolormesh(time_vec, freq_vec_zoom,
+                          1-mean_mask_zoom[:, :, 0, 1].T, **mesh_kwargs)
 cbar_ax = fig.add_axes([0.92, 0.55, 0.02, 0.35])
 plt.colorbar(im, cax=cbar_ax)
-im = ax[1, -1].pcolormesh(time_vec, freq_vec,
-                          1-mean_mask[:, :, 1, 0].T, **mesh_kwargs)
+im = ax[1, -1].pcolormesh(time_vec, freq_vec_zoom,
+                          1-mean_mask_zoom[:, :, 1, 0].T, **mesh_kwargs)
 cbar_ax = fig.add_axes([0.92, 0.15, 0.02, 0.35])
 plt.colorbar(im, cax=cbar_ax)
 for this_ax in ax[:, 0]:
@@ -236,4 +235,56 @@ fig.savefig(
         dpi=300)
 plt.close(fig)
 # plt.show()
+
+# Plot mean mask for:
+# 1. All frequencies
+# 2. Frequencies < 20 Hz
+# 3. As a line plot for frequencies < 20 Hz
+
+summed_freq_range = [0,15]
+wanted_freq_inds = np.where((freq_vec > summed_freq_range[0]) &
+                            (freq_vec < summed_freq_range[1]))[0]
+mean_mask_summed = np.sum(1-mean_mask[:, wanted_freq_inds], axis=1)
+
+fig, ax  = plt.subplots(
+                    len(granger_actual.T), 3, figsize=(15, 7),
+                    sharex=True)
+ax[0,0].pcolormesh(time_vec, freq_vec,
+                   1-mean_mask[:, :, 0, 1].T, **mesh_kwargs)
+ax[1,0].pcolormesh(time_vec, freq_vec,
+                   1-mean_mask[:, :, 1, 0].T, **mesh_kwargs)
+ax[0,1].pcolormesh(time_vec, freq_vec_zoom,
+                   1-mean_mask_zoom[:, :, 0, 1].T, **mesh_kwargs)
+ax[1,1].pcolormesh(time_vec, freq_vec_zoom,
+                   1-mean_mask_zoom[:, :, 1, 0].T, **mesh_kwargs)
+ax[0,2].plot(time_vec, mean_mask_summed[:, 0, 1], color='black')
+ax[0,2].axvline(time_vec[np.argmax(mean_mask_summed[:, 0, 1])],
+                color = 'k', linestyle = '--', label = 'Max value')
+ax[0,2].text(time_vec[np.argmax(mean_mask_summed[:, 0, 1])],
+             0.8, f'{time_vec[np.argmax(mean_mask_summed[:, 0, 1])]:.2f} s',
+             transform = ax[0,2].transData,)
+ax[1,2].plot(time_vec, mean_mask_summed[:, 1, 0], color='red')
+ax[1,2].axvline(time_vec[np.argmax(mean_mask_summed[:, 1, 0])],
+                color = 'k', linestyle = '--')
+ax[1,2].text(time_vec[np.argmax(mean_mask_summed[:, 1,0])],
+             1, f'{time_vec[np.argmax(mean_mask_summed[:, 1,0])]:.2f} s',
+             transform = ax[1,2].transData,)
+for num, this_ax in enumerate(ax[:, 0]):
+                    this_ax.set_ylabel(direction_names[num] +\
+                                                            '\nFreq. (Hz)')
+for this_ax in ax[:,1]:
+                    this_ax.set_ylabel('Freq. (Hz)')
+for this_ax in ax[:,2]:
+                    this_ax.set_ylabel('Summed Significant Bins')
+for this_ax in ax[-1, :]:
+                    this_ax.set_xlabel('Time post-stimulus (s)')
+ax[0,-1].set_title(f'Summed Mask for Freqs = {summed_freq_range} Hz')
+for this_ax in ax.flatten():
+                    this_ax.axvline(0, color='red', linestyle='--', linewidth=2,
+                                    label = 'Stimulus onset')
+ax[0,-1].legend()
+fig.savefig(
+      os.path.join(aggregate_plot_dir, 'mean_mask_3_ways.png'),
+      dpi=300)
+plt.close(fig)
 
