@@ -94,6 +94,7 @@ mesh_kwargs = dict(
     # origin='lower',
     # aspect='auto',
     # levels=20,
+    shading = 'nearest',
     cmap=cmap)
 
 #for dat_ind in trange(len(basename_list)):
