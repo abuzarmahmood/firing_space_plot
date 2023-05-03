@@ -203,12 +203,27 @@ class granger_handler():
 
     def calc_granger_actual(self):
         """
-        Calculate actual granger causality
+        Calculate bootstrapped actual granger causality
+        to allow for estimation of error
         """
         if not hasattr(self, 'input_data'):
             self.preprocess_and_check_stationarity()
-        self.granger_actual, self.c_actual = \
-            self.calc_granger(self.input_data)
+        # input_data shape = (n_timepoints, n_trials, n_channels)
+        # Calculate as many bootstrapped samples as n_shuffles
+        trial_inds = np.random.randint(
+                0, self.input_data.shape[1],
+                (self.n_shuffles, self.input_data.shape[1]))
+        temp_dat = [self.input_data[:, trial_inds[i]]
+                    for i in trange(self.n_shuffles)]
+        outs_temp = parallelize(self.calc_granger, temp_dat, n_jobs=30)
+        time_vec = outs_temp[0][1].time
+        freq_vec = outs_temp[0][1].frequencies
+        outs_temp = [x[0] for x in outs_temp]
+        self.granger_actual = np.array(outs_temp)
+        self.time_vec = time_vec
+        self.freq_vec = freq_vec
+        #self.granger_actual, self.c_actual = \
+        #    self.calc_granger(self.input_data)
 
     def calc_granger_shuffle(self):
         """
@@ -235,63 +250,67 @@ class granger_handler():
             self.shuffle_outs, self.wanted_percentile, axis=0)
 
     def get_granger_sig_mask(self):
+        """
+        Mask is True when granger causality is NOT SIGNIFICANT
+        """
         if not hasattr(self, 'percentile_granger'):
             self.calc_shuffle_threshold()
         if not hasattr(self, 'granger_actual'):
             self.calc_granger_actual()
+        mean_granger_actual = np.mean(self.granger_actual, axis=0)
         self.masked_granger = np.ma.masked_where(
-            self.granger_actual < self.percentile_granger, self.granger_actual)
+            mean_granger_actual < self.percentile_granger, mean_granger_actual)
         self.mask_array = np.ma.getmask(self.masked_granger)
 
-    def calc_granger_single_trial(self):
-        """
-        Calculate granger causality for single trials
-        """
-        if not hasattr(self, 'input_data'):
-            self.preprocess_and_check_stationarity()
+    #def calc_granger_single_trial(self):
+    #    """
+    #    Calculate granger causality for single trials
+    #    """
+    #    if not hasattr(self, 'input_data'):
+    #        self.preprocess_and_check_stationarity()
 
-        single_trial_dat = self.input_data.copy()
-        single_trial_dat = np.moveaxis(single_trial_dat, 0, 1)
-        single_trial_dat = single_trial_dat[:, :, np.newaxis, :]
+    #    single_trial_dat = self.input_data.copy()
+    #    single_trial_dat = np.moveaxis(single_trial_dat, 0, 1)
+    #    single_trial_dat = single_trial_dat[:, :, np.newaxis, :]
 
-        outs = parallelize(self.calc_granger, single_trial_dat, n_jobs=30)
-        granger_single_trial, c_single_trial = zip(*outs)
-        self.granger_single_trial = np.array(granger_single_trial)
-        self.c_single_trial = np.array(c_single_trial)
+    #    outs = parallelize(self.calc_granger, single_trial_dat, n_jobs=30)
+    #    granger_single_trial, c_single_trial = zip(*outs)
+    #    self.granger_single_trial = np.array(granger_single_trial)
+    #    self.c_single_trial = np.array(c_single_trial)
 
-    def calc_granger_shuffle_single_trial(self):
-        """
-        Calculate shuffled granger causality for single trials
-        Will have to make an "AVERAGE" shuffle since we can't shuffle
-        trials for a single metric. Instead, we'll make a dataset
-        with mismatched trials
-        """
-        if not hasattr(self, 'input_data'):
-            self.preprocess_and_check_stationarity()
-        temp_series = [np.stack([np.random.permutation(x)
-                                for x in self.input_data.T]).T
-                       for i in trange(self.n_shuffles)]
+    #def calc_granger_shuffle_single_trial(self):
+    #    """
+    #    Calculate shuffled granger causality for single trials
+    #    Will have to make an "AVERAGE" shuffle since we can't shuffle
+    #    trials for a single metric. Instead, we'll make a dataset
+    #    with mismatched trials
+    #    """
+    #    if not hasattr(self, 'input_data'):
+    #        self.preprocess_and_check_stationarity()
+    #    temp_series = [np.stack([np.random.permutation(x)
+    #                            for x in self.input_data.T]).T
+    #                   for i in trange(self.n_shuffles)]
 
-        outs_temp = parallelize(self.calc_granger, temp_series, n_jobs=30)
-        outs_temp = [x[0] for x in outs_temp]
-        self.shuffle_outs = np.array(outs_temp)
+    #    outs_temp = parallelize(self.calc_granger, temp_series, n_jobs=30)
+    #    outs_temp = [x[0] for x in outs_temp]
+    #    self.shuffle_outs = np.array(outs_temp)
 
-    def calc_shuffle_threshold_single_trial(self):
-        if not hasattr(self, 'shuffle_outs'):
-            self.calc_granger_shuffle()
-        self.n_comparisons = self.shuffle_outs.shape[0] * \
-            self.shuffle_outs.shape[1]
-        corrected_alpha = self.alpha / self.n_comparisons
-        self.wanted_percentile = 100 - (corrected_alpha * 100)
-        self.percentile_granger = np.percentile(
-            self.shuffle_outs, self.wanted_percentile, axis=0)
+    #def calc_shuffle_threshold_single_trial(self):
+    #    if not hasattr(self, 'shuffle_outs'):
+    #        self.calc_granger_shuffle()
+    #    self.n_comparisons = self.shuffle_outs.shape[0] * \
+    #        self.shuffle_outs.shape[1]
+    #    corrected_alpha = self.alpha / self.n_comparisons
+    #    self.wanted_percentile = 100 - (corrected_alpha * 100)
+    #    self.percentile_granger = np.percentile(
+    #        self.shuffle_outs, self.wanted_percentile, axis=0)
 
-    def get_granger_sig_mask_single_trial(self):
-        if not hasattr(self, 'percentile_granger'):
-            self.calc_shuffle_threshold()
-        if not hasattr(self, 'granger_actual'):
-            self.calc_granger_actual()
-        self.masked_granger = np.ma.masked_where(
-            self.granger_actual < self.percentile_granger, self.granger_actual)
-        self.mask_array = np.ma.getmask(self.masked_granger)
+    #def get_granger_sig_mask_single_trial(self):
+    #    if not hasattr(self, 'percentile_granger'):
+    #        self.calc_shuffle_threshold()
+    #    if not hasattr(self, 'granger_actual'):
+    #        self.calc_granger_actual()
+    #    self.masked_granger = np.ma.masked_where(
+    #        self.granger_actual < self.percentile_granger, self.granger_actual)
+    #    self.mask_array = np.ma.getmask(self.masked_granger)
 
