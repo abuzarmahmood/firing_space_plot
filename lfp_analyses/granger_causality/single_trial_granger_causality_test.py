@@ -97,7 +97,7 @@ for dir_name in dir_list:
     window_length = 300
     epoch_ends = epoch_starts + window_length
     epoch_lims = list(zip(epoch_starts, epoch_ends))
-    epoch_names = epoch_ends #[int(np.mean(x)) for x in epoch_lims]
+    epoch_names = [int(np.mean(x)) for x in epoch_lims]
     input_data = this_granger.preprocessed_data
     input_data_epochs = [input_data[...,inds[0]:inds[1]] for inds in epoch_lims]
     # Reshape to (n_trials, n_channels, n_timepoints)
@@ -170,7 +170,7 @@ for dir_name in dir_list:
     fig.suptitle('Parametric Granger Causality' + '\n' + basename + \
             '\n' + 'Window Length: ' + str(window_length) + ' ms')
     for this_ax in fig.axes:
-        this_ax.set_xlabel('Window ending at (ms)')
+        this_ax.set_xlabel('Window centered at (ms)')
     plt.tight_layout()
     fig.savefig(os.path.join(plot_dir, f'{basename}.png'))
     plt.close(fig)

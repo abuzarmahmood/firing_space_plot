@@ -195,13 +195,21 @@ class granger_handler():
                 )
         return granger, c
 
-    def preprocess_and_check_stationarity(self):
+    def preprocess_data(self):
         if self.preprocess_flag:
             self.preprocessed_data = \
                 lfp_preprocessing(self.good_lfp_data).return_preprocessed_data()
         else:
             self.preprocessed_data = self.good_lfp_data
+
+    def check_stationarity(self):
+        if not hasattr(self, 'preprocessed_data'):
+            self.preprocess_data()
         run_adfuller_test(self.preprocessed_data)
+
+    def preprocess_and_check_stationarity(self):
+        self.preprocess_data()
+        self.check_stationarity()
         # Transform data to (n_timepoints, n_trials, n_channels)
         self.input_data = \
             self.preprocessed_data.T[self.wanted_window[0]:self.wanted_window[1]]
