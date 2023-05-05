@@ -65,11 +65,11 @@ dir_list_path = \
 with open(dir_list_path, 'r') as f:
     dir_list = f.read().splitlines()
 
-epoch_inds = np.arange(len(epoch_lims))
-frequency_inds = np.arange(len(frequency_lims))
-dir_inds = np.arange(len(dir_list))
+all_epoch_inds = np.arange(len(epoch_lims))
+all_frequency_inds = np.arange(len(frequency_lims))
+all_dir_inds = np.arange(len(dir_list))
 
-iter_inds = list(product(epoch_inds, frequency_inds, dir_inds))
+iter_inds = list(product(all_dir_inds, all_frequency_inds, all_epoch_inds))
 
 ############################################################
 # Load Data
@@ -78,9 +78,9 @@ iter_inds = list(product(epoch_inds, frequency_inds, dir_inds))
 for this_iter in tqdm(iter_inds):
     #this_iter = iter_inds[0]
 
-    epoch_ind = this_iter[0]
+    dir_ind = this_iter[0]
     frequency_ind = this_iter[1]
-    dir_ind = this_iter[2]
+    epoch_ind = this_iter[2]
 
     this_epoch = epoch_lims[epoch_ind]
     this_frequency = frequency_lims[frequency_ind]
@@ -105,6 +105,12 @@ for this_iter in tqdm(iter_inds):
     # Region lfps shape : (n_tastes, n_channels, n_trials, n_timepoints)
     lfp_channel_inds, region_lfps, region_names = \
         dat.return_representative_lfp_channels()
+
+    # Sort everything by region_names
+    sort_inds = np.argsort(region_names)
+    region_names = np.array(region_names)[sort_inds]
+    region_lfps = region_lfps[sort_inds]
+    lfp_channel_inds = np.array(lfp_channel_inds)[sort_inds]
 
     flat_region_lfps = np.reshape(
         region_lfps, (region_lfps.shape[0], -1, region_lfps.shape[-1]))
@@ -205,12 +211,16 @@ for this_iter in tqdm(iter_inds):
 
     # If array present, append to it
     with tables.open_file(h5_path, 'r') as h5:
+        # If this is the first of a new dataset, overwrite
+        if frequency_ind + epoch_ind == 0:
+            present_bool = False
+        # If not, check whether frame is present
         if save_path in h5:
             present_bool = True
         else:
             present_bool = False
     if present_bool:
         df = pd.read_hdf(h5_path, save_path)
-        gc_results_df.append(df)
+        gc_results_df = gc_results_df.append(df)
         gc_results_df.drop_duplicates(inplace=True)
     gc_results_df.to_hdf(h5_path, save_path)
