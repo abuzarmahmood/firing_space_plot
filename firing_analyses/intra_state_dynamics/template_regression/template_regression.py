@@ -3,7 +3,12 @@ Find loadings for pre-defined temporal functions which approximate epochal durat
 If projection of data into template_space is similar to templates, then
 population follows the same pattern
 """
+
 import os
+
+os.environ['MKL_NUM_THREADS'] = '1'
+os.environ['NUMEXPR_NUM_THREADS'] = '1'
+os.environ['OMP_NUM_THREADS'] = '1'
 
 import sys
 sys.path.append('/media/bigdata/firing_space_plot/ephys_data')
@@ -40,28 +45,31 @@ base_dir = '/media/bigdata/firing_space_plot/firing_analyses/'\
 plot_dir = os.path.join(base_dir,'plots') 
 
 ############################################################
+
 ## Simulation
 ############################################################
 # Time-lims : 0-2000ms
 # 4 States
-states = 4
+nrns = 10
+trials = 15
 epoch_lims = [
+        [-500, 0],
         [0,200],
         [200,850],
         [850,1450],
         [1450,2000]
         ]
+epoch_lims = np.array(epoch_lims)
+epoch_lims -= epoch_lims.min()
+states = len(epoch_lims)
 epoch_lens = np.array([np.abs(np.diff(x)[0]) for x in epoch_lims])
-basis_funcs = np.stack([np.zeros(2000) for i in range(4)] )
+basis_funcs = np.stack([np.zeros(epoch_lims.max()) for i in range(states)] )
 for this_func, this_lims in zip(basis_funcs, epoch_lims):
     this_func[this_lims[0]:this_lims[1]] = 1
 basis_funcs = basis_funcs / norm(basis_funcs,axis=-1)[:,np.newaxis] 
 long_template = np.tile(basis_funcs, (1,trials))
-
 vz.imshow(basis_funcs);plt.show()
 
-nrns = 10
-trials = 15
 sim_w = np.random.random(size = (nrns,states))
 
 # Similarity of projection vectors
@@ -185,7 +193,8 @@ flat_basenames = [[basenames[s_num] + f'_{num}' \
                         for s_num in range(len(basenames))]
 flat_basenames = [x for y in flat_basenames for x in y]
 
-time_lims = [2000,4000]
+time_lims = [1500,4000]
+assert np.abs(np.diff(time_lims)) == len(basis_funcs.T)
 #step_size = dat.firing_rate_params['step_size']
 #wanted_inds = np.arange(time_lims[0], time_lims[1]) / step_size 
 #wanted_inds = np.unique(np.vectorize(np.int)(wanted_inds))
@@ -401,6 +410,9 @@ im = ax[1,0].imshow(zscore(mean_min_firing[min_order],axis=-1), **img_kwargs)
 fig.colorbar(im, ax=ax[1,0])
 im = ax[1,1].imshow(zscore(mean_max_firing[max_order],axis=-1), **img_kwargs)
 fig.colorbar(im, ax=ax[1,1])
+for this_ax in ax[:3, :].flatten():
+    stim_t = 500
+    this_ax.axvline(stim_t, color = 'red', linestyle = '--', linewidth = 2)
 ax[2,0].imshow(zscore(min_mean_proj,axis=-1), **img_kwargs)
 ax[2,1].imshow(zscore(max_mean_proj,axis=-1), **img_kwargs)
 ax[3,0].plot(zscore(min_mean_proj,axis=-1).T, linewidth = 2)
@@ -450,6 +462,10 @@ preprocess_parameters['time_lims'] = time_lims
 
 #mode_tau_list = []
 #raw_tau_list = []
+## Delete everything in model_outs_dir
+#rm_list = glob(os.path.join(model_outs_dir,'*'))
+#for this_file in rm_list:
+#    os.remove(this_file)
 #for num, this_spikes in enumerate(tqdm(flat_spikes)):
 #    try:
 #        pre_dat = preprocess_single_taste(this_spikes, **preprocess_parameters)
@@ -463,14 +479,15 @@ preprocess_parameters['time_lims'] = time_lims
 #        mode_tau = np.squeeze(mode(np.vectorize(np.int)(raw_tau))[0])
 #        mode_tau_list.append(mode_tau)
 #        raw_tau_list.append(raw_tau)
-#        np.save(os.path.join(model_outs_dir, f'raw_tau_{num}.npy'), raw_tau, allow_pickle = True)
-#        np.save(os.path.join(model_outs_dir, f'mode_tau_{num}.npy'), mode_tau, allow_pickle = True)
+#        np.save(os.path.join(model_outs_dir, f'raw_tau_{num:03}.npy'), raw_tau, allow_pickle = True)
+#        np.save(os.path.join(model_outs_dir, f'mode_tau_{num:03}.npy'), mode_tau, allow_pickle = True)
 #    except:
 #        print(f'Error with run {num}')
 
 # Get inds
 raw_file_list = glob(os.path.join(model_outs_dir, '*raw_tau*'))
 mode_file_list = glob(os.path.join(model_outs_dir, '*mode_tau*'))
+
 raw_tau_list = [np.load(x) for x in raw_file_list]
 mode_tau_list = [np.load(x) for x in mode_file_list]
 inds = [os.path.basename(x).split('_')[-1].split('.')[0] for x in raw_file_list]
@@ -488,7 +505,6 @@ std_tau_var = [x.std(axis=None) for x in tau_var]
 
 sim_frame.loc[inds, 'mean_var'] = mean_tau_var
 sim_frame.loc[inds, 'std_var'] = std_tau_var
-
 
 AM_frame = sim_frame.loc[sim_frame['experimenter'] == 'AM']
 sim_var_corr = spearmanr(AM_frame.similarity, AM_frame.mean_var)
@@ -661,7 +677,7 @@ for this_ind in inds:
     #this_firing = mean_aligned_firing[this_ind[0]][this_ind[1]]
     #ax[this_ind].imshow(zscore(mean_aligned_pc[this_ind],axis=-1),
     #        **img_kwargs)
-    ax[this_ind].plot(zscore(mean_aligned_pc[this_ind],axis=-1).T)
+    ax[this_ind].plot(zscore(mean_aligned_pc[this_ind[0]][this_ind[1]][0],axis=-1).T)
     #ax[this_ind].plot(this_firing.T)
 ax[0,0].set_ylabel('Min Dynamics')
 ax[1,0].set_ylabel('Max Dynamics')
