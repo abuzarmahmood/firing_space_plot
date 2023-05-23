@@ -203,6 +203,10 @@ for this_iter in tqdm(iter_inds):
 ############################################################
 # Plotting 
 ############################################################
+plot_dir = os.path.join(granger_path, 'plots')
+if not os.path.exists(plot_dir):
+    os.makedirs(plot_dir)
+
 # 1) Difference between tastants in causality
 taste_anova_frame = pd.concat(taste_anova_list)
 alpha = 0.05
@@ -222,7 +226,9 @@ sns.catplot(data = taste_anova_frac,
 fig = plt.gcf()
 fig.suptitle('Fraction of significant taste difference anovas')
 fig.subplots_adjust(top=0.9)
-plt.show()
+fig.savefig(os.path.join(plot_dir, 'taste_anova.png'))
+plt.close(fig)
+#plt.show()
 
 # 2) Difference in causality between high and low entropy, per direction
 entropy_anova_frame = pd.concat(entropy_anova_list)
@@ -243,7 +249,9 @@ sns.catplot(data = entropy_anova_frac,
 fig = plt.gcf()
 fig.suptitle('Fraction of significant entropy difference anovas')
 fig.subplots_adjust(top=0.9)
-plt.show()
+fig.savefig(os.path.join(plot_dir, 'entropy_anova.png'))
+plt.close(fig)
+#plt.show()
 
 # 3) Difference in causality between correct and incorrect predictions, per direction
 prediction_anova_frame = pd.concat(prediction_anova_list)
@@ -264,7 +272,9 @@ sns.catplot(data = prediction_anova_frac,
 fig = plt.gcf()
 fig.suptitle('Fraction of significant prediction difference anovas')
 fig.subplots_adjust(top=0.9)
-plt.show()
+fig.savefig(os.path.join(plot_dir, 'prediction_anova.png'))
+plt.close(fig)
+#plt.show()
 
 # Plot all three together
 anova_frac = pd.concat([taste_anova_frac, entropy_anova_frac, prediction_anova_frac])
@@ -280,5 +290,7 @@ sns.catplot(data = anova_frac,
 fig = plt.gcf()
 fig.suptitle('Fraction of significant difference anovas')
 fig.subplots_adjust(top=0.9)
-plt.show()
+fig.savefig(os.path.join(plot_dir, 'all_anovas.png'))
+plt.close(fig)
+#plt.show()
 

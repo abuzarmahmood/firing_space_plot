@@ -131,13 +131,15 @@ for dir_name in dir_list:
                         this_granger.mask_array,
                         this_granger.wanted_window,
                         this_granger.time_vec,
-                        this_granger.freq_vec]
+                        this_granger.freq_vec,
+                        region_names]
                 names = ['granger_actual',
                          'masked_granger',
                          'mask_array',
                          'wanted_window',
                          'time_vec',
-                         'freq_vec']
+                         'freq_vec',
+                         'region_names']
                 for val, name in zip(vals, names):
                     h5.create_array(fin_save_path, name, val)
             del this_granger

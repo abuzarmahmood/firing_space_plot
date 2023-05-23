@@ -9,7 +9,12 @@ import numpy as np
 from glob import glob
 import matplotlib.pyplot as plt
 from tqdm import trange
-from scipy.stats import zscore
+from scipy.stats import zscore, mode
+from sklearn.decomposition import PCA
+
+import sys
+sys.path.append('/media/bigdata/projects/pytau')
+import pytau.changepoint_model as models
 
 ############################################################
 # Load Data
@@ -179,6 +184,100 @@ for this_name, this_ax in zip(direction_names, ax[:,0]):
 fig.savefig(os.path.join(aggregate_plot_dir, 'mean_granger_mask.png'), dpi=300)
 plt.close(fig)
 # plt.show()
+
+# Plot mean mask with inferred changepoints
+mean_mask_cp = np.copy(mean_mask)
+mean_mask_cp = np.stack([mean_mask_cp[:, :, 0, 1].T,
+                         mean_mask_cp[:, :, 1, 0].T], axis=-1)
+
+mean_mask_stack = np.concatenate(mean_mask_cp, axis = -1).T
+zscore_mask_stack = zscore(mean_mask_stack, axis=-1)
+
+plt.pcolormesh(time_vec, np.concatenate([freq_vec]*2), 
+               zscore_mask_stack, **mesh_kwargs)
+plt.show()
+
+# Get components for each mask which give 95% variance explained
+pca_dat_list = []
+for this_mask in mean_mask_cp.T:
+                    pca_obj = PCA().fit(this_mask)
+                    transformed_dat = pca_obj.transform(this_mask)
+                    wanted_dims = np.where(np.cumsum(pca_obj.explained_variance_ratio_) > 0.9)[0][0]
+                    pca_dat_list.append(transformed_dat[:, :wanted_dims])
+pca_dat = np.concatenate(pca_dat_list, axis=-1).T
+
+plt.pcolormesh(time_vec, np.arange(len(pca_dat)), 
+               zscore(pca_dat,axis=-1), **mesh_kwargs)
+plt.show()
+
+# Fit changepoint model to full dataset
+n_fit = 40000
+n_samples = 20000
+n_states = 5
+model = models.gaussian_changepoint_2d(zscore_mask_stack, n_states)
+model, approx, mu_stack, sigma_stack, tau_samples, fit_data = \
+        models.advi_fit(model = model, fit = n_fit, samples = n_samples)
+
+mean_mu = np.mean(mu_stack, axis=1)
+
+# Extract changepoint values
+int_tau = np.vectorize(np.int)(tau_samples)
+mode_tau = np.squeeze(mode(int_tau, axis=0)[0])
+scaled_tau = time_vec[int_tau]
+
+# Plot changepoints
+fig, ax = plt.subplots(2, 1, figsize=(5, 7), sharex=True, sharey=False)
+ax[0].pcolormesh(time_vec, np.concatenate([freq_vec]*2), 
+               zscore_mask_stack, **mesh_kwargs)
+for this_tau in mode_tau:
+                    ax[0].axvline(time_vec[this_tau], color='red', linestyle='--')
+for this_tau in scaled_tau.T:
+                    ax[1].hist(this_tau, 
+                               bins=np.linspace(time_vec.min(), time_vec.max()), alpha=0.5)
+fig = plt.figure()
+plt.matshow(mean_mu)
+plt.show()
+
+# Plot changepoint for each direction
+fig, ax = plt.subplots(2, 1, figsize=(5, 7), sharex=True, sharey=True)
+fig.suptitle('Inferred Changepoints' + '\n' + n_string)
+ax[0].pcolormesh(time_vec, freq_vec,
+                 1-mean_mask_cp[:, :, 0], **mesh_kwargs)
+ax[1].pcolormesh(time_vec, freq_vec,
+                 1-mean_mask_cp[:, :, 1], **mesh_kwargs)
+for this_ax in ax:
+                    this_ax.set_ylabel('Freq. (Hz)')
+ax[-1].set_xlabel('Time post-stimulus (s)')
+for this_ax in ax.flatten():
+                    for this_tau in mode_tau:
+                                        this_ax.axvline(time_vec[this_tau], color='red', linestyle='--', linewidth=2)
+titles = ['GC-->BLA','BLA-->GC']
+for this_name, this_ax in zip(direction_names, ax):
+                    this_ax.set_title(this_name)
+plt.show()
+
+############################################################
+
+fig, ax = plt.subplots(2, 1, figsize=(5, 7), sharex=True, sharey=True)
+fig.suptitle('Mean Mask with Inferred Changepoints' + '\n' + n_string)
+ax[0].pcolormesh(time_vec, freq_vec,
+                 1-mean_mask_cp[:, :, 0], **mesh_kwargs)
+ax[1].pcolormesh(time_vec, freq_vec,
+                 1-mean_mask_cp[:, :, 1], **mesh_kwargs)
+for this_ax in ax:
+                    this_ax.set_ylabel('Freq. (Hz)')
+ax[-1].set_xlabel('Time post-stimulus (s)')
+for this_ax in ax.flatten():
+                    this_ax.axvline(0, color='red', linestyle='--', linewidth=2)
+titles = ['GC-->BLA','BLA-->GC']
+for this_name, this_ax in zip(direction_names, ax):
+                    this_ax.text(-0.3, 0.5, this_name, 
+                                 transform = this_ax.transAxes,
+                                 size = 'x-large',
+                                 va = 'center', rotation = 'vertical')
+#fig.savefig(os.path.join(aggregate_plot_dir, 'mean_mask_cp.png'), dpi=300)
+#plt.close(fig)
+plt.show()
 
 # For BLA , plot in smaller frequency range
 zoom_freq_range = [0, 30]
