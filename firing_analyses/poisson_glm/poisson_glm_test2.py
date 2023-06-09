@@ -14,315 +14,12 @@ import pandas as pd
 import sys
 sys.path.append('/media/bigdata/firing_space_plot/firing_analyses/poisson_glm')
 import makeRaisedCosBasis as cb
+import glm_tools as gt
 import statsmodels.api as sm
 from statsmodels.genmod.families import Poisson
 import statsmodels.formula.api as smf
 from pandas import DataFrame as df
 from pandas import concat
-
-def generate_random_filter(length):
-    """
-    Generate a random filter using a random walk
-
-    args:
-        length: length of filter
-
-    returns:
-        filter: length x 1 vector
-    """
-    vals = np.random.randn(length)
-    filter = np.cumsum(vals)
-    # Scale between -3 and 0
-    filter = filter - np.min(filter)
-    filter = filter / np.max(filter)
-    return filter * -3 
-
-def calc_sta(data, filter_len):
-    """
-    Calculate the spike triggered average
-
-    args:
-        data: n x 1 vector of data
-        filter_len: length of filter
-
-    returns:
-        sta: filter_len x 1 vector
-    """
-    inds = np.where(data)[0]
-    cut_inds = inds[inds > filter_len]
-    sta = np.stack([data[i-filter_len:i] for i in cut_inds]) 
-    return np.mean(sta, axis = 0)
-
-
-# Fit a poisson GLM with a history filter
-def gen_history_design_matrix(data, filter_len):
-    """
-    Generate a design matrix for a history filter
-
-    args:
-        data: n x 1 vector of data
-        filter_len: length of filter
-
-    returns:
-        X: n x filter_len matrix
-    """
-    index = np.arange(filter_len, len(data))
-    hist_dat = np.stack([data[i-filter_len:i] \
-            for i in index])
-    X = df(hist_dat, index = index)
-    X.columns = [f'hist_lag{i:03d}' for i \
-            in np.arange(filter_len,0, step = -1)] 
-    return X.iloc[:,::-1]
-
-def gen_cosine_history_design(
-        data, 
-        filter_len, 
-        n_basis = 10, 
-        spread = 'log'):
-    """
-    Generate a design matrix for a history filter using
-    cosine basis functions
-
-    args:
-        data: n x 1 vector of data
-        filter_len: length of filter
-        n_basis: number of basis functions
-        spread: spread of basis functions (linear vs log)
-
-    returns:
-        X: n_basis x filter_len matrix
-    """
-    cos_basis = cb.gen_raised_cosine_basis(
-            filter_len,
-            n_basis,
-            spread = spread)
-    hist_mat = gen_history_design_matrix(data, filter_len)
-    cos_mat = np.matmul(hist_mat, cos_basis.T)
-    cos_mat.columns = [f'hist_lag{i:03d}' for i \
-            in np.arange(n_basis)]
-    return cos_mat
-
-    #plt.plot(cos_basis.T)
-    #plt.plot(np.sum(cos_basis.T, axis = 1))
-    #plt.show()
-
-    #x = np.arange(filter_len)
-    #y = np.exp(-x/50)
-    #plt.plot(x,y)
-    #plt.show()
-
-    ## Regress y to cos_mat
-    #v = y[None,:].dot(cos_basis.T)\
-    #        .dot(np.linalg.inv(cos_basis.dot(cos_basis.T)))
-    #plt.plot(x,v.dot(cos_basis).flatten())
-    #plt.plot(x,y)
-    #plt.show()
-
-def gen_stim_desigm_matrix(stim_vec, filter_len):
-    """
-    Generate a design matrix for a stimulus filter
-
-    args:
-        stim_vec: n x 1 vector of stimulus
-        filter_len: length of filter
-
-    returns:
-        X: n x filter_len matrix
-    """
-    index = np.arange(filter_len, len(stim_vec))
-    stim_dat = np.stack([stim_vec[i-filter_len:i] \
-            for i in index])
-    X = df(stim_dat, index = index)
-    X.columns = [f'stim_lag{i:03d}' for i in \
-            np.arange(filter_len,0, step = -1)] 
-    return X
-
-def fit_history_glm(
-        data, 
-        filter_len, 
-        n_basis = 10,
-        basis = 'cos',
-        basis_spread = 'log',
-        ):
-    """
-    Fit a poisson GLM with a history filter
-
-    args:
-        data: n x 1 vector of data
-        filter_len: length of filter
-        basis: basis function to use for history filter ('full' or 'cos')
-
-    returns:
-        filter: filter_len x 1 vector
-    """
-    if basis == 'cos':
-        design_mat = gen_cosine_history_design(data, filter_len,
-                                               n_basis = n_basis,
-                                               spread = basis_spread)
-    elif basis == 'full':
-        design_mat=  gen_history_design_matrix(data, filter_len)
-    else:
-        raise ValueError('Invalid basis function')
-    glmdata = design_mat.copy()
-    glmdata['spikes'] = data[filter_len:]
-    lag_columns = [x for x in glmdata.columns if 'hist_lag' in x]
-    formula = 'spikes ~ ' + ' + '.join(lag_columns) 
-    model = smf.glm(formula = formula, data = glmdata, family = Poisson())
-    res = model.fit()
-    return res
-
-def generate_history_data(filter, n):
-    prob = np.zeros(n)
-    spikes = np.zeros(n)
-    spikes[0] = 1
-    for i in range(n-len(filter)):
-        if spikes[i]:
-            prob[i:i+len(filter)] += filter
-        spike_prob = np.min([np.exp(prob[i]), 1])
-        spikes[i+1] = np.random.binomial(1, spike_prob)
-    return spikes, prob
-
-def generate_stim_data(stim_filter_len = 500, stim_count = 10, n = 10000):
-    assert stim_filter_len*stim_count < n, 'stim_filter_len*stim_count must be less than n'
-    prob = np.zeros(n)
-    stim_ind = np.arange(stim_count) * int(n/stim_count) 
-    stim_filter = generate_stim_filter(filter_len = stim_filter_len)
-    stim_vec = np.zeros(n) 
-    stim_vec[stim_ind] = 1 
-    stim_prob = np.zeros(n)-3
-    for i in np.where(stim_vec)[0]:
-        stim_prob[i:i+len(stim_filter)] = stim_filter
-    spikes = np.zeros(n)
-    for i in range(n-1):
-        prob[i] = np.exp(stim_prob[i])
-        spike_prob = np.min([prob[i], 1])
-        spikes[i+1] = np.random.binomial(1, spike_prob)
-    return spikes, stim_prob, stim_vec
-
-def generate_stim_filter(filter_len = 100):
-    x = np.arange(filter_len)
-    #filter = (1*(np.exp(-0.05*x) - np.exp(-0.5*x)))+1e-3#*np.sin(0.1*x) 
-    filter = np.exp(-0.05*x) 
-    return np.log(filter)
-
-def generate_stim_history_data(
-        hist_filter, 
-        stim_filter,
-        n, 
-        stim_count = 10,
-        stim_filter_len = 500):
-
-    _, stim_prob, stim_vec = generate_stim_data(
-            stim_filter_len = len(stim_filter), n = n, stim_count = stim_count)
-    prob = np.zeros(n)
-    hist_prob = np.zeros(n)
-    spikes = np.zeros(n)
-    spikes[0] = 1
-    min_filter = np.min([len(hist_filter), len(stim_filter)])
-    for i in range(n-min_filter):
-        if spikes[i]:
-            hist_prob[i:i+len(hist_filter)] += hist_filter
-        prob[i+1] = hist_prob[i+1]
-        spikes[i+1] = np.random.binomial(1, np.min([np.exp(prob[i+1]), 1]))
-
-    stim_inds = np.where(stim_vec)[0]
-    for i in stim_inds:
-        prob[i:i+len(stim_filter)] = stim_filter
-
-    spike_prob = np.exp(prob)
-    spike_prob[spike_prob > 1] = 1
-    spikes = np.random.binomial(1, spike_prob)
-    return spikes, prob, stim_vec
-
-def fit_stim_glm(
-        spike_data, 
-        stim_data,
-        stim_filter_len,
-        ):
-    """
-    Fit a poisson GLM with a stimulus filter
-
-    args:
-        data: n x 1 vector of data
-        stim_filter_len: length of stimulus filter
-
-    returns:
-        filter: filter_len x 1 vector
-    """
-    stim_design_mat = gen_stim_desigm_matrix(stim_data, stim_filter_len)
-
-
-    # Data must be cut to largest filter
-    spike_df = df(dict(spikes = spike_data), 
-                  index = np.arange(len(spike_data)))
-    glmdata = pd.concat(
-            [
-                 stim_design_mat, 
-                 spike_df
-                 ], 
-            axis = 1)
-    glmdata = glmdata.dropna().sort_index()
-    glmdata['intercept'] = 1
-
-    dv_cols = [x for x in glmdata.columns if 'lag' in x]
-    dv_cols.append('intercept')
-    #formula = 'spikes ~ ' + ' + '.join(dv_cols) 
-    #model = smf.glm(formula = formula, data = glmdata, family = Poisson())
-    model = sm.GLM(
-            glmdata['spikes'], 
-            glmdata[dv_cols], 
-            family = sm.families.Poisson())
-    res = model.fit()
-    pred = res.predict(glmdata[dv_cols])
-    return res, pred
-
-def fit_stim_history_glm(
-        spike_data, 
-        stim_data,
-        hist_filter_len, 
-        stim_filter_len,
-        ):
-    """
-    Fit a poisson GLM with a history filter
-
-    args:
-        data: n x 1 vector of data
-        hist_filter_len: length of history filter
-        stim_filter_len: length of stimulus filter
-        n_iter: number of iterations
-        lr: learning rate
-
-    returns:
-        filter: filter_len x 1 vector
-    """
-    hist_design_mat=  gen_history_design_matrix(spike_data, hist_filter_len)
-    stim_design_mat = gen_stim_desigm_matrix(stim_data, stim_filter_len)
-
-
-    # Data must be cut to largest filter
-    spike_df = df(dict(spikes = spike_data), 
-                  index = np.arange(len(spike_data)))
-    glmdata = pd.concat(
-            [
-                hist_design_mat, 
-                 stim_design_mat, 
-                 spike_df
-                 ], 
-            axis = 1)
-    glmdata = glmdata.dropna().sort_index()
-    glmdata['intercept'] = 1
-
-    dv_cols = [x for x in glmdata.columns if 'lag' in x]
-    dv_cols.append('intercept')
-    #formula = 'spikes ~ ' + ' + '.join(dv_cols) 
-    #model = smf.glm(formula = formula, data = glmdata, family = Poisson())
-    model = sm.GLM(
-            glmdata['spikes'], 
-            glmdata[dv_cols], 
-            family = sm.families.Poisson())
-    res = model.fit()
-    pred = res.predict(glmdata[dv_cols])
-    return res, pred
 
 
 ############################################################
@@ -334,21 +31,16 @@ hist_filter_len = 80
 basis_kwargs = dict(
     n_basis = 20,
     basis = 'cos',
-    basis_spread = 'log',
+    basis_spread = 'linear',
     )
-hist_filter = generate_random_filter(hist_filter_len)
-spike_data,prob = generate_history_data(hist_filter, 10000)
-sta = calc_sta(spike_data, hist_filter_len)
-res = fit_history_glm(spike_data, hist_filter_len, **basis_kwargs)
-lag_params =  res.params[1:]
-if basis_kwargs['basis'] == 'linear':
-    lag_params.index = [int(x.split('lag')[1]) for x in lag_params.index]
-elif basis_kwargs['basis'] == 'cos':
-    cos_basis = cb.gen_raised_cosine_basis(
-                        hist_filter_len,
-                        n_basis = basis_kwargs['n_basis'],
-                        spread = basis_kwargs['basis_spread'],)
-    lag_params = lag_params[None,:].dot(cos_basis).flatten()
+hist_filter = gt.generate_random_filter(hist_filter_len)
+spike_data,prob = gt.generate_history_data(hist_filter, 10000)
+res = gt.fit_history_glm(spike_data, hist_filter_len, **basis_kwargs)
+lag_params = gt.process_glm_res(
+        res, 
+        hist_filter_len,
+        **basis_kwargs, 
+        param_key = 'hist')
 fig, ax = plt.subplots(4, 1, figsize = (10, 5), sharey = True)
 ax[0].plot(spike_data)
 ax[0].set_title(f'Mean firing rate: {np.mean(spike_data)*1000}')
@@ -364,35 +56,42 @@ plt.show()
 ## Stim filter 
 ############################################################
 n = 10000 
+basis_kwargs = dict(
+    n_basis = 10,
+    basis = 'cos',
+    basis_spread = 'log',
+    )
 stim_filter_len = 100
-stim_filter = generate_stim_filter(stim_filter_len)
+stim_filter = gt.generate_stim_filter(stim_filter_len)
 spike_data, prob, stim_data = \
-        generate_stim_data(
+        gt.generate_stim_data(
                 n = n, 
                 stim_filter_len = stim_filter_len,
                 stim_count = 30
 )
-
-res = fit_stim_glm(
+res,pred = gt.fit_stim_glm(
         spike_data, 
         stim_data,
         stim_filter_len,
+        **basis_kwargs
         )
 
-stim_params = res.params[[x for x in res.params.index if 'stim' in x]]
-stim_params = stim_params.sort_index()
-stim_inds = [int(x.split('lag')[1]) for x in stim_params.index]
+stim_params = gt.process_glm_res(
+        res, 
+        stim_filter_len,
+        **basis_kwargs,
+        param_key = 'stim')
 
 fig, ax = plt.subplots(4, 1, figsize = (5, 10), sharey = False)
 ax[0].plot(spike_data, label = 'spikes', linewidth = 0.5)
 ax[0].plot(stim_data, label = 'stim', linewidth = 3)
 ax[0].legend()
-ax[0].set_title(f'Mean firing rate: {np.mean(spike)*1000}')
+ax[0].set_title(f'Mean firing rate: {np.mean(spike_data)*1000}')
 ax[1].plot(np.exp(prob))
 ax[1].set_title('Probability (exp)')
 ax[2].plot(np.exp(stim_filter))
 ax[2].set_title('Stim filter (exp)')
-ax[3].plot(stim_inds, np.exp(stim_params))
+ax[3].plot(np.exp(stim_params))
 ax[3].set_title('Estimated stim filter (exp)')
 plt.tight_layout()
 plt.show()
@@ -400,22 +99,30 @@ plt.show()
 ############################################################
 ## Stim + History Filter 
 ############################################################
+n = 10000
+basis_kwargs = dict(
+    n_basis = 30,
+    basis = 'cos',
+    basis_spread = 'linear',
+    )
 hist_filter_len = 80
-hist_filter = generate_random_filter(hist_filter_len)
 stim_filter_len = 100
-stim_filter = generate_stim_filter(stim_filter_len)
+
+hist_filter = gt.generate_random_filter(hist_filter_len)
+stim_filter = gt.generate_stim_filter(stim_filter_len)
 spike_data, prob, stim_data = \
-        generate_stim_history_data(
+        gt.generate_stim_history_data(
                 hist_filter, 
                 stim_filter,
                 n = 10000, 
-                stim_count = 20)
+                stim_count = 10)
 
-res,pred = fit_stim_history_glm(
+res,pred = gt.fit_stim_history_glm(
         spike_data, 
         stim_data,
         hist_filter_len, 
         stim_filter_len,
+        **basis_kwargs
         )
 
 fig, ax = plt.subplots(3,1, sharey = True, sharex = True)
@@ -427,12 +134,16 @@ ax[2].plot(spike_data)
 ax[2].set_title('Spikes')
 plt.show()
 
-hist_params = res.params[[x for x in res.params.index if 'hist' in x]]
-stim_params = res.params[[x for x in res.params.index if 'stim' in x]]
-hist_params = hist_params.sort_index()
-stim_params = stim_params.sort_index()
-hist_inds = [int(x.split('lag')[1]) for x in hist_params.index]
-stim_inds = [int(x.split('lag')[1]) for x in stim_params.index]
+hist_params = gt.process_glm_res(
+        res, 
+        hist_filter_len,
+        **basis_kwargs,
+        param_key = 'hist')
+stim_params = gt.process_glm_res(
+        res, 
+        stim_filter_len,
+        **basis_kwargs,
+        param_key = 'stim')
 
 fig, ax = plt.subplots(6, 1, figsize = (5, 10), sharey = False)
 ax[0].plot(spike_data, label = 'spikes', linewidth = 0.5)
@@ -443,18 +154,68 @@ ax[1].plot(np.exp(prob))
 ax[1].set_title('Probability')
 ax[2].plot(np.exp(hist_filter))
 ax[2].set_title('True filter (exp)')
-ax[3].plot(hist_inds, np.exp(hist_params))
+ax[3].plot(np.exp(hist_params))
 ax[3].set_title('Estimated filter (exp)')
 ax[4].plot(np.exp(stim_filter))
 ax[4].set_title('Stim filter (exp)')
-ax[5].plot(stim_inds, np.exp(stim_params))
+ax[5].plot(np.exp(stim_params))
 ax[5].set_title('Estimated stim filter (exp)')
 plt.tight_layout()
 plt.show()
 
-ordK = 70
-from scipy.stats import norm
-C = np.array([norm.pdf(np.arange(-5, ordK, 10), k, 5) for k in range(ordK)])
-plt.plot(C)
-plt.plot(np.sum(C, axis = -1))
+############################################################
+# Coupling filter only
+############################################################
+n = 10000
+basis_kwargs = dict(
+    n_basis = 10,
+    basis = 'cos',
+    basis_spread = 'linear',
+    )
+hist_filter_len = 40
+coupling_filter_len = 40
+n_coupled_neurons = 5
+# Note: This hist filter will be to generate data for OTHER neuron
+hist_filter_list = [gt.generate_random_filter(hist_filter_len) \
+        for _ in range(n_coupled_neurons)]
+coupling_filter_list = [gt.generate_random_filter(coupling_filter_len) \
+        for _ in range(n_coupled_neurons)]
+# Divide coupling filters by 2 to make sure they are not too large
+coupling_filter_list = [cf/n_coupled_neurons for cf in coupling_filter_list]
+
+spike_data, prob, coupling_probs, coupled_spikes = \
+        gt.generate_coupling_data(
+                hist_filter_list,
+                coupling_filter_list,
+                n = n,
+                )
+
+res,pred = gt.fit_coupled_glm(
+        spike_data, 
+        coupled_spikes,
+        coupling_filter_len = coupling_filter_len,
+        **basis_kwargs
+        ) 
+coupling_params_stack = np.stack(
+    [gt.process_glm_res(
+        res, 
+        coupling_filter_len,
+        **basis_kwargs,
+        param_key = f'lag_{i}') \
+                for i in range(n_coupled_neurons)]
+    )
+
+fig, ax = plt.subplots(n_coupled_neurons,1, sharex=True, sharey=False)
+for i in range(n_coupled_neurons):
+    ax[i].plot(np.exp(coupling_filter_list[i]), label = 'true')
+    ax[i].plot(np.exp(coupling_params_stack[i]), label = 'estimated')
+ax[-1].legend()
+plt.show()
+
+# Plot actual spikes and predicted prob
+fig, ax = plt.subplots(2,1, sharex=True, sharey=True)
+ax[0].plot(spike_data)
+ax[0].set_title('Spikes')
+ax[1].plot(pred)
+ax[1].set_title('Predicted')
 plt.show()
