@@ -40,14 +40,14 @@ def gen_raised_cosine_basis(n, n_basis, spread = 'linear'):
         basis: n_basis x n matrix of basis functions
     """
     if spread == 'linear':
-        ctrs = np.linspace(0, n-2, n_basis + 2)[1:-1]
+        ctrs = np.linspace(0, n-2, n_basis)[1:-1]
         ctrs = np.concatenate([[0], ctrs, [n]])
         dctrs = np.diff(ctrs)[0]
         basis_funcs = np.stack([raisedCosFun(np.arange(n), ctr, dctrs) for ctr in ctrs])
 
 
     if spread == 'log':
-        ctrs = np.logspace(0, np.log10(n-1), n_basis + 2)[1:-1]
+        ctrs = np.logspace(0, np.log10(n-1), n_basis)[1:-1]
         ctrs = np.concatenate([[0], ctrs, [n]])
         dctrs = np.diff(ctrs)
         # make assymetric functions such that touching sides have same width
