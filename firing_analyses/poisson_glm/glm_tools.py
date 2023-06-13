@@ -239,6 +239,55 @@ def generate_coupling_data(hist_filter_list, coupling_filter_list, n):
     output_spikes = np.random.binomial(1, np.exp(spike_prob))
     return output_spikes, spike_prob, coupling_probs, np.stack(spike_outs)
 
+def generate_history_coupling_data(
+        hist_filter,
+        coupling_hist_filter_list, 
+        coupling_filter_list, 
+        n):
+    assert len(coupling_hist_filter_list) == len(coupling_filter_list), \
+            'coupling_hist_filter_list and coupling_filter_list must be the same length'
+    spike_outs = [generate_history_data(hist_filter, n)[0] \
+            for hist_filter in coupling_hist_filter_list]
+    coupling_probs = np.stack(
+            [gen_single_coupled_prob(spike_out, coupling_filter, n) \
+            for spike_out, coupling_filter \
+            in zip(spike_outs, coupling_filter_list)]
+            )
+    sum_coupling_probs = np.sum(coupling_probs, axis = 0)
+    _, history_prob = generate_history_data(hist_filter, n)
+
+    spike_prob = sum_coupling_probs + history_prob 
+    spike_prob[spike_prob > 1] = 1
+    output_spikes = np.random.binomial(1, np.exp(spike_prob))
+    return output_spikes, spike_prob, coupling_probs, np.stack(spike_outs)
+
+def generate_stim_history_coupling_data(
+        hist_filter,
+        coupling_hist_filter_list, 
+        coupling_filter_list, 
+        stim_filter,
+        stim_count = 10,
+        n = 10000,
+        ):
+    assert len(coupling_hist_filter_list) == len(coupling_filter_list), \
+            'coupling_hist_filter_list and coupling_filter_list must be the same length'
+    spike_outs = [generate_history_data(hist_filter, n)[0] \
+            for hist_filter in coupling_hist_filter_list]
+    coupling_probs = np.stack(
+            [gen_single_coupled_prob(spike_out, coupling_filter, n) \
+            for spike_out, coupling_filter \
+            in zip(spike_outs, coupling_filter_list)]
+            )
+    sum_coupling_probs = np.sum(coupling_probs, axis = 0)
+    _, history_prob = generate_history_data(hist_filter, n)
+    _, stim_prob, stim_vec = generate_stim_data(stim_filter, stim_count, n)
+
+    spike_prob = sum_coupling_probs + history_prob + stim_prob 
+    spike_prob[spike_prob > 1] = 1
+    output_spikes = np.random.binomial(1, np.exp(spike_prob))
+    return output_spikes, spike_prob, coupling_probs, np.stack(spike_outs), stim_vec
+
+
 def gen_single_coupling_design(spikes, filter_len, id = None):
     if id is not None:
         id_str = str(id)
@@ -283,14 +332,14 @@ def gen_cosine_coupling_design(
     cos_mat = pd.concat(cos_mat_list, axis = 1)
     return cos_mat
 
-def generate_stim_data(stim_filter_len = 500, stim_count = 10, n = 10000):
-    assert stim_filter_len*stim_count < n, 'stim_filter_len*stim_count must be less than n'
+def generate_stim_data(stim_filter , stim_count = 10, n = 10000):
+    assert len(stim_filter)*stim_count < n, 'stim_filter_len*stim_count must be less than n'
     prob = np.zeros(n)
     stim_ind = np.arange(stim_count) * int(n/stim_count) 
-    stim_filter = generate_stim_filter(filter_len = stim_filter_len)
+    #stim_filter = generate_stim_filter(filter_len = stim_filter_len)
     stim_vec = np.zeros(n) 
     stim_vec[stim_ind] = 1 
-    stim_prob = np.zeros(n)-3
+    stim_prob = np.zeros(n)
     for i in np.where(stim_vec)[0]:
         stim_prob[i:i+len(stim_filter)] = stim_filter
     spikes = np.zeros(n)
@@ -334,6 +383,130 @@ def generate_stim_history_data(
     spike_prob[spike_prob > 1] = 1
     spikes = np.random.binomial(1, spike_prob)
     return spikes, prob, stim_vec
+
+def fit_stim_history_coupled_glm(
+        spike_data, 
+        coupled_spikes,
+        stim_data,
+        hist_filter_len = 10,
+        coupling_filter_len = 10,
+        stim_filter_len = 500,
+        n_basis = 10,
+        basis = 'cos',
+        basis_spread = 'log',
+        ):
+    if basis == 'cos':
+        coupling_design_mat = gen_cosine_coupling_design(
+                                        coupled_spikes, 
+                                        coupling_filter_len,
+                                        n_basis = n_basis,
+                                        spread = basis_spread)
+        history_design_mat = gen_cosine_history_design(
+                                            spike_data, 
+                                            hist_filter_len,
+                                               n_basis = n_basis,
+                                               spread = basis_spread)
+        stim_design_mat = gen_cosine_stim_design(
+                                        stim_data, 
+                                        stim_filter_len,
+                                        n_basis = n_basis,
+                                        spread = basis_spread)
+    elif basis == 'full':
+        coupling_design_mat = gen_coupling_design_mat(
+               coupled_spikes, 
+               coupling_filter_len,
+               stack=True)
+        history_design_mat =  gen_history_design_matrix(data, hist_filter_len)
+        stim_design_mat = gen_stim_desigm_matrix(stim_data, stim_filter_len)
+    else:
+        raise ValueError('Invalid basis function')
+
+    # Concatenate design matrices
+    design_mat = pd.concat(
+            [history_design_mat, coupling_design_mat, stim_design_mat], 
+            axis=1)
+
+    # Data must be cut to largest filter
+    spike_df = df(dict(spikes = spike_data), 
+                  index = np.arange(len(spike_data)))
+    glmdata = pd.concat(
+            [
+                 design_mat, 
+                 spike_df
+                 ], 
+            axis = 1)
+    glmdata = glmdata.dropna().sort_index()
+    #glmdata['intercept'] = 1
+
+    dv_cols = [x for x in glmdata.columns if 'lag' in x]
+    #dv_cols.append('intercept')
+    # Formula api already adds intercept
+    formula = 'spikes ~ ' + ' + '.join(dv_cols) 
+    model = smf.glm(formula = formula, data = glmdata, family = Poisson())
+    #model = sm.GLM(
+    #        glmdata['spikes'], 
+    #        glmdata[dv_cols], 
+    #        family = sm.families.Poisson())
+    res = model.fit()
+    pred = res.predict(glmdata[dv_cols])
+    return res, pred
+
+def fit_history_coupled_glm(
+        spike_data, 
+        coupled_spikes,
+        hist_filter_len = 10,
+        coupling_filter_len = 10,
+        n_basis = 10,
+        basis = 'cos',
+        basis_spread = 'log',
+        ):
+    if basis == 'cos':
+        coupling_design_mat = gen_cosine_coupling_design(
+                                        coupled_spikes, 
+                                        coupling_filter_len,
+                                        n_basis = n_basis,
+                                        spread = basis_spread)
+        history_design_mat = gen_cosine_history_design(
+                                            spike_data, 
+                                            hist_filter_len,
+                                               n_basis = n_basis,
+                                               spread = basis_spread)
+    elif basis == 'full':
+        coupling_design_mat = gen_coupling_design_mat(
+               coupled_spikes, 
+               coupling_filter_len,
+               stack=True)
+        history_design_mat =  gen_history_design_matrix(data, hist_filter_len)
+    else:
+        raise ValueError('Invalid basis function')
+
+    # Concatenate design matrices
+    design_mat = pd.concat([history_design_mat, coupling_design_mat], axis=1)
+
+    # Data must be cut to largest filter
+    spike_df = df(dict(spikes = spike_data), 
+                  index = np.arange(len(spike_data)))
+    glmdata = pd.concat(
+            [
+                 design_mat, 
+                 spike_df
+                 ], 
+            axis = 1)
+    glmdata = glmdata.dropna().sort_index()
+    #glmdata['intercept'] = 1
+
+    dv_cols = [x for x in glmdata.columns if 'lag' in x]
+    #dv_cols.append('intercept')
+    # Formula api already adds intercept
+    formula = 'spikes ~ ' + ' + '.join(dv_cols) 
+    model = smf.glm(formula = formula, data = glmdata, family = Poisson())
+    #model = sm.GLM(
+    #        glmdata['spikes'], 
+    #        glmdata[dv_cols], 
+    #        family = sm.families.Poisson())
+    res = model.fit()
+    pred = res.predict(glmdata[dv_cols])
+    return res, pred
 
 def fit_coupled_glm(
         spike_data, 

@@ -59,14 +59,14 @@ n = 10000
 basis_kwargs = dict(
     n_basis = 10,
     basis = 'cos',
-    basis_spread = 'log',
+    basis_spread = 'linear',
     )
 stim_filter_len = 100
 stim_filter = gt.generate_stim_filter(stim_filter_len)
 spike_data, prob, stim_data = \
         gt.generate_stim_data(
                 n = n, 
-                stim_filter_len = stim_filter_len,
+                stim_filter = stim_filter,
                 stim_count = 30
 )
 res,pred = gt.fit_stim_glm(
@@ -213,9 +213,185 @@ ax[-1].legend()
 plt.show()
 
 # Plot actual spikes and predicted prob
-fig, ax = plt.subplots(2,1, sharex=True, sharey=True)
-ax[0].plot(spike_data)
-ax[0].set_title('Spikes')
-ax[1].plot(pred)
-ax[1].set_title('Predicted')
+fig, ax = plt.subplots(1,1, sharex=True, sharey=True)
+ax.plot(spike_data)
+ax.set_title('Spikes')
+ax.plot(pred)
+ax.set_title('Predicted')
+fig.suptitle(f'Mean firing rate: {np.round(np.mean(spike_data)*1000,2)}')
 plt.show()
+
+############################################################
+# Coupled history 
+############################################################
+n = 10000
+basis_kwargs = dict(
+    n_basis = 10,
+    basis = 'cos',
+    basis_spread = 'linear',
+    )
+hist_filter_len = 80
+coupling_filter_len = 80
+n_coupled_neurons = 5
+
+# Note: This hist filter will be to generate data for OTHER neuron
+hist_filter = gt.generate_random_filter(hist_filter_len)
+hist_filter_list = [gt.generate_random_filter(hist_filter_len) \
+        for _ in range(n_coupled_neurons)]
+coupling_filter_list = [gt.generate_random_filter(coupling_filter_len) \
+        for _ in range(n_coupled_neurons)]
+# Divide coupling filters by 2 to make sure they are not too large
+coupling_filter_list = [cf/n_coupled_neurons for cf in coupling_filter_list]
+
+# Divide both by two to maintain firing rates
+coupling_filter_list = [x/2 for x in coupling_filter_list]
+hist_filter = hist_filter / 2
+#hist_filter = np.zeros(hist_filter_len)
+
+spike_data, prob, coupling_probs, coupled_spikes = \
+        gt.generate_history_coupling_data(
+                hist_filter,
+                hist_filter_list,
+                coupling_filter_list,
+                n = n,
+                )
+
+# Chop off up to max filter len
+max_filter_len = np.max([hist_filter_len, coupling_filter_len])
+spike_data = spike_data[:-max_filter_len]
+coupled_spikes = coupled_spikes[:,:-max_filter_len]
+
+res,pred = gt.fit_history_coupled_glm(
+        spike_data, 
+        coupled_spikes,
+        hist_filter_len = hist_filter_len,
+        coupling_filter_len = coupling_filter_len,
+        **basis_kwargs
+        ) 
+coupling_params_stack = np.stack(
+    [gt.process_glm_res(
+        res, 
+        coupling_filter_len,
+        **basis_kwargs,
+        param_key = f'lag_{i}') \
+                for i in range(n_coupled_neurons)]
+    )
+hist_params_stack = gt.process_glm_res(
+        res, 
+        hist_filter_len,
+        **basis_kwargs, 
+        param_key = 'hist')
+
+fig, ax = plt.subplots(n_coupled_neurons + 1,1, sharex=True, sharey=True)
+for i in range(n_coupled_neurons):
+    ax[i].plot(np.exp(coupling_filter_list[i]), label = 'true')
+    ax[i].plot(np.exp(coupling_params_stack[i]), label = 'estimated')
+ax[-1].plot(np.exp(hist_filter), label = 'True')
+ax[-1].plot(np.exp(hist_params_stack), label = 'Estimated')
+ax[-1].legend()
+plt.show()
+
+# Plot actual spikes and predicted prob
+fig, ax = plt.subplots(1,1, sharex=True, sharey=True)
+ax.plot(spike_data)
+ax.set_title('Spikes')
+ax.plot(pred)
+ax.set_title('Predicted')
+fig.suptitle(f'Mean firing rate: {np.round(np.mean(spike_data)*1000,2)}')
+plt.show()
+
+############################################################
+# Coupled-stim-history 
+############################################################
+n = 10000
+basis_kwargs = dict(
+    n_basis = 10,
+    basis = 'cos',
+    basis_spread = 'linear',
+    )
+stim_filter_len = 500
+stim_count = 10
+hist_filter_len = 80
+coupling_filter_len = 80
+n_coupled_neurons = 5
+
+# Note: This hist filter will be to generate data for OTHER neuron
+hist_filter = gt.generate_random_filter(hist_filter_len)
+hist_filter_list = [gt.generate_random_filter(hist_filter_len) \
+        for _ in range(n_coupled_neurons)]
+coupling_filter_list = [gt.generate_random_filter(coupling_filter_len) \
+        for _ in range(n_coupled_neurons)]
+# Divide coupling filters by 2 to make sure they are not too large
+coupling_filter_list = [cf/n_coupled_neurons for cf in coupling_filter_list]
+
+# Divide both by two to maintain firing rates
+#coupling_filter_list = [x/2 for x in coupling_filter_list]
+coupling_filter_list = [np.zeros(coupling_filter_len) for i in range(n_coupled_neurons)]
+hist_filter = hist_filter / 2
+#hist_filter = np.zeros(hist_filter_len)
+stim_filter = gt.generate_stim_filter(stim_filter_len)
+
+spike_data, prob, coupling_probs, coupled_spikes, stim_vec = \
+        gt.generate_stim_history_coupling_data(
+                hist_filter,
+                hist_filter_list,
+                coupling_filter_list,
+                stim_filter = stim_filter,
+                stim_count = stim_count,
+                n = n,
+                )
+
+# Chop off up to max filter len
+max_filter_len = np.max([hist_filter_len, coupling_filter_len, stim_filter_len])
+spike_data = spike_data[:-max_filter_len]
+coupled_spikes = coupled_spikes[:,:-max_filter_len]
+
+res,pred = gt.fit_stim_history_coupled_glm(
+        spike_data, 
+        coupled_spikes,
+        stim_vec,
+        hist_filter_len = hist_filter_len,
+        coupling_filter_len = coupling_filter_len,
+        stim_filter_len= stim_filter_len,
+        **basis_kwargs
+        ) 
+coupling_params_stack = np.stack(
+    [gt.process_glm_res(
+        res, 
+        coupling_filter_len,
+        **basis_kwargs,
+        param_key = f'lag_{i}') \
+                for i in range(n_coupled_neurons)]
+    )
+hist_params_stack = gt.process_glm_res(
+        res, 
+        hist_filter_len,
+        **basis_kwargs, 
+        param_key = 'hist')
+stim_params_stack = gt.process_glm_res(
+        res, 
+        hist_filter_len,
+        **basis_kwargs, 
+        param_key = 'stim')
+
+fig, ax = plt.subplots(n_coupled_neurons + 2,1, sharex=True, sharey=False)
+for i in range(n_coupled_neurons):
+    ax[i].plot(np.exp(coupling_filter_list[i]), label = 'true')
+    ax[i].plot(np.exp(coupling_params_stack[i]), label = 'estimated')
+ax[-2].plot(np.exp(hist_filter), label = 'True')
+ax[-2].plot(np.exp(hist_params_stack), label = 'Estimated')
+stim_filter = gt.generate_stim_filter(filter_len = stim_filter_len)
+ax[-1].plot(np.exp(stim_filter), label = 'True')
+ax[-1].plot(np.exp(stim_params_stack), label = 'Estimated')
+ax[-1].legend()
+plt.show()
+
+# Plot actual spikes and predicted prob
+fig, ax = plt.subplots(1,1, sharex=True, sharey=True)
+ax.plot(spike_data)
+ax.set_title('Spikes')
+ax.plot(pred)
+ax.set_title('Predicted')
+fig.suptitle(f'Mean firing rate: {np.round(np.mean(spike_data)*1000,2)}')
+plt.show()
+
