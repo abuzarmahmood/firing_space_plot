@@ -96,6 +96,35 @@ ax[3].set_title('Estimated stim filter (exp)')
 plt.tight_layout()
 plt.show()
 
+# Plot predicted vs actual
+fig,ax = plt.subplots(1,1, sharex=True, sharey=True)
+ax.plot(spike_data, label = 'True spikes')
+ax.plot(pred, label = 'Predicted prob')
+plt.legend()
+plt.show()
+
+# Plot actual and predicted PSTHs
+psth_window = [-200,200]
+stim_inds = np.where(stim_data)[0]
+wanted_psth_inds = [(x+psth_window[0], x+psth_window[1]) \
+        for x in stim_inds]
+wanted_psth_inds = [x for x in wanted_psth_inds if \
+        all(np.array(x) > 0) and all(np.array(x) < n)]
+
+spike_trains = np.stack([spike_data[x[0]:x[1]] for x in wanted_psth_inds])
+pred_trains = np.stack([pred[x[0]-stim_filter_len:x[1]-stim_filter_len] for x in wanted_psth_inds])
+
+kern_len = 20
+kern = np.ones(kern_len)/kern_len
+firing_rates = np.stack([np.convolve(x, kern, mode = 'same') for x in spike_trains])
+
+fig,ax = plt.subplots(3,1, sharex=True, sharey=True)
+ax[0].plot(spike_trains.T, color = 'k', alpha = 0.5)
+ax[1].plot(firing_rates.T, color = 'k', alpha = 0.5)
+ax[2].plot(pred_trains.T, color = 'k', alpha = 0.5)
+plt.show()
+
+
 ############################################################
 ## Stim + History Filter 
 ############################################################
@@ -161,6 +190,34 @@ ax[4].set_title('Stim filter (exp)')
 ax[5].plot(np.exp(stim_params))
 ax[5].set_title('Estimated stim filter (exp)')
 plt.tight_layout()
+plt.show()
+
+# Plot predicted vs actual
+fig,ax = plt.subplots(1,1, sharex=True, sharey=True)
+ax.plot(spike_data, label = 'True spikes')
+ax.plot(pred, label = 'Predicted prob')
+plt.legend()
+plt.show()
+
+# Plot actual and predicted PSTHs
+psth_window = [-200,200]
+stim_inds = np.where(stim_data)[0]
+wanted_psth_inds = [(x+psth_window[0], x+psth_window[1]) \
+        for x in stim_inds]
+wanted_psth_inds = [x for x in wanted_psth_inds if \
+        all(np.array(x) > 0) and all(np.array(x) < n)]
+
+spike_trains = np.stack([spike_data[x[0]:x[1]] for x in wanted_psth_inds])
+pred_trains = np.stack([pred[x[0]-stim_filter_len:x[1]-stim_filter_len] for x in wanted_psth_inds])
+
+kern_len = 20
+kern = np.ones(kern_len)/kern_len
+firing_rates = np.stack([np.convolve(x, kern, mode = 'same') for x in spike_trains])
+
+fig,ax = plt.subplots(3,1, sharex=True, sharey=True)
+ax[0].plot(spike_trains.T, color = 'k', alpha = 0.5)
+ax[1].plot(firing_rates.T, color = 'k', alpha = 0.5)
+ax[2].plot(pred_trains.T, color = 'k', alpha = 0.5)
 plt.show()
 
 ############################################################
@@ -393,5 +450,30 @@ ax.set_title('Spikes')
 ax.plot(pred)
 ax.set_title('Predicted')
 fig.suptitle(f'Mean firing rate: {np.round(np.mean(spike_data)*1000,2)}')
+plt.show()
+
+# Plot actual and predicted PSTHs
+psth_window = [-200,200]
+stim_inds = np.where(stim_vec)[0]
+wanted_psth_inds = [(x+psth_window[0], x+psth_window[1]) \
+        for x in stim_inds]
+wanted_psth_inds = [x for x in wanted_psth_inds if \
+        all(np.array(x) > 0) and all(np.array(x) < n)]
+
+spike_trains = np.stack([spike_data[x[0]:x[1]] for x in wanted_psth_inds])
+pred_trains = np.stack([pred[x[0]-stim_filter_len:x[1]-stim_filter_len] for x in wanted_psth_inds])
+
+kern_len = 50
+kern = np.ones(kern_len)/kern_len
+firing_rates = np.stack([np.convolve(x, kern, mode = 'same') for x in spike_trains])
+
+imshow_kwargs = dict(aspect = 'auto',
+                     interpolation = 'nearest',
+                     vmin = 0,
+                     vmax = 0.2)
+fig,ax = plt.subplots(1,2, sharex=True, sharey=False)
+#ax[0].plot(spike_trains.T, color = 'k', alpha = 0.5)
+ax[0].imshow(firing_rates, **imshow_kwargs)
+ax[1].imshow(pred_trains, **imshow_kwargs)
 plt.show()
 
