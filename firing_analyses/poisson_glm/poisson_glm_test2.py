@@ -22,7 +22,8 @@ from pandas import DataFrame as df
 from pandas import concat
 import os
 plot_dir=  '/media/bigdata/firing_space_plot/firing_analyses/poisson_glm/tests/plots'
-from sklearn.model_selection import train_test_split
+from tqdm import tqdm, trange
+from seaborn import sns
 
 
 ############################################################
@@ -552,139 +553,12 @@ plt.tight_layout()
 #plt.close(fig)
 plt.show()
 
+############################################################
+############################################################
+
 # Cross validated prediction on trial-matched vs shuffled-data
 # 1) Shuffle trials
 # 2) Shuffle timebins across trials
-def gen_data_frame(
-        spike_data, 
-        coupled_spikes,
-        stim_vec,
-        ):
-    stacked_data = np.concatenate([
-        spike_data[None,:], coupled_spikes, stim_vec[None,:]], 
-                            axis=0)
-    labels = ['spikes',*[f'coup_{i}' for i in range(len(coupled_spikes))], 'stim']
-    data_frame = pd.DataFrame(
-            data = stacked_data.T,
-            columns = labels)
-    trial_starts = np.where(stim_vec[:-max_filter_len])[0]
-    dat_len = len(spike_data)
-    trial_labels = np.zeros(dat_len)
-    trial_time = np.zeros(dat_len)
-    counter = 0
-    for i in range(len(trial_starts)):
-        if i != len(trial_starts)-1:
-            trial_labels[trial_starts[i]:trial_starts[i+1]] = counter
-            counter +=1
-            trial_time[trial_starts[i]:trial_starts[i+1]] = \
-                    np.arange(0 , trial_starts[i+1] - trial_starts[i])
-        else:
-            trial_labels[trial_starts[i]:dat_len] = counter
-            trial_time[trial_starts[i]:dat_len] = \
-                    np.arange(0, dat_len - trial_starts[i])
-
-    data_frame['trial_labels'] = trial_labels
-    data_frame['trial_time'] = trial_time
-    data_frame = data_frame.astype('int')
-    return data_frame
-
-def gen_trial_shuffle(data_frame, dv = 'spikes'):
-    """
-    Mismatch trials between dv and iv
-    """
-    spike_dat = data_frame[dv]
-    iv_dat = data_frame[[x for x in data_frame.columns if x != dv]]
-    unique_trials = iv_dat['trial_labels'].unique()
-    trial_map = dict(zip(unique_trials, np.random.permutation(unique_trials)))
-    iv_dat['trial_labels'] = [trial_map[x] for x in iv_dat['trial_labels']]
-    iv_dat = iv_dat.sort_values(by = ['trial_labels', 'trial_time'])
-    iv_dat.reset_index(inplace=True, drop=True)
-    out_frame = pd.concat([spike_dat.reset_index(drop=True), iv_dat], axis=1)
-    return out_frame
-
-def gen_circular_shuffle(data_frame, dv = 'spikes'):
-    """
-    Shuffle timebins across trials (i.e. maintain the position of time bins but
-                                    change trial indices)
-    """
-    spike_dat = data_frame[dv]
-    iv_dat = data_frame[[x for x in data_frame.columns if x != dv]]
-    time_grouped_dat = [x[1] for x in list(iv_dat.groupby('trial_time'))]
-    for this_dat in time_grouped_dat:
-        this_dat['trial_labels'] = np.random.permutation(this_dat['trial_labels'])
-    iv_dat = pd.concat(time_grouped_dat)
-    iv_dat = iv_dat.sort_values(by = ['trial_labels', 'trial_time'])
-    iv_dat.reset_index(inplace=True, drop=True)
-    out_frame = pd.concat([spike_dat.reset_index(drop=True), iv_dat], axis=1)
-    return out_frame
-
-def gen_random_shuffle(data_frame, dv = 'spikes'):
-    """
-    Randomly shuffled IV and DV separately
-    """
-    trial_cols = ['trial_labels','trial_time']
-    spike_dat = data_frame[dv]
-    trial_dat = data_frame[trial_cols]
-    rm_cols = trial_cols + [dv]
-    iv_dat = data_frame[[x for x in data_frame.columns if x not in rm_cols]]
-    iv_dat = iv_dat.sample(frac = 1, replace=False)
-    iv_dat.reset_index(inplace=True, drop=True)
-    out_frame = pd.concat([spike_dat.reset_index(drop=True), iv_dat, trial_dat.reset_index(drop=True)], axis=1)
-    return out_frame
-
-def dataframe_to_design_mat(data_frame, test_size = 0.2):
-    """
-    Split data into training and testing sets
-    This NEEDS to be done at the design matrix level because
-    temporal structure no longer matters then
-    """
-    coup_cols = [x for x in data_frame.columns if 'coup' in x]
-    glmdata = gt.gen_stim_history_coupled_design(
-                    spike_data = data_frame['spikes'].values, 
-                    coupled_spikes = data_frame[coup_cols].values.T,
-                    stim_data = data_frame['stim'].values,
-                    hist_filter_len = 10,
-                    coupling_filter_len = 10,
-                    stim_filter_len = 500,
-                    n_basis = 10,
-                    basis = 'cos',
-                    basis_spread = 'log',
-                    )
-    # Re-add trial_labels and trial_time
-    trial_cols = ['trial_labels','trial_time']
-    glmdata = pd.concat([glmdata, data_frame[trial_cols]], axis=1)
-    glmdata = glmdata.dropna()
-    glmdata.reset_index(inplace=True, drop=True)
-
-    # Drop trials which are short
-    trial_list = [x[1] for x in list(glmdata.groupby('trial_labels'))]
-    trial_lens = [len(x) for x in trial_list]
-    med_len = np.median(trial_lens)
-    unwanted_trials = [i for i, this_len in enumerate(trial_lens) \
-            if this_len != med_len]
-    remaining_lens = [x for i,x in enumerate(trial_lens) \
-            if i not in unwanted_trials]
-    assert all([[x==y for x in remaining_lens] for y in remaining_lens]), \
-            'Trial lengths are not equal'
-    glmdata = glmdata.loc[~glmdata.trial_labels.isin(unwanted_trials)]
-    glmdata.reset_index(inplace=True, drop=True)
-    return glmdata
-    
-
-def return_train_test_split(data_frame, test_size = 0.2):
-    train_dat, test_dat = train_test_split(
-            data_frame, test_size=test_size, random_state=42)
-    return train_dat.sort_index(), test_dat.sort_index() 
-
-from scipy.special import gammaln
-def poisson_ll(lam, k):
-    """
-    Poisson log likelihood
-    """
-    assert len(lam) == len(k), 'lam and k must be same length'
-    assert all(lam > 0), 'lam must be non-negative'
-    assert all(k >= 0), 'k must be non-negative'
-    return np.sum(k*np.log(lam) - lam - gammaln(k+1))
 
 # Generate data frame and calculate cross validated prediction
 # Repeat for shuffled datasets
@@ -695,29 +569,20 @@ def poisson_ll(lam, k):
 # history will always be a strong predictor and history can't be 
 # shuffled without destroying the actual spike trains
 
-data_frame =  gen_data_frame(
+data_frame =  gt.gen_data_frame(
         spike_data, 
         coupled_spikes,
         stim_vec,
         )
 
 actual_input_dat = data_frame.copy()
-actual_design_mat = dataframe_to_design_mat(actual_input_dat)
-
-# Generate shuffles
-trial_sh_design_mat = gen_trial_shuffle(actual_design_mat)
-circ_sh_design_mat = gen_circular_shuffle(actual_design_mat)
-rand_sh_design_mat = gen_random_shuffle(actual_design_mat)
-
+actual_design_mat = gt.dataframe_to_design_mat(actual_input_dat)
 # Generate train test splits
-actual_train_dat, actual_test_dat = return_train_test_split(actual_design_mat)
-trial_sh_train_dat, trial_sh_test_dat = return_train_test_split(trial_sh_design_mat)
-circ_sh_train_dat, circ_sh_test_dat = return_train_test_split(circ_sh_design_mat)
-rand_sh_train_dat, rand_sh_test_dat = return_train_test_split(rand_sh_design_mat)
+actual_train_dat, actual_test_dat = gt.return_train_test_split(actual_design_mat)
 
 # Fit model to actual data
 res,pred = gt.fit_stim_history_coupled_glm(
-        glmdata = actual_design_mat,
+        glmdata = actual_train_dat,
         hist_filter_len = hist_filter_len,
         coupling_filter_len = coupling_filter_len,
         stim_filter_len= stim_filter_len,
@@ -725,20 +590,32 @@ res,pred = gt.fit_stim_history_coupled_glm(
         **basis_kwargs
         )
 
+# Test fit
 actual_test_pred = res.predict(actual_test_dat)
-actual_test_ll = poisson_ll(actual_test_pred, actual_test_dat['spikes'].values)
+actual_test_ll = gt.poisson_ll(actual_test_pred, actual_test_dat['spikes'].values)
 actual_test_ll = np.round(actual_test_ll, 2)
 
+# Generate shuffles and repeat testing
+# Note: No need to refit as we're simply showing that destroying different
+# parts of the predictors destroys the model's ability to predict actual data
+# i.e. model has learned TRIAL-SPECIFIC features
+trial_sh_design_mat = gt.gen_trial_shuffle(actual_design_mat)
+circ_sh_design_mat = gt.gen_circular_shuffle(actual_design_mat)
+rand_sh_design_mat = gt.gen_random_shuffle(actual_design_mat)
+trial_sh_train_dat, trial_sh_test_dat = gt.return_train_test_split(trial_sh_design_mat)
+circ_sh_train_dat, circ_sh_test_dat = gt.return_train_test_split(circ_sh_design_mat)
+rand_sh_train_dat, rand_sh_test_dat = gt.return_train_test_split(rand_sh_design_mat)
+
 trial_sh_test_pred = res.predict(trial_sh_test_dat)
-trial_sh_test_ll = poisson_ll(trial_sh_test_pred, actual_test_dat['spikes'].values)
+trial_sh_test_ll = gt.poisson_ll(trial_sh_test_pred, actual_test_dat['spikes'].values)
 trial_sh_test_ll = np.round(trial_sh_test_ll, 2)
 
 circ_sh_test_pred = res.predict(circ_sh_test_dat)
-circ_sh_test_ll = poisson_ll(circ_sh_test_pred, actual_test_dat['spikes'].values)
+circ_sh_test_ll = gt.poisson_ll(circ_sh_test_pred, actual_test_dat['spikes'].values)
 circ_sh_test_ll = np.round(circ_sh_test_ll, 2)
 
 rand_sh_test_pred = res.predict(rand_sh_test_dat)
-rand_sh_test_ll = poisson_ll(rand_sh_test_pred, actual_test_dat['spikes'].values)
+rand_sh_test_ll = gt.poisson_ll(rand_sh_test_pred, actual_test_dat['spikes'].values)
 rand_sh_test_ll = np.round(rand_sh_test_ll, 2)
 
 # Plot all 3 conditions against actual data
@@ -760,5 +637,59 @@ ax[3].plot(rand_sh_test_pred,  label='Predicted')
 ax[3].set_title('Random shuffled, LL: {}'.format(rand_sh_test_ll))
 ax[3].legend()
 plt.tight_layout()
-plt.show()
+fig.savefig(os.path.join(plot_dir,'cross_val_shuffle_LL.png'),
+            dpi = 300, bbox_inches = 'tight')
+plt.close(fig)
+#plt.show()
 
+############################################################
+############################################################
+# Convert to testing machine
+# Number of fits on actual data (expensive)
+n_fits = 10
+n_max_tries = 20
+# Number of shuffles tested against each fit
+n_shuffles_per_fit = 50
+
+data_frame =  gt.gen_data_frame(
+        spike_data, 
+        coupled_spikes,
+        stim_vec,
+        max_filter_len = max_filter_len,
+        )
+
+# Reload glm_tools
+import importlib
+importlib.reload(gt)
+
+fit_outs = []
+for i in trange(n_max_tries):
+    if len(fit_outs) < n_fits:
+        try:
+            outs = gt.gen_actual_fit(
+                data_frame,
+                hist_filter_len = hist_filter_len,
+                coupling_filter_len = coupling_filter_len,
+                stim_filter_len= stim_filter_len,
+                basis_kwargs = basis_kwargs,
+                ) 
+            fit_outs.append(outs)
+        except:
+            print('Failed fit')
+    else:
+        print('Finished fitting')
+        break
+
+fit_list = [fit_out[0] for fit_out in fit_outs]
+actual_design_mat = fit_outs[0][1]
+
+ll_names = ['actual','trial_sh','circ_sh','rand_sh']
+ll_outs = [gt.calc_loglikelihood(actual_design_mat, res) for res in tqdm(fit_list)]
+
+ll_frame = pd.DataFrame(ll_outs, columns=ll_names)
+
+plt.boxplot(ll_frame)
+plt.ylim([-4000,0])
+plt.xticks(np.arange(1,1+len(ll_names)),labels = ll_names)
+plt.ylabel('Log Likelihood')
+plt.show()
