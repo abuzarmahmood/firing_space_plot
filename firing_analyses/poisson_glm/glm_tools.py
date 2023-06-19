@@ -384,7 +384,7 @@ def generate_stim_history_data(
     spikes = np.random.binomial(1, spike_prob)
     return spikes, prob, stim_vec
 
-def fit_stim_history_coupled_glm(
+def gen_stim_history_coupled_design(
         spike_data, 
         coupled_spikes,
         stim_data,
@@ -436,7 +436,35 @@ def fit_stim_history_coupled_glm(
                  ], 
             axis = 1)
     glmdata = glmdata.dropna().sort_index()
-    #glmdata['intercept'] = 1
+    return glmdata
+
+def fit_stim_history_coupled_glm(
+        spike_data = None, 
+        coupled_spikes = None,
+        stim_data = None,
+        hist_filter_len = 10,
+        coupling_filter_len = 10,
+        stim_filter_len = 500,
+        n_basis = 10,
+        basis = 'cos',
+        basis_spread = 'log',
+        regularized = True,
+        alpha = 0,
+        glmdata = None
+        ):
+
+    if glmdata is None:
+        glmdata = gen_stim_history_coupled_design(
+                spike_data, 
+                coupled_spikes,
+                stim_data,
+                hist_filter_len = 10,
+                coupling_filter_len = 10,
+                stim_filter_len = 500,
+                n_basis = 10,
+                basis = 'cos',
+                basis_spread = 'log',
+                )
 
     dv_cols = [x for x in glmdata.columns if 'lag' in x]
     #dv_cols.append('intercept')
@@ -447,7 +475,10 @@ def fit_stim_history_coupled_glm(
     #        glmdata['spikes'], 
     #        glmdata[dv_cols], 
     #        family = sm.families.Poisson())
-    res = model.fit()
+    if regularized == True:
+        res = model.fit_regularized(alpha = alpha)
+    else:
+        res = model.fit()
     pred = res.predict(glmdata[dv_cols])
     return res, pred
 
@@ -459,6 +490,8 @@ def fit_history_coupled_glm(
         n_basis = 10,
         basis = 'cos',
         basis_spread = 'log',
+        regularized = True,
+        alpha = 0,
         ):
     if basis == 'cos':
         coupling_design_mat = gen_cosine_coupling_design(
@@ -504,7 +537,10 @@ def fit_history_coupled_glm(
     #        glmdata['spikes'], 
     #        glmdata[dv_cols], 
     #        family = sm.families.Poisson())
-    res = model.fit()
+    if regularized == True:
+        res = model.fit_regularized(alpha = alpha)
+    else:
+        res = model.fit()
     pred = res.predict(glmdata[dv_cols])
     return res, pred
 
