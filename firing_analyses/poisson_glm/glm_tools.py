@@ -311,6 +311,7 @@ def gen_coupling_design_mat(coupled_spikes, filter_len, stack = False):
 
 def gen_cosine_coupling_design(
         coupled_spikes,
+        coupled_spike_inds,
         filter_len, 
         n_basis = 10, 
         spread = 'log'):
@@ -328,7 +329,7 @@ def gen_cosine_coupling_design(
     for i in range(len(cos_mat_list)):
         cos_mat_list[i] = pd.DataFrame(cos_mat_list[i], 
                 index = coupled_mat_list[i].index)
-        cos_mat_list[i].columns = [f'coupling_lag_{i}_{j:03d}' for j in \
+        cos_mat_list[i].columns = [f'coupling_lag_{coupled_spike_inds[i]}_{j:03d}' for j in \
                 np.arange(n_basis)]
     cos_mat = pd.concat(cos_mat_list, axis = 1)
     return cos_mat
@@ -388,6 +389,7 @@ def generate_stim_history_data(
 def gen_stim_history_coupled_design(
         spike_data, 
         coupled_spikes,
+        coupled_spike_inds,
         stim_data,
         hist_filter_len = 10,
         coupling_filter_len = 10,
@@ -399,6 +401,7 @@ def gen_stim_history_coupled_design(
     if basis == 'cos':
         coupling_design_mat = gen_cosine_coupling_design(
                                         coupled_spikes, 
+                                        coupled_spike_inds,
                                         coupling_filter_len,
                                         n_basis = n_basis,
                                         spread = basis_spread)
@@ -729,7 +732,8 @@ def gen_data_frame(
         spike_data, 
         coupled_spikes,
         stim_vec,
-        max_filter_len,
+        stim_filter_len,
+        trial_start_offset = 0,
         ):
     stacked_data = np.concatenate([
         spike_data[None,:], coupled_spikes, stim_vec[None,:]], 
@@ -738,7 +742,8 @@ def gen_data_frame(
     data_frame = pd.DataFrame(
             data = stacked_data.T,
             columns = labels)
-    trial_starts = np.where(stim_vec[:-max_filter_len])[0]
+    trial_starts = np.where(stim_vec[:-stim_filter_len])[0]
+    trial_starts = trial_starts + trial_start_offset
     dat_len = len(spike_data)
     trial_labels = np.zeros(dat_len)
     trial_time = np.zeros(dat_len)
@@ -803,23 +808,31 @@ def gen_random_shuffle(data_frame, dv = 'spikes'):
     out_frame = pd.concat([spike_dat.reset_index(drop=True), iv_dat, trial_dat.reset_index(drop=True)], axis=1)
     return out_frame
 
-def dataframe_to_design_mat(data_frame, test_size = 0.2):
+def dataframe_to_design_mat(
+        data_frame,
+        hist_filter_len,
+        coupling_filter_len,
+        stim_filter_len,
+        basis_kwargs,
+        ):
     """
     Split data into training and testing sets
     This NEEDS to be done at the design matrix level because
     temporal structure no longer matters then
     """
     coup_cols = [x for x in data_frame.columns if 'coup' in x]
+    coup_inds = [int(x.split('_')[-1]) for x in coup_cols]
     glmdata = gen_stim_history_coupled_design(
                     spike_data = data_frame['spikes'].values, 
                     coupled_spikes = data_frame[coup_cols].values.T,
+                    coupled_spike_inds = coup_inds,
                     stim_data = data_frame['stim'].values,
-                    hist_filter_len = 10,
-                    coupling_filter_len = 10,
-                    stim_filter_len = 500,
-                    n_basis = 10,
-                    basis = 'cos',
-                    basis_spread = 'log',
+                    hist_filter_len = hist_filter_len,
+                    coupling_filter_len = coupling_filter_len,
+                    stim_filter_len = stim_filter_len,
+                    n_basis = basis_kwargs['n_basis'],
+                    basis = basis_kwargs['basis'],
+                    basis_spread = basis_kwargs['basis_spread'],
                     )
     # Re-add trial_labels and trial_time
     trial_cols = ['trial_labels','trial_time']
@@ -864,10 +877,16 @@ def gen_actual_fit(
         hist_filter_len = 10,
         coupling_filter_len = 10,
         stim_filter_len = 500,
-        basis_kwargs = {}
+        basis_kwargs = {},
+        actual_design_mat = None,
         ):
     actual_input_dat = data_frame.copy()
-    actual_design_mat = dataframe_to_design_mat(actual_input_dat)
+
+    # If not given, generate an actual_design_mat
+    # Otherwise use the given one
+    if actual_design_mat is None:
+        actual_design_mat = dataframe_to_design_mat(actual_input_dat)
+
     # Generate train test splits
     actual_train_dat, actual_test_dat = return_train_test_split(actual_design_mat)
 

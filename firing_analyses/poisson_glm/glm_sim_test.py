@@ -9,15 +9,10 @@ Simulate and infer models with different filters
 
 import numpy as np
 import pylab as plt
-from scipy.stats import zscore
 import pandas as pd
 import sys
 sys.path.append('/media/bigdata/firing_space_plot/firing_analyses/poisson_glm')
-import makeRaisedCosBasis as cb
 import glm_tools as gt
-import statsmodels.api as sm
-from statsmodels.genmod.families import Poisson
-import statsmodels.formula.api as smf
 from pandas import DataFrame as df
 from pandas import concat
 import os
@@ -644,6 +639,10 @@ plt.close(fig)
 
 ############################################################
 ############################################################
+# Reload glm_tools
+import importlib
+importlib.reload(gt)
+
 # Convert to testing machine
 # Number of fits on actual data (expensive)
 n_fits = 10
@@ -655,12 +654,9 @@ data_frame =  gt.gen_data_frame(
         spike_data, 
         coupled_spikes,
         stim_vec,
-        max_filter_len = max_filter_len,
+        stim_filter_len = stim_filter_len,
         )
 
-# Reload glm_tools
-import importlib
-importlib.reload(gt)
 
 fit_outs = []
 for i in trange(n_max_tries):

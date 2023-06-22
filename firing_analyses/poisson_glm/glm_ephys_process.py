@@ -1,0 +1,262 @@
+"""
+First pass at applying glm framework to ephys data
+"""
+
+import numpy as np
+import pylab as plt
+import pandas as pd
+import sys
+sys.path.append('/media/bigdata/firing_space_plot/firing_analyses/poisson_glm')
+import glm_tools as gt
+from pandas import DataFrame as df
+from pandas import concat
+import os
+from tqdm import tqdm, trange
+sys.path.append('/media/bigdata/firing_space_plot/ephys_data')
+from ephys_data import ephys_data
+from itertools import product
+
+save_path = '/media/bigdata/firing_space_plot/firing_analyses/poisson_glm/artifacts'
+plot_dir=  '/media/bigdata/firing_space_plot/firing_analyses/poisson_glm/tests/ephys_plots'
+
+############################################################
+# Parameters
+hist_filter_len = 200
+stim_filter_len = 500
+coupling_filter_len = 200
+
+trial_start_offset = -2000
+trial_lims = np.array([1000,4000])
+stim_t = 2000
+
+bin_width = 10
+
+# Reprocess filter lens
+hist_filter_len_bin = hist_filter_len // bin_width
+stim_filter_len_bin = stim_filter_len // bin_width
+coupling_filter_len_bin = coupling_filter_len // bin_width
+
+# Define basis kwargs
+basis_kwargs = dict(
+    n_basis = 10,
+    basis = 'cos',
+    basis_spread = 'log',
+    )
+
+# Number of fits on actual data (expensive)
+n_fits = 10
+n_max_tries = 20
+# Number of shuffles tested against each fit
+n_shuffles_per_fit = 50
+############################################################
+
+file_list_path = '/media/bigdata/projects/pytau/pytau/data/fin_inter_list_3_14_22.txt'
+file_list = [x.strip() for x in open(file_list_path,'r').readlines()]
+basenames = [os.path.basename(x) for x in file_list]
+
+spike_list = []
+unit_region_list = []
+for ind in trange(len(file_list)):
+    dat = ephys_data(file_list[ind])
+    dat.get_spikes()
+    spike_list.append(np.array(dat.spikes))
+    # Calc mean firing rate
+    mean_fr = np.array(dat.spikes).mean(axis=(0,1,3))
+    dat.get_region_units()
+    region_units = dat.region_units
+    region_names = dat.region_names
+    region_names = [[x]*len(y) for x,y in zip(region_names,region_units)]
+    region_units = np.concatenate(region_units)
+    region_names = np.concatenate(region_names)
+    unit_region_frame = df(
+            {'region':region_names,
+             'unit':region_units,
+             }
+            )
+    unit_region_frame['basename'] = basenames[ind]
+    unit_region_frame['session'] = ind
+    unit_region_frame = unit_region_frame.sort_values(by=['unit'])
+    unit_region_frame['mean_rate'] = mean_fr
+    unit_region_list.append(unit_region_frame)
+
+unit_region_frame = concat(unit_region_list)
+unit_region_frame = unit_region_frame.reset_index(drop=True)
+unit_region_frame.to_csv(os.path.join(save_path,'unit_region_frame.csv'))
+
+# Make sure all sessions have 4 tastes
+assert all([x.shape[0] == 4 for x in spike_list])
+
+# Find neurons per session
+nrn_counts = [x.shape[2] for x in spike_list]
+
+# Process each taste separately
+inds = np.array(list(product(range(len(spike_list)),range(spike_list[0].shape[0]))))
+fin_inds = []
+for ind in tqdm(inds):
+    this_count = nrn_counts[ind[0]]
+    for nrn in range(this_count):
+        fin_inds.append(np.hstack((ind,nrn)))
+fin_inds = np.array(fin_inds)
+
+ind_frame = df(fin_inds,columns=['session','taste','neuron'])
+ind_frame.to_csv(os.path.join(save_path,'ind_frame.csv'))
+
+# While iterating, will have to keep track of
+# 1. Region each neuron belongs to
+# 2. log-likehood for each data-type
+# 3. p-values
+stim_vec = np.zeros(spike_list[0].shape[-1])
+stim_vec[stim_t] = 1
+
+for this_ind in tqdm(fin_inds):
+    #this_ind = fin_inds[0]
+    this_ind_str = '_'.join([str(x) for x in this_ind])
+    this_session_dat = spike_list[this_ind[0]]
+    this_taste_dat = this_session_dat[this_ind[1]]
+    this_nrn_ind = this_ind[2]
+    other_nrn_inds = np.delete(np.arange(this_session_dat.shape[2]),
+            this_nrn_ind)
+    n_coupled_neurons = len(other_nrn_inds)
+
+    this_nrn_dat = this_taste_dat[:,this_nrn_ind]
+    other_nrn_dat = this_taste_dat[:,other_nrn_inds]
+    stim_dat = np.tile(stim_vec,(this_taste_dat.shape[0],1))
+
+    this_nrn_flat = np.concatenate(this_nrn_dat)
+    other_nrn_flat = np.concatenate(np.moveaxis(other_nrn_dat, 1, -1)).T
+    stim_flat = np.concatenate(stim_dat)
+
+    #import importlib
+    #importlib.reload(gt)
+
+    # To convert to dataframe, make sure trials are not directly
+    # concatenated as that would imply temporal continuity
+    data_frame = gt.gen_data_frame(
+            this_nrn_flat,
+            other_nrn_flat,
+            stim_flat,
+            stim_filter_len = stim_filter_len,
+            trial_start_offset = trial_start_offset,
+            )
+
+    # Replace coupling data names with actual indices
+    coup_names = ['coup_{}'.format(x) for x in range(n_coupled_neurons)] 
+    replace_names = ['coup_{}'.format(x) for x in other_nrn_inds]
+    replace_dict = dict(zip(coup_names, replace_names))
+    data_frame = data_frame.rename(columns=replace_dict)
+
+    # Bin data
+    data_frame['time_bins'] = data_frame.trial_time // bin_width
+    data_frame = data_frame.groupby(['trial_labels','time_bins']).sum()
+    data_frame['trial_time'] = data_frame['trial_time'] // bin_width
+    data_frame = data_frame.reset_index()
+
+    # Create design mat
+    actual_design_mat = gt.dataframe_to_design_mat(
+            data_frame,
+            hist_filter_len = hist_filter_len_bin,
+            stim_filter_len = stim_filter_len_bin,
+            coupling_filter_len = coupling_filter_len_bin,
+            basis_kwargs = basis_kwargs,
+            )
+
+    # Cut to trial_lims
+    # Note, this needs to be done after design matrix is created
+    # so that overlap of history between trials is avoided
+    trial_lims_vec = np.arange(*trial_lims)
+    actual_design_mat = actual_design_mat.loc[actual_design_mat.trial_time.isin(trial_lims_vec)]
+
+    fit_list = []
+    for i in trange(n_max_tries):
+        if len(fit_list) < n_fits:
+            try:
+                res, _ = gt.gen_actual_fit(
+                        data_frame, # Not used if design_mat is provided
+                        hist_filter_len = hist_filter_len_bin,
+                        stim_filter_len = stim_filter_len_bin,
+                        coupling_filter_len = coupling_filter_len_bin,
+                        basis_kwargs = basis_kwargs,
+                        actual_design_mat = actual_design_mat,
+                        )
+                fit_list.append(res)
+            except:
+                print('Failed fit')
+        else:
+            print('Finished fitting')
+            break
+
+    p_val_list = [res.pvalues for res in fit_list]
+    p_val_fin = []
+    for i, p_vals in enumerate(p_val_list):
+        p_vals = pd.DataFrame(p_vals)
+        p_vals['fit_num'] = i
+        p_val_fin.append(p_vals)
+
+    p_val_frame = pd.concat(p_val_fin)
+    p_val_frame.reset_index(inplace=True)
+    p_val_frame.rename(columns={'index':'param', 0 : 'p_val'},inplace=True)
+    p_val_frame.to_csv(os.path.join(save_path,f'{this_ind_str}_p_val_frame.csv'))
+
+    ll_names = ['actual','trial_sh','circ_sh','rand_sh']
+    ll_outs = [gt.calc_loglikelihood(actual_design_mat, res) for res in tqdm(fit_list)]
+    ll_frame = pd.DataFrame(ll_outs, columns=ll_names)
+    ll_frame['fit_num'] = np.arange(len(ll_outs))
+    ll_frame.to_csv(os.path.join(save_path,f'{this_ind_str}_ll_frame.csv'))
+
+#plt.boxplot(ll_frame)
+##plt.ylim([-4000,0])
+#plt.xticks(np.arange(1,1+len(ll_names)),labels = ll_names)
+#plt.ylabel('Log Likelihood')
+#plt.show()
+
+#############################################################
+#pred = res.predict(actual_design_mat.iloc[:,:-2])
+#
+#coupling_params_stack = np.stack(
+#    [gt.process_glm_res(
+#        res, 
+#        coupling_filter_len_bin,
+#        **basis_kwargs,
+#        param_key = f'lag_{i}') \
+#                for i in range(n_coupled_neurons)]
+#    )
+#hist_params_stack = gt.process_glm_res(
+#        res, 
+#        hist_filter_len_bin,
+#        **basis_kwargs, 
+#        param_key = 'hist')
+#stim_params_stack = gt.process_glm_res(
+#        res, 
+#        hist_filter_len_bin,
+#        **basis_kwargs, 
+#        param_key = 'stim')
+#
+#fig, ax = plt.subplots(n_coupled_neurons + 2,1, sharex=True, sharey=False,
+#                       figsize = (5,10))
+#for i in range(n_coupled_neurons):
+#    ax[i].plot(np.exp(coupling_params_stack[i]), label = 'estimated')
+#    ax[i].set_ylabel('Coupling')
+#ax[-2].plot(np.exp(hist_params_stack), label = 'Estimated')
+#ax[-2].set_ylabel('History')
+#ax[-1].plot(np.exp(stim_params_stack), label = 'Estimated')
+#ax[-1].set_ylabel('Stimulus')
+#ax[-1].legend()
+#fig.suptitle('Filter comparison')
+#plt.tight_layout()
+#plt.show()
+#
+#actual_design_mat.spikes.plot()
+#actual_design_mat.stim_lag000.plot()
+#pred.plot()
+#plt.show()
+#
+##fig,ax = plt.subplots(2,1, sharex=True)
+##(data_frame.trial_labels/data_frame.trial_labels.max()).plot(ax=ax[0])
+##data_frame.stim.plot(ax=ax[0])
+##data_frame.trial_time.plot(ax=ax[1])
+##plt.show()
+#
+#plot_dat = data_frame.iloc[:,:-2]
+#plt.scatter(*np.where(plot_dat.values)[::-1])
+#plt.xticks(range(len(plot_dat.columns)),plot_dat.columns,rotation=90)
+#plt.show()
