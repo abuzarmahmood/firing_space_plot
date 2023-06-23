@@ -98,14 +98,16 @@ for i in trange(len(p_val_frame_list)):
     ll_frame_list_fin.append(this_ll_frame)
 
 fin_pval_frame = pd.concat(p_val_frame_list_fin)
-fin_ll_frame = pd.concat(ll_frame_list_fin)
-
-# Sort by inds
 fin_pval_frame = fin_pval_frame.sort_values(by=['session','taste','neuron'])
-fin_ll_frame = fin_ll_frame.sort_values(by=['session','taste','neuron'])
+# Reset index
+fin_pval_frame = fin_pval_frame.reset_index(drop=True)
 
+fin_ll_frame = pd.concat(ll_frame_list_fin)
+# Sort by inds
+fin_ll_frame = fin_ll_frame.sort_values(by=['session','taste','neuron'])
 # Merge fin_ll_frame and unit_region_frame
 fin_ll_frame = pd.merge(fin_ll_frame, unit_region_frame, on = ['session','neuron'])
+
 
 ############################################################
 ############################################################
@@ -123,9 +125,13 @@ for i in trange(len(grouped_ll_frame)):
     pval_dict = {}
     stat_dict = {}
     for this_col in sh_cols:
-        this_pval = wilcoxon(this_frame[this_col], this_frame['actual'])
-        pval_dict[this_col] = this_pval.pvalue
-        stat_dict[this_col] = this_pval.statistic
+        try:
+            this_pval = wilcoxon(this_frame[this_col], this_frame['actual'])
+            pval_dict[this_col] = this_pval.pvalue
+            stat_dict[this_col] = this_pval.statistic
+        except ValueError:
+            pval_dict[this_col] = np.nan
+            stat_dict[this_col] = np.nan
     ll_pval_list.append(pval_dict)
     ll_stat_list.append(stat_dict)
 
@@ -136,13 +142,13 @@ ll_pval_frame = pd.concat([grouped_ll_inds_frame, ll_pval_frame], axis=1)
 ll_stat_frame = pd.DataFrame(ll_stat_list)
 ll_stat_frame = pd.concat([grouped_ll_inds_frame, ll_stat_frame], axis=1)
 
-# Plot p-value vs stat
-plt.scatter(ll_pval_frame['trial_sh'].values, ll_stat_frame['trial_sh'].values)
-plt.xlabel('Log10 P-Value')
-plt.ylabel('Statistic')
-plt.title('Trial Shuffle')
-plt.show()
+# Drop nan rows
+ll_pval_frame = ll_pval_frame.dropna()
+ll_stat_frame = ll_stat_frame.dropna()
 
+# Sort by session, taste, neuron
+ll_pval_frame = ll_pval_frame.sort_values(by=['session','taste','neuron'])
+ll_stat_frame = ll_stat_frame.sort_values(by=['session','taste','neuron'])
 
 # log10(0.005) = -2.3
 wanted_cols = [x for x in ll_pval_frame.columns if 'sh' in x]
@@ -212,7 +218,7 @@ plt.close()
 n_top = 100
 # Plot log_ll vs mean_rate
 ind_names = ['session','taste', 'neuron']
-mean_nrn_ll_frame = fin_ll_frame.groupby(ind_names).mean().reset_index(drop=False)
+mean_nrn_ll_frame = fin_ll_frame.groupby(ind_names).median().reset_index(drop=False)
 mean_nrn_ll_frame = mean_nrn_ll_frame.sort_values(by = ['mean_rate','actual'], ascending = False)
 # Take out rows which don't mathc with ll_pval_frame
 mean_nrn_ll_frame = mean_nrn_ll_frame.merge(ll_pval_frame[ind_names], on = ind_names)
@@ -407,13 +413,30 @@ for num, this_ind in tqdm(enumerate(top_inds)):
 fin_pval_frame = fin_pval_frame.merge(ll_pval_frame, on = ind_names)
 
 # Only take fit_num with highest likelihood
-max_ll_frame = fin_ll_frame[['actual',*ind_names]]
-# This is NOT HALAL because fin_ll_frame does not have fit_num
-max_ll_frame['fit_num'] = max_ll_frame.groupby(ind_names).cumcount()
-max_vals = max_ll_frame.groupby(ind_names).actual.idxmax().reset_index()
-max_vals = max_vals.rename(columns = {'actual':'fit_num'})
+max_ll_frame = fin_ll_frame[['fit_num','actual',*ind_names]]
+max_inds = max_ll_frame.groupby(ind_names).actual.idxmax().reset_index().actual
+max_vals = max_ll_frame.loc[max_inds].drop(columns = 'actual') 
 
-fin_pval_frame = max_vals.merge(fin_pval_frame, on = ['fit_num',*ind_names])
+fin_pval_frame = fin_pval_frame.merge(max_vals, on = ['fit_num',*ind_names])
+
+# Extract history filters
+hist_frame = fin_pval_frame.loc[fin_pval_frame.param.str.contains('hist')]
+hist_frame.drop(columns = ['trial_sh','circ_sh','rand_sh'], inplace = True)
+hist_frame['ind_index'] = hist_frame[ind_names].astype(str).agg('_'.join, axis=1)
+
+p_val_array = pd.pivot_table(
+        hist_frame, index = 'ind_index', columns = 'param', values = 'p_val').values
+
+# Kmeans clustering
+kmeans = KMeans(n_clusters = 10, random_state = 0).fit(p_val_array)
+p_val_array = p_val_array[kmeans.labels_.argsort()]
+
+alpha = 0.05
+plt.imshow(p_val_array < alpha, aspect = 'auto', interpolation = 'none')
+plt.show()
+
+hist_grouped = list(hist_frame.groupby(ind_names))
+
 
 # Extract coupling filters
 coupling_frame = fin_pval_frame.loc[fin_pval_frame.param.str.contains('coup')]

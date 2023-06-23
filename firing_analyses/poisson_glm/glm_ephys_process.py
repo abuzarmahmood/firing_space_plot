@@ -15,9 +15,18 @@ from tqdm import tqdm, trange
 sys.path.append('/media/bigdata/firing_space_plot/ephys_data')
 from ephys_data import ephys_data
 from itertools import product
+from joblib import Parallel, delayed, cpu_count
+
+os.environ["OMP_NUM_THREADS"] = "1" # export OMP_NUM_THREADS=4
+os.environ["MKL_NUM_THREADS"] = "1" # export MKL_NUM_THREADS=6
 
 save_path = '/media/bigdata/firing_space_plot/firing_analyses/poisson_glm/artifacts'
 plot_dir=  '/media/bigdata/firing_space_plot/firing_analyses/poisson_glm/tests/ephys_plots'
+
+def parallelize(func, iterator):
+    #return Parallel(n_jobs = cpu_count()-2)\
+    return Parallel(n_jobs = 16)\
+            (delayed(func)(this_iter) for this_iter in tqdm(enumerate(iterator)))
 
 ############################################################
 # Parameters
@@ -108,9 +117,19 @@ ind_frame.to_csv(os.path.join(save_path,'ind_frame.csv'))
 stim_vec = np.zeros(spike_list[0].shape[-1])
 stim_vec[stim_t] = 1
 
-for this_ind in tqdm(fin_inds):
+
+def process_ind(ind_num, this_ind):
     #this_ind = fin_inds[0]
     this_ind_str = '_'.join([str(x) for x in this_ind])
+    pval_save_name = f'{this_ind_str}_p_val_frame.csv'
+    pval_save_path = os.path.join(save_path,pval_save_name)
+    ll_save_name = f'{this_ind_str}_ll_frame.csv'
+    ll_save_path = os.path.join(save_path,ll_save_name)
+
+    if os.path.exists(pval_save_path) and os.path.exists(ll_save_path):
+        print(f'Already processed {this_ind_str}')
+        return
+
     this_session_dat = spike_list[this_ind[0]]
     this_taste_dat = this_session_dat[this_ind[1]]
     this_nrn_ind = this_ind[2]
@@ -190,73 +209,30 @@ for this_ind in tqdm(fin_inds):
     for i, p_vals in enumerate(p_val_list):
         p_vals = pd.DataFrame(p_vals)
         p_vals['fit_num'] = i
+        p_vals['values'] = fit_list[i].params.values 
         p_val_fin.append(p_vals)
 
     p_val_frame = pd.concat(p_val_fin)
     p_val_frame.reset_index(inplace=True)
     p_val_frame.rename(columns={'index':'param', 0 : 'p_val'},inplace=True)
-    p_val_frame.to_csv(os.path.join(save_path,f'{this_ind_str}_p_val_frame.csv'))
+    p_val_frame.to_csv(pval_save_path)
 
     ll_names = ['actual','trial_sh','circ_sh','rand_sh']
     ll_outs = [gt.calc_loglikelihood(actual_design_mat, res) for res in tqdm(fit_list)]
     ll_frame = pd.DataFrame(ll_outs, columns=ll_names)
     ll_frame['fit_num'] = np.arange(len(ll_outs))
-    ll_frame.to_csv(os.path.join(save_path,f'{this_ind_str}_ll_frame.csv'))
+    ll_frame.to_csv(ll_save_path)
 
-#plt.boxplot(ll_frame)
-##plt.ylim([-4000,0])
-#plt.xticks(np.arange(1,1+len(ll_names)),labels = ll_names)
-#plt.ylabel('Log Likelihood')
-#plt.show()
+    del data_frame, actual_design_mat, fit_list, p_val_list, p_val_fin, ll_outs, ll_frame
+    del this_session_dat, this_taste_dat, this_nrn_dat, other_nrn_dat, stim_dat
+    del this_nrn_flat, other_nrn_flat, stim_flat
+    print(f'Finished: {ind_num}, {this_ind}')
 
-#############################################################
-#pred = res.predict(actual_design_mat.iloc[:,:-2])
-#
-#coupling_params_stack = np.stack(
-#    [gt.process_glm_res(
-#        res, 
-#        coupling_filter_len_bin,
-#        **basis_kwargs,
-#        param_key = f'lag_{i}') \
-#                for i in range(n_coupled_neurons)]
-#    )
-#hist_params_stack = gt.process_glm_res(
-#        res, 
-#        hist_filter_len_bin,
-#        **basis_kwargs, 
-#        param_key = 'hist')
-#stim_params_stack = gt.process_glm_res(
-#        res, 
-#        hist_filter_len_bin,
-#        **basis_kwargs, 
-#        param_key = 'stim')
-#
-#fig, ax = plt.subplots(n_coupled_neurons + 2,1, sharex=True, sharey=False,
-#                       figsize = (5,10))
-#for i in range(n_coupled_neurons):
-#    ax[i].plot(np.exp(coupling_params_stack[i]), label = 'estimated')
-#    ax[i].set_ylabel('Coupling')
-#ax[-2].plot(np.exp(hist_params_stack), label = 'Estimated')
-#ax[-2].set_ylabel('History')
-#ax[-1].plot(np.exp(stim_params_stack), label = 'Estimated')
-#ax[-1].set_ylabel('Stimulus')
-#ax[-1].legend()
-#fig.suptitle('Filter comparison')
-#plt.tight_layout()
-#plt.show()
-#
-#actual_design_mat.spikes.plot()
-#actual_design_mat.stim_lag000.plot()
-#pred.plot()
-#plt.show()
-#
-##fig,ax = plt.subplots(2,1, sharex=True)
-##(data_frame.trial_labels/data_frame.trial_labels.max()).plot(ax=ax[0])
-##data_frame.stim.plot(ax=ax[0])
-##data_frame.trial_time.plot(ax=ax[1])
-##plt.show()
-#
-#plot_dat = data_frame.iloc[:,:-2]
-#plt.scatter(*np.where(plot_dat.values)[::-1])
-#plt.xticks(range(len(plot_dat.columns)),plot_dat.columns,rotation=90)
-#plt.show()
+#for this_ind in tqdm(fin_inds):
+def try_process(this_ind):
+    try:
+        process_ind(*this_ind)
+    except:
+        print('Failed')
+        pass
+parallelize(try_process,fin_inds)

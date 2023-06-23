@@ -181,22 +181,34 @@ def fit_history_glm(
     return res
 
 def process_glm_res(
-        res, 
+        res = None, 
+        filter_values = None,
         filter_len, 
         n_basis = 10,
         basis = 'cos',
         basis_spread = 'log',
         param_key = 'hist',):
-    lag_params =  res.params
-    lag_params = lag_params[[x for x in lag_params.index if param_key in x]]
-    if basis == 'linear':
-        lag_params.index = [int(x.split(param_key)[1]) for x in lag_params.index]
-    elif basis == 'cos':
-        cos_basis = cb.gen_raised_cosine_basis(
-                            filter_len,
-                            n_basis = n_basis,
-                            spread = basis_spread,)
-        lag_params = lag_params[None,:].dot(cos_basis).flatten()
+    if res is None:
+        lag_params =  res.params
+        lag_params = lag_params[[x for x in lag_params.index if param_key in x]]
+        if basis == 'linear':
+            lag_params.index = [int(x.split(param_key)[1]) for x in lag_params.index]
+        elif basis == 'cos':
+            cos_basis = cb.gen_raised_cosine_basis(
+                                filter_len,
+                                n_basis = n_basis,
+                                spread = basis_spread,)
+            lag_params = lag_params[None,:].dot(cos_basis).flatten()
+    else:
+        lag_params = filter_values
+        if basis == 'linear':
+            pass
+        elif basis == 'cos':
+            cos_basis = cb.gen_raised_cosine_basis(
+                                filter_len,
+                                n_basis = n_basis,
+                                spread = basis_spread,)
+            lag_params = lag_params[None,:].dot(cos_basis).flatten()
     return lag_params
 
 def generate_history_data(filter, n):
@@ -867,6 +879,7 @@ def poisson_ll(lam, k):
     """
     Poisson log likelihood
     """
+    lam += 1e-10 # To ensure there is no log(0)
     assert len(lam) == len(k), 'lam and k must be same length'
     assert all(lam > 0), 'lam must be non-negative'
     assert all(k >= 0), 'k must be non-negative'
