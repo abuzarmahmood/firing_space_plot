@@ -16,18 +16,23 @@ sys.path.append('/media/bigdata/firing_space_plot/ephys_data')
 from ephys_data import ephys_data
 from itertools import product
 from joblib import Parallel, delayed, cpu_count
+from glob import glob
 
 os.environ["OMP_NUM_THREADS"] = "1" # export OMP_NUM_THREADS=4
 os.environ["MKL_NUM_THREADS"] = "1" # export MKL_NUM_THREADS=6
 
-save_path = '/media/bigdata/firing_space_plot/firing_analyses/poisson_glm/artifacts'
-plot_dir=  '/media/bigdata/firing_space_plot/firing_analyses/poisson_glm/tests/ephys_plots'
+base_path = '/media/bigdata/firing_space_plot/firing_analyses/poisson_glm'
+save_path = os.path.join(base_path,'artifacts')
 
 def parallelize(func, iterator):
     #return Parallel(n_jobs = cpu_count()-2)\
     return Parallel(n_jobs = 16)\
             (delayed(func)(this_iter) for this_iter in tqdm(enumerate(iterator)))
 
+def gen_spike_train(spike_inds):
+    spike_train = np.zeros(spike_inds.max(axis=1)+1)
+    spike_train[tuple(spike_inds)] = 1
+    return spike_train
 ############################################################
 # Parameters
 hist_filter_len = 200
@@ -57,58 +62,88 @@ n_fits = 10
 n_max_tries = 20
 # Number of shuffles tested against each fit
 n_shuffles_per_fit = 50
+
 ############################################################
 
-file_list_path = '/media/bigdata/projects/pytau/pytau/data/fin_inter_list_3_14_22.txt'
-file_list = [x.strip() for x in open(file_list_path,'r').readlines()]
-basenames = [os.path.basename(x) for x in file_list]
+reprocess_data = False 
 
-spike_list = []
-unit_region_list = []
-for ind in trange(len(file_list)):
-    dat = ephys_data(file_list[ind])
-    dat.get_spikes()
-    spike_list.append(np.array(dat.spikes))
-    # Calc mean firing rate
-    mean_fr = np.array(dat.spikes).mean(axis=(0,1,3))
-    dat.get_region_units()
-    region_units = dat.region_units
-    region_names = dat.region_names
-    region_names = [[x]*len(y) for x,y in zip(region_names,region_units)]
-    region_units = np.concatenate(region_units)
-    region_names = np.concatenate(region_names)
-    unit_region_frame = df(
-            {'region':region_names,
-             'unit':region_units,
-             }
-            )
-    unit_region_frame['basename'] = basenames[ind]
-    unit_region_frame['session'] = ind
-    unit_region_frame = unit_region_frame.sort_values(by=['unit'])
-    unit_region_frame['mean_rate'] = mean_fr
-    unit_region_list.append(unit_region_frame)
+if reprocess_data:
+    file_list_path = '/media/bigdata/projects/pytau/pytau/data/fin_inter_list_3_14_22.txt'
+    file_list = [x.strip() for x in open(file_list_path,'r').readlines()]
+    basenames = [os.path.basename(x) for x in file_list]
 
-unit_region_frame = concat(unit_region_list)
-unit_region_frame = unit_region_frame.reset_index(drop=True)
-unit_region_frame.to_csv(os.path.join(save_path,'unit_region_frame.csv'))
+    spike_list = []
+    unit_region_list = []
+    for ind in trange(len(file_list)):
+        dat = ephys_data(file_list[ind])
+        dat.get_spikes()
+        spike_list.append(np.array(dat.spikes))
+        # Calc mean firing rate
+        mean_fr = np.array(dat.spikes).mean(axis=(0,1,3))
+        dat.get_region_units()
+        region_units = dat.region_units
+        region_names = dat.region_names
+        region_names = [[x]*len(y) for x,y in zip(region_names,region_units)]
+        region_units = np.concatenate(region_units)
+        region_names = np.concatenate(region_names)
+        unit_region_frame = df(
+                {'region':region_names,
+                 'unit':region_units,
+                 }
+                )
+        unit_region_frame['basename'] = basenames[ind]
+        unit_region_frame['session'] = ind
+        unit_region_frame = unit_region_frame.sort_values(by=['unit'])
+        unit_region_frame['mean_rate'] = mean_fr
+        unit_region_list.append(unit_region_frame)
 
-# Make sure all sessions have 4 tastes
-assert all([x.shape[0] == 4 for x in spike_list])
+    # Save spike_list as numpy arrays
+    spike_list_path = os.path.join(save_path,'spike_save')
 
-# Find neurons per session
-nrn_counts = [x.shape[2] for x in spike_list]
+    spike_inds_list = [np.stack(np.where(x)) for x in spike_list]
 
-# Process each taste separately
-inds = np.array(list(product(range(len(spike_list)),range(spike_list[0].shape[0]))))
-fin_inds = []
-for ind in tqdm(inds):
-    this_count = nrn_counts[ind[0]]
-    for nrn in range(this_count):
-        fin_inds.append(np.hstack((ind,nrn)))
-fin_inds = np.array(fin_inds)
+    if not os.path.exists(spike_list_path):
+        os.makedirs(spike_list_path)
+    for ind,spikes in enumerate(spike_list):
+        #np.save(os.path.join(spike_list_path,f'{ind}_spikes.npy'),spikes)
+        np.save(os.path.join(spike_list_path,f'{ind:03}_spike_inds.npy'),spike_inds_list[ind])
 
-ind_frame = df(fin_inds,columns=['session','taste','neuron'])
-ind_frame.to_csv(os.path.join(save_path,'ind_frame.csv'))
+    unit_region_frame = concat(unit_region_list)
+    unit_region_frame = unit_region_frame.reset_index(drop=True)
+    unit_region_frame.to_csv(os.path.join(save_path,'unit_region_frame.csv'))
+
+    # Make sure all sessions have 4 tastes
+    assert all([x.shape[0] == 4 for x in spike_list])
+
+    # Find neurons per session
+    nrn_counts = [x.shape[2] for x in spike_list]
+
+    # Process each taste separately
+    inds = np.array(list(product(range(len(spike_list)),range(spike_list[0].shape[0]))))
+    fin_inds = []
+    for ind in tqdm(inds):
+        this_count = nrn_counts[ind[0]]
+        for nrn in range(this_count):
+            fin_inds.append(np.hstack((ind,nrn)))
+    fin_inds = np.array(fin_inds)
+
+    ind_frame = df(fin_inds,columns=['session','taste','neuron'])
+    ind_frame.to_csv(os.path.join(save_path,'ind_frame.csv'))
+
+else:
+    ############################################################
+    # Reconstitute data
+    spike_inds_paths = sorted(glob(os.path.join(spike_list_path,'*_spike_inds.npy')))
+    spike_inds_list = [np.load(x) for x in spike_inds_paths]
+    spike_list = [gen_spike_train(x) for x in spike_inds_list]
+
+    # Load unit_region_frame
+    unit_region_frame = pd.read_csv(os.path.join(save_path,'unit_region_frame.csv'),index_col=0)
+
+    # Load ind_frame
+    ind_frame = pd.read_csv(os.path.join(save_path,'ind_frame.csv'),index_col=0)
+
+############################################################
 
 # While iterating, will have to keep track of
 # 1. Region each neuron belongs to
@@ -197,6 +232,7 @@ def process_ind(ind_num, this_ind):
                         basis_kwargs = basis_kwargs,
                         actual_design_mat = actual_design_mat,
                         )
+                res.save(os.path.join(save_path,f'{this_ind_str}_fit_{i}.pkl'))
                 fit_list.append(res)
             except:
                 print('Failed fit')
