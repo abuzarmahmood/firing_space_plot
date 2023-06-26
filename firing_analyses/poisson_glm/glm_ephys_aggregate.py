@@ -22,6 +22,7 @@ from glob import glob
 from scipy.stats import mannwhitneyu as mwu
 from scipy.stats import wilcoxon
 from sklearn.cluster import KMeans
+from sklearn.decomposition import PCA
 import seaborn as sns
 
 save_path = '/media/bigdata/firing_space_plot/firing_analyses/poisson_glm/artifacts'
@@ -408,6 +409,19 @@ for num, this_ind in tqdm(enumerate(top_inds)):
 ############################################################
 # Significant coupling filters
 ############################################################
+alpha = 0.01
+
+basis_kwargs = dict(
+    n_basis = 10,
+    basis = 'cos',
+    basis_spread = 'log',
+    )
+cos_basis = gt.cb.gen_raised_cosine_basis(
+        200,
+        n_basis = basis_kwargs['n_basis'],
+        spread = basis_kwargs['basis_spread'],
+        )
+
 # Throw out all rows which don't have significant differences in likelihood
 # between actual and shuffled
 fin_pval_frame = fin_pval_frame.merge(ll_pval_frame, on = ind_names)
@@ -419,28 +433,192 @@ max_vals = max_ll_frame.loc[max_inds].drop(columns = 'actual')
 
 fin_pval_frame = fin_pval_frame.merge(max_vals, on = ['fit_num',*ind_names])
 
+############################################################
 # Extract history filters
 hist_frame = fin_pval_frame.loc[fin_pval_frame.param.str.contains('hist')]
-hist_frame.drop(columns = ['trial_sh','circ_sh','rand_sh'], inplace = True)
-hist_frame['ind_index'] = hist_frame[ind_names].astype(str).agg('_'.join, axis=1)
+#hist_frame.drop(columns = ['trial_sh','circ_sh','rand_sh'], inplace = True)
+hist_frame = hist_frame[['fit_num','param','p_val','values', *ind_names]]
+hist_frame['lag'] = hist_frame.param.str.extract('(\d+)').astype(int)
+hist_groups = [x[1] for x in list(hist_frame.groupby(ind_names))]
+hist_groups = [x.sort_values('lag') for x in hist_groups]
+hist_val_array = np.stack([x['values'].values for x in hist_groups])
+hist_pval_array = np.stack([x['p_val'].values for x in hist_groups])
 
-p_val_array = pd.pivot_table(
-        hist_frame, index = 'ind_index', columns = 'param', values = 'p_val').values
+sig_hist_filters = np.where((hist_pval_array < 0.05).sum(axis=1))[0]
+frac_sig_hist_filters = np.round(len(sig_hist_filters) / len(hist_pval_array), 2)
+print(f'Fraction of significant history filters: {frac_sig_hist_filters}')
 
-# Kmeans clustering
-kmeans = KMeans(n_clusters = 10, random_state = 0).fit(p_val_array)
-p_val_array = p_val_array[kmeans.labels_.argsort()]
+# Cluster using Kmeans
+kmeans = KMeans(n_clusters = 4, random_state = 0).fit(hist_val_array)
+hist_val_array = hist_val_array[kmeans.labels_.argsort()]
 
-alpha = 0.05
-plt.imshow(p_val_array < alpha, aspect = 'auto', interpolation = 'none')
+# Reconstruct hist filters
+hist_recon = np.dot(hist_val_array, cos_basis)
+
+# Plot
+plt.imshow(hist_val_array, aspect = 'auto', interpolation = 'none')
+plt.colorbar()
 plt.show()
 
-hist_grouped = list(hist_frame.groupby(ind_names))
+# plot principle components
+pca = PCA(n_components = 4)
+pca.fit(hist_recon.T)
+pca_array = pca.transform(hist_recon.T)
 
+plt.plot(pca_array)
+plt.show()
+############################################################
 
 # Extract coupling filters
+############################################################
 coupling_frame = fin_pval_frame.loc[fin_pval_frame.param.str.contains('coup')]
 coupling_frame.drop(columns = ['trial_sh','circ_sh','rand_sh'], inplace = True)
 
+# Fraction of significant coupling filter values per threshold
+alpha_vec = np.round(np.logspace(-1,-3,5),3)
+frac_sig = [(coupling_frame.p_val < alpha).mean() for alpha in alpha_vec]
+frac_ratio = np.round(np.array(frac_sig) / alpha_vec, 2)
+print(dict(zip(alpha_vec, frac_ratio)))
+
+# Assuming one significant value is enough, how many significant filters
+coupling_frame = coupling_frame[['fit_num','param','p_val','values', *ind_names]]
+
 coupling_frame['lag'] = [int(x.split('_')[-1]) for x in coupling_frame.param]
-coupling_frame['other_nrn'] = [int(x.split('_')[-1]) for x in coupling_frame.param]
+coupling_frame['other_nrn'] = [int(x.split('_')[-2]) for x in coupling_frame.param]
+
+coupling_grouped_list = list(coupling_frame.groupby(ind_names))
+coupling_grouped_inds = [x[0] for x in coupling_grouped_list]
+coupling_grouped = [x[1] for x in coupling_grouped_list] 
+
+# For each group, pivot to have other_nrn as row and lag as column
+coupling_pivoted_vals = [x.pivot(index = 'other_nrn', columns = 'lag', values = 'values') \
+        for x in coupling_grouped]
+coupling_pivoted_pvals = [x.pivot(index = 'other_nrn', columns = 'lag', values = 'p_val') \
+        for x in coupling_grouped]
+
+# Count each filter as significant if a value is below alpha
+# Note, these are the neuron inds as per the array of each session
+coupling_pivoted_raw_inds = [np.where((x < alpha).sum(axis=1))[0] \
+        for x in coupling_pivoted_pvals]
+coupling_pivoted_frame_index = [x.index.values for x in coupling_pivoted_vals]
+coupling_pivoted_sig_inds = [y[x] for x,y in zip(coupling_pivoted_raw_inds, coupling_pivoted_frame_index)]
+
+# Total filters
+total_filters = [x.shape[0] for x in coupling_pivoted_vals]
+total_sig_filters = [len(x) for x in coupling_pivoted_sig_inds]
+
+# Fraction of significant filters
+frac_sig_coup_filters = np.round(sum(total_sig_filters) / sum(total_filters), 3)
+print(f'Fraction of significant coupling filters: {frac_sig_coup_filters}') 
+
+# Match inds to actuals neurons
+# First collate connectivity matrices
+tuple_dat = [tuple([*x,y]) for x,y in zip(coupling_grouped_inds, coupling_pivoted_sig_inds)]
+tuple_frame = pd.DataFrame(tuple_dat, columns = [*ind_names, 'sig_inds'])
+
+# Convert tuple frame to long-form
+tuple_frame = tuple_frame.explode('sig_inds')
+
+# Merge with unit_region_frame to obtain neuron region
+tuple_frame = tuple_frame.rename(columns = {'sig_inds':'input_neuron'})
+tuple_frame = tuple_frame.merge(unit_region_frame[['neuron','region','session']],
+                                how = 'left', on = ['session','neuron'])
+# Merge again to assign region to input_neuron
+tuple_frame = tuple_frame.merge(unit_region_frame[['neuron','region', 'session']],
+                                how = 'left', left_on = ['session', 'input_neuron'], 
+                                right_on = ['session','neuron'])
+tuple_frame.drop(columns = 'neuron_y', inplace = True)
+tuple_frame.rename(columns = {
+    'neuron_x':'neuron', 
+    'region_x' : 'region',
+    'region_y' : 'input_region'}, 
+                   inplace = True)
+
+# per session and neuron, what is the distribution of intra-region
+# vs inter-region connections
+count_per_input = tuple_frame.groupby([*ind_names, 'region', 'input_region']).count()
+count_per_input.reset_index(inplace = True)
+
+total_count_per_region = unit_region_frame[['region','neuron','session']]\
+        .groupby(['session','region']).count()
+total_count_per_region.reset_index(inplace = True)
+
+# Merge to get total count per region
+count_per_input = count_per_input.merge(total_count_per_region, how = 'left',
+                                        left_on = ['session','input_region'],
+                                        right_on = ['session','region'])
+count_per_input.rename(columns = {
+    'neuron_x':'neuron', 
+    'region_x':'region',
+    'neuron_y' : 'region_total'}, inplace = True)
+count_per_input.drop(columns = ['region_y'], inplace = True)
+
+count_per_input['input_fraction'] = count_per_input.input_neuron / count_per_input.region_total 
+
+sns.swarmplot(data = count_per_input, x = 'region', y = 'input_fraction', hue = 'input_region',
+              dodge=True)
+plt.show()
+
+# Region preference index
+region_pref_frame = count_per_input[['session','taste','neuron','region','input_region','input_fraction']]
+region_pref_frame['region_pref'] = region_pref_frame.groupby(['session','taste','neuron'])['input_fraction'].diff().dropna()
+region_pref_frame.dropna(inplace = True)
+# region_pref = bla - gc (so positive is more bla than gc)
+region_pref_frame.drop(columns = ['input_fraction', 'input_region'], inplace = True)
+
+sns.swarmplot(data = region_pref_frame, x = 'region', y = 'region_pref')
+plt.ylabel('Region preference index, \n BLA - GC (positive means more BLA input)')
+plt.show()
+
+## Not sure if connectivity matrices are that useful
+#
+# # Convert to connectivity matrices
+# # First, remerge with ind_frame to recover all neurons
+# tuple_frame = ind_frame.merge(tuple_frame, how = 'left', on = ind_names)
+# 
+# session_taste_groups = [x[1] for x in list(tuple_frame.groupby(['session','taste']))]
+# session_taste_inds = [x[0] for x in list(tuple_frame.groupby(['session','taste']))]
+# 
+# def to_connectivity_mat(this_frame):
+#     """
+#     Rows are self, columns are input neurons
+#     """
+#     con_mat = np.zeros((len(this_frame), len(this_frame)))
+#     for i, row in this_frame.reset_index(drop=True).iterrows():
+#         if row.sig_inds is not np.nan and len(row.sig_inds) > 0: 
+#             con_mat[i, row.sig_inds] = 1
+#     con_mat[np.diag_indices_from(con_mat)] = np.nan
+#     return con_mat
+# 
+# session_taste_con_mats = [to_connectivity_mat(x) for x in session_taste_groups]
+#
+# # Region sorting inds for each session
+# region_sorting_frame = unit_region_frame.groupby('session').apply(lambda x: x.sort_values('region'))
+# region_sorting_frame = region_sorting_frame.reset_index(drop=True)
+# region_sorting_frame = region_sorting_frame[['session','region','neuron']]
+# region_sorting_list = [x[1] for x in region_sorting_frame.groupby(['session'])]
+# 
+# sorted_con_mats = []
+# sorted_region_vecs = []
+# for i in range(len(session_taste_con_mats)):
+#     this_mat = session_taste_con_mats[i]
+#     this_session_ind, _ = session_taste_inds[i]
+#     this_sorting_frame = region_sorting_list[this_session_ind]
+#     # Confirm this is the correct session
+#     assert all(this_sorting_frame.session == this_session_ind), "Session mismatch"
+#     this_sorting_inds = this_sorting_frame.neuron.values 
+#     sorted_mat = this_mat[np.ix_(this_sorting_inds, this_sorting_inds)]
+#     sorted_con_mats.append(sorted_mat)
+#     sorted_region_vecs.append(this_sorting_frame.region.values)
+# 
+# # Plot
+# fig, ax = plt.subplots(int(len(sorted_con_mats)/4),4, figsize = (10,10))
+# for i, this_mat in enumerate(sorted_con_mats):
+#     this_ax = ax.flatten()[i]
+#     #this_ax.matshow(this_mat, cmap = 'Greys')
+#     this_ax.imshow(this_mat, cmap = 'Greys', interpolation = 'none', aspect = 'auto')
+#     this_ax.set_title(f'{session_taste_inds[i]}')
+# plt.show()
+
+# Find fraction of gc-gc, bla-bla, and gc-bla connections
+# Note for connectivity matrices: Rows are self, columns are input neurons
