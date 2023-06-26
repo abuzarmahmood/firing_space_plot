@@ -1,5 +1,4 @@
 import numpy as np
-import pylab as plt
 from scipy.stats import zscore
 import pandas as pd
 
@@ -64,6 +63,7 @@ def gen_raised_cosine_basis(n, n_basis, spread = 'linear'):
     return basis_funcs
 
 if __name__ == '__main__':
+    import pylab as plt
     linear_basis_funcs = gen_raised_cosine_basis(1000, 10, spread = 'linear')
     log_basis_funcs = gen_raised_cosine_basis(1000, 10, spread = 'log')
 

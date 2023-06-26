@@ -3,7 +3,6 @@ Functions for fitting GLMs to data.
 """
 
 import numpy as np
-import pylab as plt
 from scipy.stats import zscore
 import pandas as pd
 import sys
@@ -183,7 +182,7 @@ def fit_history_glm(
 def process_glm_res(
         res = None, 
         filter_values = None,
-        filter_len, 
+        filter_len = 200, 
         n_basis = 10,
         basis = 'cos',
         basis_spread = 'log',
@@ -711,14 +710,6 @@ def fit_stim_history_glm(
             axis = 1)
     glmdata = glmdata.dropna().sort_index()
     dv_cols = [x for x in glmdata.columns if 'lag' in x]
-
-    #stim_cols = [x for x in dv_cols if 'stim' in x]
-    #stim_mat_data = glmdata[stim_cols]
-
-    #fig,ax = plt.subplots(2,1, sharex=True)
-    #ax[0].imshow(stim_mat_data.T, aspect = 'auto')
-    #ax[1].plot(stim_mat_data.index, stim_data[stim_mat_data.index.values])
-    #plt.show()
 
     # Formula api breaks with too many columns
     if glmdata.shape[1] < 100:

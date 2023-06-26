@@ -3,17 +3,16 @@ First pass at applying glm framework to ephys data
 """
 
 import numpy as np
-import pylab as plt
 import pandas as pd
 import sys
-sys.path.append('/media/bigdata/firing_space_plot/firing_analyses/poisson_glm')
+#sys.path.append('/media/bigdata/firing_space_plot/firing_analyses/poisson_glm')
+base_path = '/home/exouser/Desktop/ABU/firing_space_plot/firing_analyses/poisson_glm'
+sys.path.append(base_path)
 import glm_tools as gt
 from pandas import DataFrame as df
 from pandas import concat
 import os
 from tqdm import tqdm, trange
-sys.path.append('/media/bigdata/firing_space_plot/ephys_data')
-from ephys_data import ephys_data
 from itertools import product
 from joblib import Parallel, delayed, cpu_count
 from glob import glob
@@ -21,7 +20,7 @@ from glob import glob
 os.environ["OMP_NUM_THREADS"] = "1" # export OMP_NUM_THREADS=4
 os.environ["MKL_NUM_THREADS"] = "1" # export MKL_NUM_THREADS=6
 
-base_path = '/media/bigdata/firing_space_plot/firing_analyses/poisson_glm'
+#base_path = '/media/bigdata/firing_space_plot/firing_analyses/poisson_glm'
 save_path = os.path.join(base_path,'artifacts')
 
 def parallelize(func, iterator):
@@ -66,8 +65,12 @@ n_shuffles_per_fit = 50
 ############################################################
 
 reprocess_data = False 
+spike_list_path = os.path.join(save_path,'spike_save')
 
 if reprocess_data:
+    sys.path.append('/media/bigdata/firing_space_plot/ephys_data')
+    from ephys_data import ephys_data
+
     file_list_path = '/media/bigdata/projects/pytau/pytau/data/fin_inter_list_3_14_22.txt'
     file_list = [x.strip() for x in open(file_list_path,'r').readlines()]
     basenames = [os.path.basename(x) for x in file_list]
@@ -98,7 +101,6 @@ if reprocess_data:
         unit_region_list.append(unit_region_frame)
 
     # Save spike_list as numpy arrays
-    spike_list_path = os.path.join(save_path,'spike_save')
 
     spike_inds_list = [np.stack(np.where(x)) for x in spike_list]
 
@@ -142,6 +144,7 @@ else:
 
     # Load ind_frame
     ind_frame = pd.read_csv(os.path.join(save_path,'ind_frame.csv'),index_col=0)
+    fin_inds = ind_frame.values
 
 ############################################################
 
@@ -232,7 +235,8 @@ def process_ind(ind_num, this_ind):
                         basis_kwargs = basis_kwargs,
                         actual_design_mat = actual_design_mat,
                         )
-                res.save(os.path.join(save_path,f'{this_ind_str}_fit_{i}.pkl'))
+                # Saving these is VERY expensive (~20MB per model)
+                #res.save(os.path.join(save_path,f'{this_ind_str}_fit_{i}.pkl'))
                 fit_list.append(res)
             except:
                 print('Failed fit')
