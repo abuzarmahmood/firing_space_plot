@@ -21,6 +21,7 @@ from itertools import product
 from glob import glob
 from scipy.stats import mannwhitneyu as mwu
 from scipy.stats import wilcoxon
+from scipy.stats import zscore
 from sklearn.cluster import KMeans
 from sklearn.decomposition import PCA
 import seaborn as sns
@@ -241,6 +242,18 @@ top_inds_frame = mean_nrn_ll_frame[mean_nrn_ll_frame['top']]
 top_inds_frame = top_inds_frame.sort_values(by = 'actual', ascending = False)
 top_inds = top_inds_frame[ind_names].values[:n_top]
 
+##############################
+# Also find neurons which have high likelihood averaged across all tastes
+mean_nrn_taste_ll_frame = mean_nrn_ll_frame.groupby(['session','neuron']).mean().reset_index(drop=False)
+mean_nrn_taste_ll_frame = mean_nrn_taste_ll_frame.sort_values(by = ['mean_rate','actual'], ascending = False)
+mean_nrn_taste_ll_frame['top'] = False
+mean_nrn_taste_ll_frame.loc[mean_nrn_taste_ll_frame.index[:n_top],'top'] = True
+
+# Extract top inds
+taste_top_inds_frame = mean_nrn_taste_ll_frame[mean_nrn_taste_ll_frame['top']]
+taste_top_inds_frame = taste_top_inds_frame.sort_values(by = 'actual', ascending = False)
+taste_top_inds = taste_top_inds_frame[['session','neuron']].values[:n_top]
+
 # Recalculate PSTHs for top inds
 ############################################################
 # Parameters
@@ -407,7 +420,158 @@ for num, this_ind in tqdm(enumerate(top_inds)):
     #plt.show()
 
 ############################################################
-# Significant coupling filters
+# Generate PSTHs for all tastes
+psth_plot_dir = os.path.join(plot_dir, 'example_psths')
+if not os.path.exists(psth_plot_dir):
+    os.makedirs(psth_plot_dir)
+
+stim_vec = np.zeros(spike_list[0].shape[-1])
+stim_vec[stim_t] = 1
+
+for num, this_ind in tqdm(enumerate(taste_top_inds)):
+    #this_ind = fin_inds[0]
+    this_ind_str = '_'.join([str(x) for x in this_ind])
+    this_session_dat = spike_list[this_ind[0]]
+    this_nrn_ind = this_ind[1]
+    other_nrn_inds = np.delete(np.arange(this_session_dat.shape[2]),
+            this_nrn_ind)
+    n_coupled_neurons = len(other_nrn_inds)
+
+    design_spikes_list = []
+    pred_spikes_list = []
+    for this_taste_ind, this_taste_dat in enumerate(this_session_dat):
+        this_nrn_dat = this_taste_dat[:,this_nrn_ind]
+        other_nrn_dat = this_taste_dat[:,other_nrn_inds]
+        stim_dat = np.tile(stim_vec,(this_taste_dat.shape[0],1))
+
+        this_nrn_flat = np.concatenate(this_nrn_dat)
+        other_nrn_flat = np.concatenate(np.moveaxis(other_nrn_dat, 1, -1)).T
+        stim_flat = np.concatenate(stim_dat)
+
+        # To convert to dataframe, make sure trials are not directly
+        # concatenated as that would imply temporal continuity
+        data_frame = gt.gen_data_frame(
+                this_nrn_flat,
+                other_nrn_flat,
+                stim_flat,
+                stim_filter_len = stim_filter_len,
+                trial_start_offset = trial_start_offset,
+                )
+
+        # Bin data
+        data_frame['time_bins'] = data_frame.trial_time // bin_width
+        data_frame = data_frame.groupby(['trial_labels','time_bins']).sum()
+        data_frame['trial_time'] = data_frame['trial_time'] // bin_width
+        data_frame = data_frame.reset_index()
+
+        # Create design mat
+        actual_design_mat = gt.dataframe_to_design_mat(
+                data_frame,
+                hist_filter_len = hist_filter_len_bin,
+                stim_filter_len = stim_filter_len_bin,
+                coupling_filter_len = coupling_filter_len_bin,
+                basis_kwargs = basis_kwargs,
+                )
+
+        # Cut to trial_lims
+        # Note, this needs to be done after design matrix is created
+        # so that overlap of history between trials is avoided
+        trial_lims_vec = np.arange(*trial_lims)
+        actual_design_mat = actual_design_mat.loc[actual_design_mat.trial_time.isin(trial_lims_vec)]
+
+        #plt.imshow(actual_design_mat.iloc[:,:-2].values, aspect = 'auto')
+        #plt.show()
+
+        fit_list = []
+        for i in trange(n_max_tries):
+            if len(fit_list) < n_fits:
+                try:
+                    res, _ = gt.gen_actual_fit(
+                            data_frame, # Not used if design_mat is provided
+                            hist_filter_len = hist_filter_len_bin,
+                            stim_filter_len = stim_filter_len_bin,
+                            coupling_filter_len = coupling_filter_len_bin,
+                            basis_kwargs = basis_kwargs,
+                            actual_design_mat = actual_design_mat,
+                            )
+                    fit_list.append(res)
+                except:
+                    print('Failed fit')
+            else:
+                print('Finished fitting')
+                break
+
+        if len(fit_list) > 0:
+            ll_names = ['actual','trial_sh','circ_sh','rand_sh']
+            ll_outs = [gt.calc_loglikelihood(actual_design_mat, res) for res in tqdm(fit_list)]
+            ll_frame = pd.DataFrame(ll_outs, columns=ll_names)
+
+            # Grab best fit
+            best_fit_ind = ll_frame.actual.idxmax()
+            best_fit = fit_list[best_fit_ind]
+
+            # PSTH
+            time_bins = actual_design_mat.trial_time.unique()
+            design_trials = list(actual_design_mat.groupby('trial_labels'))
+            design_spikes = [x.sort_values('trial_time').spikes.values for _,x in design_trials]
+            design_spikes_array = np.stack(design_spikes)
+            design_spikes_list.append(design_spikes_array)
+
+            # Predicted PSTH
+            pred_spikes = pd.DataFrame(best_fit.predict(actual_design_mat), columns = ['spikes'])
+            # Cutoff at 1
+            pred_spikes.loc[pred_spikes.spikes > bin_width, 'spikes'] = bin_width
+            pred_spikes['trial_labels'] = actual_design_mat.trial_labels
+            pred_spikes['trial_time'] = actual_design_mat.trial_time
+            pred_trials = list(pred_spikes.groupby('trial_labels'))
+            pred_spikes = [x.sort_values('trial_time').spikes.values for _,x in pred_trials]
+            pred_spikes_array = np.stack(pred_spikes)
+            pred_spikes_list.append(pred_spikes_array)
+
+    design_spikes_stack = np.stack(design_spikes_list)
+    pred_spikes_stack = np.stack(pred_spikes_list)
+
+    mean_design_spikes = design_spikes_stack.mean(axis=1)
+    mean_pred_spikes = pred_spikes_stack.mean(axis=1)
+
+    # Smoothen
+    kern_len = 20
+    kern = np.ones(kern_len) / kern_len
+
+    smooth_design_spikes = np.apply_along_axis(
+            lambda x: np.convolve(x, kern, mode = 'same'),
+            1,
+            mean_design_spikes,
+            )
+
+    smooth_pred_spikes = np.apply_along_axis(
+            lambda x: np.convolve(x, kern, mode = 'same'),
+            1,
+            mean_pred_spikes,
+            )
+
+    fig, ax = plt.subplots(1,2, sharey = True, sharex = True, figsize = (7,3))
+    ax[0].plot(time_bins, smooth_design_spikes.T,  alpha = 0.7)
+    ax[1].plot(time_bins, smooth_pred_spikes.T,  alpha = 0.7)
+    ax[0].set_title('Actual')
+    ax[1].set_title('Predicted')
+    ax[0].set_ylabel('Firing rate (Hz)')
+    ax[0].set_xlabel('Time (s)')
+    ax[1].set_xlabel('Time (s)')
+    # Set ylim to be max of real data
+    #ax[0].set_ylim([0,smooth_design_spikes.max()])
+    #ax[1].set_ylim([0,smooth_design_spikes.max()])
+    plt.tight_layout()
+    plt.subplots_adjust(top = 0.85)
+    plt.suptitle(f'Session {this_ind[0]}, Neuron {this_ind[1]}')
+    plt.savefig(os.path.join(psth_plot_dir,
+                             'psth_comp_'+ f'{num}_' + "_".join([str(x) for x in this_ind]) + '.png'),
+                dpi = 300, bbox_inches = 'tight')
+    plt.close()
+    #plt.show()
+
+############################################################
+# Process inferred filters 
 ############################################################
 alpha = 0.01
 
@@ -416,11 +580,20 @@ basis_kwargs = dict(
     basis = 'cos',
     basis_spread = 'log',
     )
-cos_basis = gt.cb.gen_raised_cosine_basis(
+cos_basis_200 = gt.cb.gen_raised_cosine_basis(
         200,
         n_basis = basis_kwargs['n_basis'],
         spread = basis_kwargs['basis_spread'],
         )
+cos_basis_500 = gt.cb.gen_raised_cosine_basis(
+        500,
+        n_basis = basis_kwargs['n_basis'],
+        spread = basis_kwargs['basis_spread'],
+        )
+
+#test_basis = gt.cb.gen_raised_cosine_basis(200, n_basis = 20, spread = 'log')
+#plt.plot(test_basis.sum(axis=0), color = 'red', linewidth = 2)
+#plt.plot(test_basis.T);plt.show()
 
 # Throw out all rows which don't have significant differences in likelihood
 # between actual and shuffled
@@ -433,6 +606,7 @@ max_vals = max_ll_frame.loc[max_inds].drop(columns = 'actual')
 
 fin_pval_frame = fin_pval_frame.merge(max_vals, on = ['fit_num',*ind_names])
 
+sig_alpha = 0.05
 ############################################################
 # Extract history filters
 hist_frame = fin_pval_frame.loc[fin_pval_frame.param.str.contains('hist')]
@@ -444,7 +618,7 @@ hist_groups = [x.sort_values('lag') for x in hist_groups]
 hist_val_array = np.stack([x['values'].values for x in hist_groups])
 hist_pval_array = np.stack([x['p_val'].values for x in hist_groups])
 
-sig_hist_filters = np.where((hist_pval_array < 0.05).sum(axis=1))[0]
+sig_hist_filters = np.where((hist_pval_array < sig_alpha).sum(axis=1))[0]
 frac_sig_hist_filters = np.round(len(sig_hist_filters) / len(hist_pval_array), 2)
 print(f'Fraction of significant history filters: {frac_sig_hist_filters}')
 
@@ -453,7 +627,7 @@ kmeans = KMeans(n_clusters = 4, random_state = 0).fit(hist_val_array)
 hist_val_array = hist_val_array[kmeans.labels_.argsort()]
 
 # Reconstruct hist filters
-hist_recon = np.dot(hist_val_array, cos_basis)
+hist_recon = np.dot(hist_val_array, cos_basis_200)
 
 # Plot
 plt.imshow(hist_val_array, aspect = 'auto', interpolation = 'none')
@@ -461,12 +635,122 @@ plt.colorbar()
 plt.show()
 
 # plot principle components
-pca = PCA(n_components = 4)
+pca = PCA(n_components = 5)
 pca.fit(hist_recon.T)
 pca_array = pca.transform(hist_recon.T)
 
-plt.plot(pca_array)
+fig, ax = plt.subplots(2,1, sharex=True)
+for i, dat in enumerate(pca_array.T):
+    ax[0].plot(dat, label = f'PC {i}, {np.round(pca.explained_variance_ratio_[i],2)}', 
+               linewidth = 5, alpha = 0.7)
+ax[0].legend()
+ax[0].set_ylabel('PC Magnitude')
+ax[1].imshow(pca_array.T, aspect = 'auto', interpolation = 'none')
+ax[1].set_ylabel('PC #')
+ax[1].set_xlabel('Time (ms)')
+fig.suptitle(f'PCA of history filters, \n Total variance explained: {np.round(pca.explained_variance_ratio_.sum(),2)}')
+fig.savefig(os.path.join(plot_dir, 'hist_filter_pca.png'), dpi = 300, bbox_inches = 'tight')
+plt.close(fig)
+#plt.show()
+
+# Plot each filter in it's own subplot
+plot_cutoff = 50
+fig, ax = plt.subplots(len(pca_array.T), 1, sharex=True, sharey=True,
+                       figsize = (3,10))
+peak_markers = [3,6,11,19]
+for i, (this_dat, this_ax) in enumerate(zip(pca_array.T[:,:plot_cutoff], ax)):
+    this_ax.plot(this_dat)
+    this_ax.set_ylabel(f'PC {i} : {np.round(pca.explained_variance_ratio_[i],2)}')
+    for this_peak in peak_markers:
+        this_ax.axvline(this_peak, linestyle = '--', color = 'k', alpha = 0.5)
+ax[-1].set_xlabel('Time (ms)')
+pca_str = f'Total variance explained: {np.round(pca.explained_variance_ratio_.sum(),2)}'
+marker_str = f'Peak markers: {peak_markers} ms'
+fig.suptitle(f'PCA of history filters (zoomed) \n' + pca_str + '\n' + marker_str)
+fig.savefig(os.path.join(plot_dir, 'hist_filter_pca2_zoom.png'), dpi = 300, bbox_inches = 'tight')
+plt.close(fig)
+
+
+############################################################
+############################################################
+# Extract stimulus filters
+stim_frame = fin_pval_frame.loc[fin_pval_frame.param.str.contains('stim')]
+#stim_frame.drop(columns = ['trial_sh','circ_sh','rand_sh'], inplace = True)
+stim_frame = stim_frame[['fit_num','param','p_val','values', *ind_names]]
+stim_frame['lag'] = stim_frame.param.str.extract('(\d+)').astype(int)
+stim_groups = [x[1] for x in list(stim_frame.groupby(ind_names))]
+stim_groups = [x.sort_values('lag') for x in stim_groups]
+stim_val_array = np.stack([x['values'].values for x in stim_groups])
+stim_pval_array = np.stack([x['p_val'].values for x in stim_groups])
+
+sig_stim_filters = np.where((stim_pval_array < sig_alpha).sum(axis=1))[0]
+frac_sig_stim_filters = np.round(len(sig_stim_filters) / len(stim_pval_array), 2)
+print(f'Fraction of significant stimory filters: {frac_sig_stim_filters}')
+
+
+# Reconstruct stim filters
+stim_recon = np.dot(stim_val_array, cos_basis_500)
+zscore_stim_recon = zscore(stim_recon,axis=-1)
+
+# Cluster using Kmeans
+kmeans = KMeans(n_clusters = 4, random_state = 0).fit(zscore_stim_recon)
+zscore_stim_recon = zscore_stim_recon[kmeans.labels_.argsort()]
+stim_recon = stim_recon[kmeans.labels_.argsort()]
+
+# Plot
+fig, ax = plt.subplots(1,2)
+ax[0].imshow(stim_recon, aspect = 'auto', interpolation = 'none')
+ax[1].imshow(zscore_stim_recon, aspect = 'auto', interpolation = 'none')
+plt.colorbar()
 plt.show()
+
+# plot principle components
+pca = PCA(n_components = 5)
+pca.fit(stim_recon.T)
+pca_array = pca.transform(stim_recon.T)
+
+fig, ax = plt.subplots(2,1, sharex=True)
+for i, dat in enumerate(pca_array.T):
+    ax[0].plot(dat, label = f'PC {i}, {np.round(pca.explained_variance_ratio_[i],2)}', 
+               linewidth = 2, alpha = 0.7)
+ax[0].legend()
+ax[0].set_ylabel('PC Magnitude')
+ax[1].imshow(pca_array.T, aspect = 'auto', interpolation = 'none')
+ax[1].set_ylabel('PC #')
+ax[1].set_xlabel('Time (ms)')
+fig.suptitle(f'PCA of stimulus filters, \n Total variance explained: {np.round(pca.explained_variance_ratio_.sum(),2)}')
+fig.savefig(os.path.join(plot_dir, 'stim_filter_pca.png'), dpi = 300, bbox_inches = 'tight')
+plt.close(fig)
+#plt.show()
+
+# Plot each filter in it's own subplot
+fig, ax = plt.subplots(len(pca_array.T), 1, sharex=True, sharey=True,
+                       figsize = (3,10))
+for i, (this_dat, this_ax) in enumerate(zip(pca_array.T, ax)):
+    this_ax.plot(this_dat)
+    this_ax.set_ylabel(f'PC {i} : {np.round(pca.explained_variance_ratio_[i],2)}')
+ax[-1].set_xlabel('Time (ms)')
+fig.suptitle(f'PCA of stimulus filters, \n Total variance explained: {np.round(pca.explained_variance_ratio_.sum(),2)}')
+fig.savefig(os.path.join(plot_dir, 'stim_filter_pca2.png'), dpi = 300, bbox_inches = 'tight')
+plt.close(fig)
+
+# Plot each filter in it's own subplot
+plot_cutoff = 50
+fig, ax = plt.subplots(len(pca_array.T), 1, sharex=True, sharey=True,
+                       figsize = (3,10))
+peak_markers = [2,4,8,16]
+for i, (this_dat, this_ax) in enumerate(zip(pca_array.T[:,:plot_cutoff], ax)):
+    this_ax.plot(this_dat)
+    this_ax.set_ylabel(f'PC {i} : {np.round(pca.explained_variance_ratio_[i],2)}')
+    for this_peak in peak_markers:
+        this_ax.axvline(this_peak, linestyle = '--', color = 'k', alpha = 0.5)
+ax[-1].set_xlabel('Time (ms)')
+pca_str = f'Total variance explained: {np.round(pca.explained_variance_ratio_.sum(),2)}'
+marker_str = f'Peak markers: {peak_markers} ms'
+fig.suptitle(f'PCA of Stim filters (zoomed) \n' + pca_str + '\n' + marker_str)
+fig.savefig(os.path.join(plot_dir, 'stim_filter_pca2_zoom.png'), dpi = 300, bbox_inches = 'tight')
+plt.close(fig)
+
 ############################################################
 
 # Extract coupling filters
@@ -502,6 +786,62 @@ coupling_pivoted_raw_inds = [np.where((x < alpha).sum(axis=1))[0] \
         for x in coupling_pivoted_pvals]
 coupling_pivoted_frame_index = [x.index.values for x in coupling_pivoted_vals]
 coupling_pivoted_sig_inds = [y[x] for x,y in zip(coupling_pivoted_raw_inds, coupling_pivoted_frame_index)]
+
+########################################
+# Coupling filter profiles
+coupling_val_array = np.concatenate(coupling_pivoted_vals, axis = 0)
+
+# Reconstruct coupling filters
+coupling_recon = np.dot(coupling_val_array, cos_basis_200)
+
+# plot principle components
+pca = PCA(n_components = 5)
+pca.fit(coupling_recon.T)
+pca_array = pca.transform(coupling_recon.T)
+
+fig, ax = plt.subplots(2,1, sharex=True)
+for i, dat in enumerate(pca_array.T):
+    ax[0].plot(dat, label = f'PC {i}, {np.round(pca.explained_variance_ratio_[i],2)}', 
+               linewidth = 2, alpha = 0.7)
+ax[0].legend()
+ax[0].set_ylabel('PC Magnitude')
+ax[1].imshow(pca_array.T, aspect = 'auto', interpolation = 'none')
+ax[1].set_ylabel('PC #')
+ax[1].set_xlabel('Time (ms)')
+fig.suptitle(f'PCA of coupling filters, \n Total variance explained: {np.round(pca.explained_variance_ratio_.sum(),2)}')
+fig.savefig(os.path.join(plot_dir, 'coupling_filter_pca.png'), dpi = 300, bbox_inches = 'tight')
+plt.close(fig)
+#plt.show()
+
+# Plot each filter in it's own subplot
+fig, ax = plt.subplots(len(pca_array.T), 1, sharex=True, sharey=True,
+                       figsize = (3,10))
+for i, (this_dat, this_ax) in enumerate(zip(pca_array.T, ax)):
+    this_ax.plot(this_dat)
+    this_ax.set_ylabel(f'PC {i} : {np.round(pca.explained_variance_ratio_[i],2)}')
+ax[-1].set_xlabel('Time (ms)')
+fig.suptitle(f'PCA of coupling filters, \n Total variance explained: {np.round(pca.explained_variance_ratio_.sum(),2)}')
+fig.savefig(os.path.join(plot_dir, 'coupling_filter_pca2.png'), dpi = 300, bbox_inches = 'tight')
+plt.close(fig)
+
+# Plot each filter in it's own subplot
+plot_cutoff = 50
+fig, ax = plt.subplots(len(pca_array.T), 1, sharex=True, sharey=True,
+                       figsize = (3,10))
+peak_markers = [6,11,19]
+for i, (this_dat, this_ax) in enumerate(zip(pca_array.T[:,:plot_cutoff], ax)):
+    this_ax.plot(this_dat)
+    this_ax.set_ylabel(f'PC {i} : {np.round(pca.explained_variance_ratio_[i],2)}')
+    for this_peak in peak_markers:
+        this_ax.axvline(this_peak, linestyle = '--', color = 'k', alpha = 0.5)
+ax[-1].set_xlabel('Time (ms)')
+pca_str = f'Total variance explained: {np.round(pca.explained_variance_ratio_.sum(),2)}'
+marker_str = f'Peak markers: {peak_markers} ms'
+fig.suptitle(f'PCA of coupling filters (zoomed) \n' + pca_str + '\n' + marker_str)
+fig.savefig(os.path.join(plot_dir, 'coupling_filter_pca2_zoom.png'), dpi = 300, bbox_inches = 'tight')
+plt.close(fig)
+
+########################################
 
 # Total filters
 total_filters = [x.shape[0] for x in coupling_pivoted_vals]
@@ -555,7 +895,7 @@ count_per_input.drop(columns = ['region_y'], inplace = True)
 
 count_per_input['input_fraction'] = count_per_input.input_neuron / count_per_input.region_total 
 
-sns.swarmplot(data = count_per_input, x = 'region', y = 'input_fraction', hue = 'input_region',
+sns.violinplot(data = count_per_input, x = 'region', y = 'input_fraction', hue = 'input_region',
               dodge=True)
 plt.show()
 
