@@ -16,6 +16,7 @@ from tqdm import tqdm, trange
 from itertools import product
 from joblib import Parallel, delayed, cpu_count
 from glob import glob
+import json
 
 os.environ["OMP_NUM_THREADS"] = "1" # export OMP_NUM_THREADS=4
 os.environ["MKL_NUM_THREADS"] = "1" # export MKL_NUM_THREADS=6
@@ -32,26 +33,36 @@ def gen_spike_train(spike_inds):
     spike_train = np.zeros(spike_inds.max(axis=1)+1)
     spike_train[tuple(spike_inds)] = 1
     return spike_train
+
+# Check if previous runs present
+run_list = glob(os.path.join(save_path, 'run*'))
+print(f'Present runs : {run_list}')
+input_run_ind = int(input('Please specify current run (integer) :'))
+fin_save_path = os.path.join(save_path, f'run_{input_run_ind}')
+
+if not os.path.exists(fin_save_path):
+    os.makedirs(fin_save_path)
+
 ############################################################
 # Parameters
 hist_filter_len = 200
 stim_filter_len = 500
 coupling_filter_len = 200
 
-trial_start_offset = -2000
-trial_lims = np.array([1000,4000])
-stim_t = 2000
-
 bin_width = 10
-
 # Reprocess filter lens
 hist_filter_len_bin = hist_filter_len // bin_width
 stim_filter_len_bin = stim_filter_len // bin_width
 coupling_filter_len_bin = coupling_filter_len // bin_width
 
+trial_start_offset = -2000
+trial_lims = np.array([1000,4000])
+stim_t = 2000
+
+
 # Define basis kwargs
 basis_kwargs = dict(
-    n_basis = 10,
+    n_basis = 20,
     basis = 'cos',
     basis_spread = 'log',
     )
@@ -61,6 +72,28 @@ n_fits = 10
 n_max_tries = 20
 # Number of shuffles tested against each fit
 n_shuffles_per_fit = 50
+
+# Save run parameters
+params_dict = dict(
+        hist_filter_len = hist_filter_len,
+        stim_filter_len = stim_filter_len,
+        coupling_filter_len = coupling_filter_len,
+        bin_width = bin_width,
+        hist_filter_len_bin = hist_filter_len_bin,
+        stim_filter_len_bin = stim_filter_len_bin,
+        coupling_filter_len_bin = coupling_filter_len_bin,
+        trial_start_offset = trial_start_offset,
+        trial_lims = list(trial_lims),
+        stim_t = stim_t,
+        basis_kwargs = basis_kwargs,
+        n_fits = n_fits,
+        n_max_tries = n_max_tries,
+        n_shuffles_per_fit = n_shuffles_per_fit,
+        )
+
+params_save_path = os.path.join(fin_save_path, 'fit_params.json')
+with open(params_save_path, 'w') as outf:
+    json.dump(params_dict, outf, indent = 4, default = int)
 
 ############################################################
 
@@ -160,9 +193,9 @@ def process_ind(ind_num, this_ind):
     #this_ind = fin_inds[0]
     this_ind_str = '_'.join([str(x) for x in this_ind])
     pval_save_name = f'{this_ind_str}_p_val_frame.csv'
-    pval_save_path = os.path.join(save_path,pval_save_name)
+    pval_save_path = os.path.join(fin_save_path,pval_save_name)
     ll_save_name = f'{this_ind_str}_ll_frame.csv'
-    ll_save_path = os.path.join(save_path,ll_save_name)
+    ll_save_path = os.path.join(fin_save_path,ll_save_name)
 
     if os.path.exists(pval_save_path) and os.path.exists(ll_save_path):
         print(f'Already processed {this_ind_str}')
