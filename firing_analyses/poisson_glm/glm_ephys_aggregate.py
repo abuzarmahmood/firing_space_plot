@@ -25,6 +25,7 @@ from scipy.stats import zscore
 from sklearn.cluster import KMeans
 from sklearn.decomposition import PCA
 import seaborn as sns
+import pingouin as pg
 
 save_path = '/media/bigdata/firing_space_plot/firing_analyses/poisson_glm/artifacts'
 plot_dir=  '/media/bigdata/firing_space_plot/firing_analyses/poisson_glm/plots'
@@ -283,163 +284,23 @@ basis_kwargs = dict(
 n_fits = 1
 n_max_tries = 20
 ############################################################
-stim_vec = np.zeros(spike_list[0].shape[-1])
-stim_vec[stim_t] = 1
+make_example_plots = False
 
-for num, this_ind in tqdm(enumerate(top_inds)):
-    #this_ind = fin_inds[0]
-    this_ind_str = '_'.join([str(x) for x in this_ind])
-    this_session_dat = spike_list[this_ind[0]]
-    this_taste_dat = this_session_dat[this_ind[1]]
-    this_nrn_ind = this_ind[2]
-    other_nrn_inds = np.delete(np.arange(this_session_dat.shape[2]),
-            this_nrn_ind)
-    n_coupled_neurons = len(other_nrn_inds)
-
-    this_nrn_dat = this_taste_dat[:,this_nrn_ind]
-    other_nrn_dat = this_taste_dat[:,other_nrn_inds]
-    stim_dat = np.tile(stim_vec,(this_taste_dat.shape[0],1))
-
-    this_nrn_flat = np.concatenate(this_nrn_dat)
-    other_nrn_flat = np.concatenate(np.moveaxis(other_nrn_dat, 1, -1)).T
-    stim_flat = np.concatenate(stim_dat)
-
-    # To convert to dataframe, make sure trials are not directly
-    # concatenated as that would imply temporal continuity
-    data_frame = gt.gen_data_frame(
-            this_nrn_flat,
-            other_nrn_flat,
-            stim_flat,
-            stim_filter_len = stim_filter_len,
-            trial_start_offset = trial_start_offset,
-            )
-
-    # Bin data
-    data_frame['time_bins'] = data_frame.trial_time // bin_width
-    data_frame = data_frame.groupby(['trial_labels','time_bins']).sum()
-    data_frame['trial_time'] = data_frame['trial_time'] // bin_width
-    data_frame = data_frame.reset_index()
-
-    # Create design mat
-    actual_design_mat = gt.dataframe_to_design_mat(
-            data_frame,
-            hist_filter_len = hist_filter_len_bin,
-            stim_filter_len = stim_filter_len_bin,
-            coupling_filter_len = coupling_filter_len_bin,
-            basis_kwargs = basis_kwargs,
-            )
-
-
-    # Cut to trial_lims
-    # Note, this needs to be done after design matrix is created
-    # so that overlap of history between trials is avoided
-    trial_lims_vec = np.arange(*trial_lims)
-    actual_design_mat = actual_design_mat.loc[actual_design_mat.trial_time.isin(trial_lims_vec)]
-
-    #plt.imshow(actual_design_mat.iloc[:,:-2].values, aspect = 'auto')
-    #plt.show()
-
-    fit_list = []
-    for i in trange(n_max_tries):
-        if len(fit_list) < n_fits:
-            try:
-                res, _ = gt.gen_actual_fit(
-                        data_frame, # Not used if design_mat is provided
-                        hist_filter_len = hist_filter_len_bin,
-                        stim_filter_len = stim_filter_len_bin,
-                        coupling_filter_len = coupling_filter_len_bin,
-                        basis_kwargs = basis_kwargs,
-                        actual_design_mat = actual_design_mat,
-                        )
-                fit_list.append(res)
-            except:
-                print('Failed fit')
-        else:
-            print('Finished fitting')
-            break
-
-    ll_names = ['actual','trial_sh','circ_sh','rand_sh']
-    ll_outs = [gt.calc_loglikelihood(actual_design_mat, res) for res in tqdm(fit_list)]
-    ll_frame = pd.DataFrame(ll_outs, columns=ll_names)
-
-    # Grab best fit
-    best_fit_ind = ll_frame.actual.idxmax()
-    best_fit = fit_list[best_fit_ind]
-
-    # PSTH
-    time_bins = actual_design_mat.trial_time.unique()
-    design_trials = list(actual_design_mat.groupby('trial_labels'))
-    design_spikes = [x.sort_values('trial_time').spikes.values for _,x in design_trials]
-    design_spikes_array = np.stack(design_spikes)
-
-    # Predicted PSTH
-    pred_spikes = pd.DataFrame(best_fit.predict(actual_design_mat), columns = ['spikes'])
-    pred_spikes['trial_labels'] = actual_design_mat.trial_labels
-    pred_spikes['trial_time'] = actual_design_mat.trial_time
-    pred_trials = list(pred_spikes.groupby('trial_labels'))
-    pred_spikes = [x.sort_values('trial_time').spikes.values for _,x in pred_trials]
-    pred_spikes_array = np.stack(pred_spikes)
-
-
-    # Smoothen
-    kern_len = 20
-    kern = np.ones(kern_len) / kern_len
-
-    smooth_design_spikes = np.apply_along_axis(
-            lambda x: np.convolve(x, kern, mode = 'same'),
-            1,
-            design_spikes_array,
-            )
-
-    smooth_pred_spikes = np.apply_along_axis(
-            lambda x: np.convolve(x, kern, mode = 'same'),
-            1,
-            pred_spikes_array,
-            )
-
-    fig, ax = plt.subplots(1,2, sharey = True, sharex = True, figsize = (7,3))
-    ax[0].plot(time_bins, smooth_design_spikes.T, color = 'k', alpha = 0.3)
-    ax[0].plot(time_bins, smooth_design_spikes.mean(0), color = 'r', linewidth = 2)
-    ax[1].plot(time_bins, smooth_pred_spikes.T, color = 'k', alpha = 0.3)
-    ax[1].plot(time_bins, smooth_pred_spikes.mean(0), color = 'r', linewidth = 2)
-    ax[0].set_title('Actual')
-    ax[1].set_title('Predicted')
-    ax[0].set_ylabel('Firing rate (Hz)')
-    ax[0].set_xlabel('Time (s)')
-    ax[1].set_xlabel('Time (s)')
-    # Set ylim to be max of real data
-    ax[0].set_ylim([0,smooth_design_spikes.max()])
-    ax[1].set_ylim([0,smooth_design_spikes.max()])
-    plt.tight_layout()
-    plt.subplots_adjust(top = 0.85)
-    plt.suptitle(f'Session {this_ind[0]}, Neuron {this_ind[2]}, Taste {this_ind[1]}')
-    plt.savefig(os.path.join(plot_dir, 'example_nrns',
-                             'psth_comp_'+ f'{num}_' + "_".join([str(x) for x in this_ind]) + '.png'),
-                dpi = 300, bbox_inches = 'tight')
-    plt.close()
-    #plt.show()
-
-############################################################
-# Generate PSTHs for all tastes
-psth_plot_dir = os.path.join(plot_dir, 'example_psths')
-if not os.path.exists(psth_plot_dir):
-    os.makedirs(psth_plot_dir)
 
 stim_vec = np.zeros(spike_list[0].shape[-1])
 stim_vec[stim_t] = 1
 
-for num, this_ind in tqdm(enumerate(taste_top_inds)):
-    #this_ind = fin_inds[0]
-    this_ind_str = '_'.join([str(x) for x in this_ind])
-    this_session_dat = spike_list[this_ind[0]]
-    this_nrn_ind = this_ind[1]
-    other_nrn_inds = np.delete(np.arange(this_session_dat.shape[2]),
-            this_nrn_ind)
-    n_coupled_neurons = len(other_nrn_inds)
+if make_example_plots:
+    for num, this_ind in tqdm(enumerate(top_inds)):
+        #this_ind = fin_inds[0]
+        this_ind_str = '_'.join([str(x) for x in this_ind])
+        this_session_dat = spike_list[this_ind[0]]
+        this_taste_dat = this_session_dat[this_ind[1]]
+        this_nrn_ind = this_ind[2]
+        other_nrn_inds = np.delete(np.arange(this_session_dat.shape[2]),
+                this_nrn_ind)
+        n_coupled_neurons = len(other_nrn_inds)
 
-    design_spikes_list = []
-    pred_spikes_list = []
-    for this_taste_ind, this_taste_dat in enumerate(this_session_dat):
         this_nrn_dat = this_taste_dat[:,this_nrn_ind]
         other_nrn_dat = this_taste_dat[:,other_nrn_inds]
         stim_dat = np.tile(stim_vec,(this_taste_dat.shape[0],1))
@@ -473,6 +334,7 @@ for num, this_ind in tqdm(enumerate(taste_top_inds)):
                 basis_kwargs = basis_kwargs,
                 )
 
+
         # Cut to trial_lims
         # Note, this needs to be done after design matrix is created
         # so that overlap of history between trials is avoided
@@ -501,74 +363,218 @@ for num, this_ind in tqdm(enumerate(taste_top_inds)):
                 print('Finished fitting')
                 break
 
-        if len(fit_list) > 0:
-            ll_names = ['actual','trial_sh','circ_sh','rand_sh']
-            ll_outs = [gt.calc_loglikelihood(actual_design_mat, res) for res in tqdm(fit_list)]
-            ll_frame = pd.DataFrame(ll_outs, columns=ll_names)
+        ll_names = ['actual','trial_sh','circ_sh','rand_sh']
+        ll_outs = [gt.calc_loglikelihood(actual_design_mat, res) for res in tqdm(fit_list)]
+        ll_frame = pd.DataFrame(ll_outs, columns=ll_names)
 
-            # Grab best fit
-            best_fit_ind = ll_frame.actual.idxmax()
-            best_fit = fit_list[best_fit_ind]
+        # Grab best fit
+        best_fit_ind = ll_frame.actual.idxmax()
+        best_fit = fit_list[best_fit_ind]
 
-            # PSTH
-            time_bins = actual_design_mat.trial_time.unique()
-            design_trials = list(actual_design_mat.groupby('trial_labels'))
-            design_spikes = [x.sort_values('trial_time').spikes.values for _,x in design_trials]
-            design_spikes_array = np.stack(design_spikes)
-            design_spikes_list.append(design_spikes_array)
+        # PSTH
+        time_bins = actual_design_mat.trial_time.unique()
+        design_trials = list(actual_design_mat.groupby('trial_labels'))
+        design_spikes = [x.sort_values('trial_time').spikes.values for _,x in design_trials]
+        design_spikes_array = np.stack(design_spikes)
 
-            # Predicted PSTH
-            pred_spikes = pd.DataFrame(best_fit.predict(actual_design_mat), columns = ['spikes'])
-            # Cutoff at 1
-            pred_spikes.loc[pred_spikes.spikes > bin_width, 'spikes'] = bin_width
-            pred_spikes['trial_labels'] = actual_design_mat.trial_labels
-            pred_spikes['trial_time'] = actual_design_mat.trial_time
-            pred_trials = list(pred_spikes.groupby('trial_labels'))
-            pred_spikes = [x.sort_values('trial_time').spikes.values for _,x in pred_trials]
-            pred_spikes_array = np.stack(pred_spikes)
-            pred_spikes_list.append(pred_spikes_array)
+        # Predicted PSTH
+        pred_spikes = pd.DataFrame(best_fit.predict(actual_design_mat), columns = ['spikes'])
+        pred_spikes['trial_labels'] = actual_design_mat.trial_labels
+        pred_spikes['trial_time'] = actual_design_mat.trial_time
+        pred_trials = list(pred_spikes.groupby('trial_labels'))
+        pred_spikes = [x.sort_values('trial_time').spikes.values for _,x in pred_trials]
+        pred_spikes_array = np.stack(pred_spikes)
 
-    design_spikes_stack = np.stack(design_spikes_list)
-    pred_spikes_stack = np.stack(pred_spikes_list)
 
-    mean_design_spikes = design_spikes_stack.mean(axis=1)
-    mean_pred_spikes = pred_spikes_stack.mean(axis=1)
+        # Smoothen
+        kern_len = 20
+        kern = np.ones(kern_len) / kern_len
 
-    # Smoothen
-    kern_len = 20
-    kern = np.ones(kern_len) / kern_len
+        smooth_design_spikes = np.apply_along_axis(
+                lambda x: np.convolve(x, kern, mode = 'same'),
+                1,
+                design_spikes_array,
+                )
 
-    smooth_design_spikes = np.apply_along_axis(
-            lambda x: np.convolve(x, kern, mode = 'same'),
-            1,
-            mean_design_spikes,
-            )
+        smooth_pred_spikes = np.apply_along_axis(
+                lambda x: np.convolve(x, kern, mode = 'same'),
+                1,
+                pred_spikes_array,
+                )
 
-    smooth_pred_spikes = np.apply_along_axis(
-            lambda x: np.convolve(x, kern, mode = 'same'),
-            1,
-            mean_pred_spikes,
-            )
+        fig, ax = plt.subplots(1,2, sharey = True, sharex = True, figsize = (7,3))
+        ax[0].plot(time_bins, smooth_design_spikes.T, color = 'k', alpha = 0.3)
+        ax[0].plot(time_bins, smooth_design_spikes.mean(0), color = 'r', linewidth = 2)
+        ax[1].plot(time_bins, smooth_pred_spikes.T, color = 'k', alpha = 0.3)
+        ax[1].plot(time_bins, smooth_pred_spikes.mean(0), color = 'r', linewidth = 2)
+        ax[0].set_title('Actual')
+        ax[1].set_title('Predicted')
+        ax[0].set_ylabel('Firing rate (Hz)')
+        ax[0].set_xlabel('Time (s)')
+        ax[1].set_xlabel('Time (s)')
+        # Set ylim to be max of real data
+        ax[0].set_ylim([0,smooth_design_spikes.max()])
+        ax[1].set_ylim([0,smooth_design_spikes.max()])
+        plt.tight_layout()
+        plt.subplots_adjust(top = 0.85)
+        plt.suptitle(f'Session {this_ind[0]}, Neuron {this_ind[2]}, Taste {this_ind[1]}')
+        plt.savefig(os.path.join(plot_dir, 'example_nrns',
+                                 'psth_comp_'+ f'{num}_' + "_".join([str(x) for x in this_ind]) + '.png'),
+                    dpi = 300, bbox_inches = 'tight')
+        plt.close()
+        #plt.show()
 
-    fig, ax = plt.subplots(1,2, sharey = True, sharex = True, figsize = (7,3))
-    ax[0].plot(time_bins, smooth_design_spikes.T,  alpha = 0.7)
-    ax[1].plot(time_bins, smooth_pred_spikes.T,  alpha = 0.7)
-    ax[0].set_title('Actual')
-    ax[1].set_title('Predicted')
-    ax[0].set_ylabel('Firing rate (Hz)')
-    ax[0].set_xlabel('Time (s)')
-    ax[1].set_xlabel('Time (s)')
-    # Set ylim to be max of real data
-    #ax[0].set_ylim([0,smooth_design_spikes.max()])
-    #ax[1].set_ylim([0,smooth_design_spikes.max()])
-    plt.tight_layout()
-    plt.subplots_adjust(top = 0.85)
-    plt.suptitle(f'Session {this_ind[0]}, Neuron {this_ind[1]}')
-    plt.savefig(os.path.join(psth_plot_dir,
-                             'psth_comp_'+ f'{num}_' + "_".join([str(x) for x in this_ind]) + '.png'),
-                dpi = 300, bbox_inches = 'tight')
-    plt.close()
-    #plt.show()
+############################################################
+# Generate PSTHs for all tastes
+psth_plot_dir = os.path.join(plot_dir, 'example_psths')
+if not os.path.exists(psth_plot_dir):
+    os.makedirs(psth_plot_dir)
+
+stim_vec = np.zeros(spike_list[0].shape[-1])
+stim_vec[stim_t] = 1
+
+if make_example_plots:
+    for num, this_ind in tqdm(enumerate(taste_top_inds)):
+        #this_ind = fin_inds[0]
+        this_ind_str = '_'.join([str(x) for x in this_ind])
+        this_session_dat = spike_list[this_ind[0]]
+        this_nrn_ind = this_ind[1]
+        other_nrn_inds = np.delete(np.arange(this_session_dat.shape[2]),
+                this_nrn_ind)
+        n_coupled_neurons = len(other_nrn_inds)
+
+        design_spikes_list = []
+        pred_spikes_list = []
+        for this_taste_ind, this_taste_dat in enumerate(this_session_dat):
+            this_nrn_dat = this_taste_dat[:,this_nrn_ind]
+            other_nrn_dat = this_taste_dat[:,other_nrn_inds]
+            stim_dat = np.tile(stim_vec,(this_taste_dat.shape[0],1))
+
+            this_nrn_flat = np.concatenate(this_nrn_dat)
+            other_nrn_flat = np.concatenate(np.moveaxis(other_nrn_dat, 1, -1)).T
+            stim_flat = np.concatenate(stim_dat)
+
+            # To convert to dataframe, make sure trials are not directly
+            # concatenated as that would imply temporal continuity
+            data_frame = gt.gen_data_frame(
+                    this_nrn_flat,
+                    other_nrn_flat,
+                    stim_flat,
+                    stim_filter_len = stim_filter_len,
+                    trial_start_offset = trial_start_offset,
+                    )
+
+            # Bin data
+            data_frame['time_bins'] = data_frame.trial_time // bin_width
+            data_frame = data_frame.groupby(['trial_labels','time_bins']).sum()
+            data_frame['trial_time'] = data_frame['trial_time'] // bin_width
+            data_frame = data_frame.reset_index()
+
+            # Create design mat
+            actual_design_mat = gt.dataframe_to_design_mat(
+                    data_frame,
+                    hist_filter_len = hist_filter_len_bin,
+                    stim_filter_len = stim_filter_len_bin,
+                    coupling_filter_len = coupling_filter_len_bin,
+                    basis_kwargs = basis_kwargs,
+                    )
+
+            # Cut to trial_lims
+            # Note, this needs to be done after design matrix is created
+            # so that overlap of history between trials is avoided
+            trial_lims_vec = np.arange(*trial_lims)
+            actual_design_mat = actual_design_mat.loc[actual_design_mat.trial_time.isin(trial_lims_vec)]
+
+            #plt.imshow(actual_design_mat.iloc[:,:-2].values, aspect = 'auto')
+            #plt.show()
+
+            fit_list = []
+            for i in trange(n_max_tries):
+                if len(fit_list) < n_fits:
+                    try:
+                        res, _ = gt.gen_actual_fit(
+                                data_frame, # Not used if design_mat is provided
+                                hist_filter_len = hist_filter_len_bin,
+                                stim_filter_len = stim_filter_len_bin,
+                                coupling_filter_len = coupling_filter_len_bin,
+                                basis_kwargs = basis_kwargs,
+                                actual_design_mat = actual_design_mat,
+                                )
+                        fit_list.append(res)
+                    except:
+                        print('Failed fit')
+                else:
+                    print('Finished fitting')
+                    break
+
+            if len(fit_list) > 0:
+                ll_names = ['actual','trial_sh','circ_sh','rand_sh']
+                ll_outs = [gt.calc_loglikelihood(actual_design_mat, res) for res in tqdm(fit_list)]
+                ll_frame = pd.DataFrame(ll_outs, columns=ll_names)
+
+                # Grab best fit
+                best_fit_ind = ll_frame.actual.idxmax()
+                best_fit = fit_list[best_fit_ind]
+
+                # PSTH
+                time_bins = actual_design_mat.trial_time.unique()
+                design_trials = list(actual_design_mat.groupby('trial_labels'))
+                design_spikes = [x.sort_values('trial_time').spikes.values for _,x in design_trials]
+                design_spikes_array = np.stack(design_spikes)
+                design_spikes_list.append(design_spikes_array)
+
+                # Predicted PSTH
+                pred_spikes = pd.DataFrame(best_fit.predict(actual_design_mat), columns = ['spikes'])
+                # Cutoff at 1
+                pred_spikes.loc[pred_spikes.spikes > bin_width, 'spikes'] = bin_width
+                pred_spikes['trial_labels'] = actual_design_mat.trial_labels
+                pred_spikes['trial_time'] = actual_design_mat.trial_time
+                pred_trials = list(pred_spikes.groupby('trial_labels'))
+                pred_spikes = [x.sort_values('trial_time').spikes.values for _,x in pred_trials]
+                pred_spikes_array = np.stack(pred_spikes)
+                pred_spikes_list.append(pred_spikes_array)
+
+        design_spikes_stack = np.stack(design_spikes_list)
+        pred_spikes_stack = np.stack(pred_spikes_list)
+
+        mean_design_spikes = design_spikes_stack.mean(axis=1)
+        mean_pred_spikes = pred_spikes_stack.mean(axis=1)
+
+        # Smoothen
+        kern_len = 20
+        kern = np.ones(kern_len) / kern_len
+
+        smooth_design_spikes = np.apply_along_axis(
+                lambda x: np.convolve(x, kern, mode = 'same'),
+                1,
+                mean_design_spikes,
+                )
+
+        smooth_pred_spikes = np.apply_along_axis(
+                lambda x: np.convolve(x, kern, mode = 'same'),
+                1,
+                mean_pred_spikes,
+                )
+
+        fig, ax = plt.subplots(1,2, sharey = True, sharex = True, figsize = (7,3))
+        ax[0].plot(time_bins, smooth_design_spikes.T,  alpha = 0.7)
+        ax[1].plot(time_bins, smooth_pred_spikes.T,  alpha = 0.7)
+        ax[0].set_title('Actual')
+        ax[1].set_title('Predicted')
+        ax[0].set_ylabel('Firing rate (Hz)')
+        ax[0].set_xlabel('Time (s)')
+        ax[1].set_xlabel('Time (s)')
+        # Set ylim to be max of real data
+        #ax[0].set_ylim([0,smooth_design_spikes.max()])
+        #ax[1].set_ylim([0,smooth_design_spikes.max()])
+        plt.tight_layout()
+        plt.subplots_adjust(top = 0.85)
+        plt.suptitle(f'Session {this_ind[0]}, Neuron {this_ind[1]}')
+        plt.savefig(os.path.join(psth_plot_dir,
+                                 'psth_comp_'+ f'{num}_' + "_".join([str(x) for x in this_ind]) + '.png'),
+                    dpi = 300, bbox_inches = 'tight')
+        plt.close()
+        #plt.show()
 
 ############################################################
 # Process inferred filters 
@@ -629,10 +635,10 @@ hist_val_array = hist_val_array[kmeans.labels_.argsort()]
 # Reconstruct hist filters
 hist_recon = np.dot(hist_val_array, cos_basis_200)
 
-# Plot
-plt.imshow(hist_val_array, aspect = 'auto', interpolation = 'none')
-plt.colorbar()
-plt.show()
+## Plot
+#plt.imshow(hist_val_array, aspect = 'auto', interpolation = 'none')
+#plt.colorbar()
+#plt.show()
 
 # plot principle components
 pca = PCA(n_components = 5)
@@ -697,12 +703,12 @@ kmeans = KMeans(n_clusters = 4, random_state = 0).fit(zscore_stim_recon)
 zscore_stim_recon = zscore_stim_recon[kmeans.labels_.argsort()]
 stim_recon = stim_recon[kmeans.labels_.argsort()]
 
-# Plot
-fig, ax = plt.subplots(1,2)
-ax[0].imshow(stim_recon, aspect = 'auto', interpolation = 'none')
-ax[1].imshow(zscore_stim_recon, aspect = 'auto', interpolation = 'none')
-plt.colorbar()
-plt.show()
+## Plot
+#fig, ax = plt.subplots(1,2)
+#ax[0].imshow(stim_recon, aspect = 'auto', interpolation = 'none')
+#ax[1].imshow(zscore_stim_recon, aspect = 'auto', interpolation = 'none')
+#plt.colorbar()
+#plt.show()
 
 # plot principle components
 pca = PCA(n_components = 5)
@@ -757,6 +763,8 @@ plt.close(fig)
 ############################################################
 coupling_frame = fin_pval_frame.loc[fin_pval_frame.param.str.contains('coup')]
 coupling_frame.drop(columns = ['trial_sh','circ_sh','rand_sh'], inplace = True)
+# Make sure there are no 0 pvals
+coupling_frame.pvals += 1e-20
 
 # Fraction of significant coupling filter values per threshold
 alpha_vec = np.round(np.logspace(-1,-3,5),3)
@@ -895,9 +903,20 @@ count_per_input.drop(columns = ['region_y'], inplace = True)
 
 count_per_input['input_fraction'] = count_per_input.input_neuron / count_per_input.region_total 
 
-sns.violinplot(data = count_per_input, x = 'region', y = 'input_fraction', hue = 'input_region',
+# Is there an interaction between region and input region
+input_fraction_anova = pg.anova(count_per_input, dv = 'input_fraction', between = ['region','input_region'])
+sns.boxplot(data = count_per_input, x = 'region', y = 'input_fraction', hue = 'input_region',
               dodge=True)
-plt.show()
+plt.title(str(input_fraction_anova[['Source','p-unc']].dropna().round(2)))
+plt.suptitle('Comparison of Input Fraction')
+plt.tight_layout()
+plt.savefig(os.path.join(plot_dir, 'input_fraction_boxplot.png'), dpi = 300)
+plt.close()
+#plt.show()
+
+#sns.displot(data = count_per_input, col = 'region', x = 'input_fraction', hue = 'input_region',
+#            kind = 'ecdf')
+#plt.show()
 
 # Region preference index
 region_pref_frame = count_per_input[['session','taste','neuron','region','input_region','input_fraction']]
@@ -907,9 +926,75 @@ region_pref_frame.dropna(inplace = True)
 region_pref_frame.drop(columns = ['input_fraction', 'input_region'], inplace = True)
 
 sns.swarmplot(data = region_pref_frame, x = 'region', y = 'region_pref')
-plt.ylabel('Region preference index, \n BLA - GC (positive means more BLA input)')
+plt.ylabel('Region preference index, \n (BLA frac - GC frac) \n <-- More GC Input | More BLA Input -->')
+plt.tight_layout()
+plt.savefig(os.path.join(plot_dir, 'preference_index_swarm.png'), dpi = 300)
+plt.close()
+#plt.show()
+
+##############################
+# Segregation of projecting populations
+# bla --> gc
+bla_to_gc = tuple_frame.dropna().query('region == "gc" and input_region == "bla"').groupby(['session','input_neuron']).mean().reset_index()[['session','input_neuron']]
+gc_to_bla = tuple_frame.dropna().query('region == "bla" and input_region == "gc"').groupby(['session','input_neuron']).mean().reset_index()[['session','input_neuron']]
+
+# Do these groups receive more or less input than the general population
+# e.g. do the bla_to_gc projecting BLA neurons receive more or less input from 
+# GC than the rest of the BLA population
+
+##############################
+# Perform similar analysis, but for magnitude of filter
+
+# Check relationship between values and p_val
+plt.scatter(
+        np.log10(coupling_frame['p_val']), 
+        np.log(coupling_frame['values']),
+        alpha = 0.01
+        )
+plt.xlabel('log10(p_val)')
+plt.ylabel('log(values)')
 plt.show()
 
+# Filter energy
+# Not sure whether to take absolute or not
+# Because with absolute, flucutations about 0 will add up to something
+# HOWEVER, IF FITS ARE ACCURATE, it shouldn't really matter
+#coupling_filter_energy = [np.sum(np.abs(x.values),axis=-1) for x in coupling_pivoted_vals]
+coupling_energy_frame = coupling_frame.copy()
+coupling_energy_frame['pos_values'] = np.abs(coupling_frame['values'])
+coupling_energy_frame = coupling_energy_frame.groupby([*ind_names, 'other_nrn']).sum()['pos_values'].reset_index()
+coupling_energy_frame.rename(columns = {'pos_values' : 'energy'}, inplace=True)
+
+# Merge with unit_region_frame to obtain neuron region
+coupling_energy_frame = coupling_energy_frame.rename(columns = {'other_nrn':'input_neuron'})
+coupling_energy_frame = coupling_energy_frame.merge(unit_region_frame[['neuron','region','session']],
+                                how = 'left', on = ['session','neuron'])
+# Merge again to assign region to input_neuron
+coupling_energy_frame = coupling_energy_frame.merge(unit_region_frame[['neuron','region', 'session']],
+                                how = 'left', left_on = ['session', 'input_neuron'], 
+                                right_on = ['session','neuron'])
+coupling_energy_frame.drop(columns = 'neuron_y', inplace = True)
+coupling_energy_frame.rename(columns = {
+    'neuron_x':'neuron', 
+    'region_x' : 'region',
+    'region_y' : 'input_region'}, 
+                   inplace = True)
+
+input_energy_anova = pg.anova(
+        coupling_energy_frame, 
+        dv = 'energy', 
+        between = ['region','input_region'])
+
+sns.boxplot(data = coupling_energy_frame, x = 'region', y = 'energy', hue = 'input_region',
+              dodge=True, showfliers = False)
+plt.suptitle('Comparison of Input Filter Energy')
+plt.title(str(input_energy_anova[['Source','p-unc']].dropna().round(2)))
+plt.tight_layout()
+#plt.show()
+plt.savefig(os.path.join(plot_dir, 'input_energy_boxplot.png'), dpi = 300)
+plt.close()
+
+##############################
 ## Not sure if connectivity matrices are that useful
 #
 # # Convert to connectivity matrices
