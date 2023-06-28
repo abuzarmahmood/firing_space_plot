@@ -92,7 +92,7 @@ def gen_cosine_history_design(
             n_basis,
             spread = spread)
     hist_mat = gen_history_design_matrix(data, filter_len)
-    cos_mat = np.matmul(hist_mat, cos_basis.T)
+    cos_mat = pd.DataFrame(np.matmul(hist_mat.values, cos_basis.T))
     cos_mat.columns = [f'hist_lag{i:03d}' for i \
             in np.arange(n_basis)]
     return cos_mat
@@ -187,7 +187,7 @@ def process_glm_res(
         basis = 'cos',
         basis_spread = 'log',
         param_key = 'hist',):
-    if res is None:
+    if res is not None:
         lag_params =  res.params
         lag_params = lag_params[[x for x in lag_params.index if param_key in x]]
         if basis == 'linear':
