@@ -482,18 +482,21 @@ def fit_stim_history_coupled_glm(
                 )
 
     dv_cols = [x for x in glmdata.columns if 'lag' in x]
-    #dv_cols.append('intercept')
-    # Formula api already adds intercept
-    formula = 'spikes ~ ' + ' + '.join(dv_cols) 
-    model = smf.glm(formula = formula, data = glmdata, family = Poisson())
-    #model = sm.GLM(
-    #        glmdata['spikes'], 
-    #        glmdata[dv_cols], 
-    #        family = sm.families.Poisson())
-    if regularized == True:
-        res = model.fit_regularized(alpha = alpha)
+    #if regularized == True:
+    #    res = model.fit_regularized(alpha = alpha)
+    #else:
+    #    res = model.fit()
+    if glmdata.shape[1] < 100:
+        formula = 'spikes ~ ' + ' + '.join(dv_cols) 
+        model = smf.glm(formula = formula, data = glmdata, family = Poisson())
     else:
-        res = model.fit()
+        glmdata['intercept'] = 1
+        dv_cols.append('intercept')
+        model = sm.GLM(
+                glmdata['spikes'], 
+                glmdata[dv_cols], 
+                family = sm.families.Poisson())
+    res = model.fit()
     pred = res.predict(glmdata[dv_cols])
     return res, pred
 
@@ -884,11 +887,11 @@ def gen_actual_fit(
         basis_kwargs = {},
         actual_design_mat = None,
         ):
-    actual_input_dat = data_frame.copy()
 
     # If not given, generate an actual_design_mat
     # Otherwise use the given one
     if actual_design_mat is None:
+        actual_input_dat = data_frame.copy()
         actual_design_mat = dataframe_to_design_mat(actual_input_dat)
 
     # Generate train test splits
