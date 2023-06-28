@@ -482,23 +482,28 @@ def fit_stim_history_coupled_glm(
                 )
 
     dv_cols = [x for x in glmdata.columns if 'lag' in x]
+    dv_cols.append('intercept')
     #if regularized == True:
     #    res = model.fit_regularized(alpha = alpha)
     #else:
     #    res = model.fit()
-    if glmdata.shape[1] < 100:
-        formula = 'spikes ~ ' + ' + '.join(dv_cols) 
-        model = smf.glm(formula = formula, data = glmdata, family = Poisson())
-    else:
-        glmdata['intercept'] = 1
-        dv_cols.append('intercept')
-        model = sm.GLM(
-                glmdata['spikes'], 
-                glmdata[dv_cols], 
-                family = sm.families.Poisson())
+    #if glmdata.shape[1] < 100:
+    #    formula = 'spikes ~ ' + ' + '.join(dv_cols) 
+    #    model = smf.glm(formula = formula, data = glmdata, family = Poisson())
+    #else:
+    #    glmdata['intercept'] = 1
+    #    dv_cols.append('intercept')
+    #    model = sm.glm(
+    #            glmdata['spikes'], 
+    #            glmdata[dv_cols], 
+    #            family = sm.families.poisson())
+    model = sm.GLM(
+            glmdata['spikes'], 
+            glmdata[dv_cols], 
+            family = sm.families.Poisson())
     res = model.fit()
     pred = res.predict(glmdata[dv_cols])
-    return res, pred
+    return res, pred, glmdata
 
 def fit_history_coupled_glm(
         spike_data, 
@@ -858,6 +863,7 @@ def dataframe_to_design_mat(
             'Trial lengths are not equal'
     glmdata = glmdata.loc[~glmdata.trial_labels.isin(unwanted_trials)]
     glmdata.reset_index(inplace=True, drop=True)
+    glmdata['intercept'] = 1
     return glmdata
     
 
@@ -898,7 +904,7 @@ def gen_actual_fit(
     actual_train_dat, actual_test_dat = return_train_test_split(actual_design_mat)
 
     # Fit model to actual data
-    res,pred = fit_stim_history_coupled_glm(
+    res,pred,actual_train_dat = fit_stim_history_coupled_glm(
             glmdata = actual_train_dat,
             hist_filter_len = hist_filter_len,
             coupling_filter_len = coupling_filter_len,
@@ -924,19 +930,19 @@ def calc_loglikelihood(actual_design_mat, res):
     rand_sh_train_dat, rand_sh_test_dat = return_train_test_split(rand_sh_design_mat)
 
     # Calculate log-likelihoods
-    actual_test_pred = res.predict(actual_test_dat)
+    actual_test_pred = res.predict(actual_test_dat[res.params.index])
     actual_test_ll = poisson_ll(actual_test_pred, actual_test_dat['spikes'].values)
     actual_test_ll = np.round(actual_test_ll, 2)
 
-    trial_sh_test_pred = res.predict(trial_sh_test_dat)
+    trial_sh_test_pred = res.predict(trial_sh_test_dat[res.params.index])
     trial_sh_test_ll = poisson_ll(trial_sh_test_pred, actual_test_dat['spikes'].values)
     trial_sh_test_ll = np.round(trial_sh_test_ll, 2)
 
-    circ_sh_test_pred = res.predict(circ_sh_test_dat)
+    circ_sh_test_pred = res.predict(circ_sh_test_dat[res.params.index])
     circ_sh_test_ll = poisson_ll(circ_sh_test_pred, actual_test_dat['spikes'].values)
     circ_sh_test_ll = np.round(circ_sh_test_ll, 2)
 
-    rand_sh_test_pred = res.predict(rand_sh_test_dat)
+    rand_sh_test_pred = res.predict(rand_sh_test_dat[res.params.index])
     rand_sh_test_ll = poisson_ll(rand_sh_test_pred, actual_test_dat['spikes'].values)
     rand_sh_test_ll = np.round(rand_sh_test_ll, 2)
 

@@ -586,13 +586,15 @@ basis_kwargs = dict(
     basis = 'cos',
     basis_spread = 'log',
     )
+
+# Length of basis is adjusted because models were fit on binned data
 cos_basis_200 = gt.cb.gen_raised_cosine_basis(
-        200,
+        20,
         n_basis = basis_kwargs['n_basis'],
         spread = basis_kwargs['basis_spread'],
         )
 cos_basis_500 = gt.cb.gen_raised_cosine_basis(
-        500,
+        50,
         n_basis = basis_kwargs['n_basis'],
         spread = basis_kwargs['basis_spread'],
         )
@@ -764,7 +766,7 @@ plt.close(fig)
 coupling_frame = fin_pval_frame.loc[fin_pval_frame.param.str.contains('coup')]
 coupling_frame.drop(columns = ['trial_sh','circ_sh','rand_sh'], inplace = True)
 # Make sure there are no 0 pvals
-coupling_frame.pvals += 1e-20
+coupling_frame.p_val += 1e-20
 
 # Fraction of significant coupling filter values per threshold
 alpha_vec = np.round(np.logspace(-1,-3,5),3)

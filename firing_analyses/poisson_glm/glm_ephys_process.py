@@ -6,7 +6,8 @@ import numpy as np
 import pandas as pd
 import sys
 #sys.path.append('/media/bigdata/firing_space_plot/firing_analyses/poisson_glm')
-base_path = '/home/exouser/Desktop/ABU/firing_space_plot/firing_analyses/poisson_glm'
+base_path = '/media/bigdata/firing_space_plot/firing_analyses/poisson_glm'
+#base_path = '/home/exouser/Desktop/ABU/firing_space_plot/firing_analyses/poisson_glm'
 sys.path.append(base_path)
 import glm_tools as gt
 from pandas import DataFrame as df
@@ -24,9 +25,9 @@ os.environ["MKL_NUM_THREADS"] = "1" # export MKL_NUM_THREADS=6
 #base_path = '/media/bigdata/firing_space_plot/firing_analyses/poisson_glm'
 save_path = os.path.join(base_path,'artifacts')
 
-def parallelize(func, iterator):
+def parallelize(func, iterator, n_jobs = 16):
     #return Parallel(n_jobs = cpu_count()-2)\
-    return Parallel(n_jobs = 16)\
+    return Parallel(n_jobs = n_jobs)\
             (delayed(func)(this_iter) for this_iter in tqdm(enumerate(iterator)))
 
 def gen_spike_train(spike_inds):
@@ -35,43 +36,43 @@ def gen_spike_train(spike_inds):
     return spike_train
 
 # Check if previous runs present
-run_list = glob(os.path.join(save_path, 'run*'))
-print(f'Present runs : {run_list}')
+run_list = sorted(glob(os.path.join(save_path, 'run*')))
+run_basenames = [os.path.basename(x) for x in run_list]
+print(f'Present runs : {run_basenames}')
 input_run_ind = int(input('Please specify current run (integer) :'))
-fin_save_path = os.path.join(save_path, f'run_{input_run_ind}')
+fin_save_path = os.path.join(save_path, f'run_{input_run_ind:03}')
 
 if not os.path.exists(fin_save_path):
     os.makedirs(fin_save_path)
 
 ############################################################
 # Parameters
-hist_filter_len = 200
-stim_filter_len = 500
-coupling_filter_len = 200
+hist_filter_len = 75
+stim_filter_len = 300
+coupling_filter_len = 75
 
-bin_width = 10
+bin_width = 2
 # Reprocess filter lens
 hist_filter_len_bin = hist_filter_len // bin_width
 stim_filter_len_bin = stim_filter_len // bin_width
 coupling_filter_len_bin = coupling_filter_len // bin_width
 
 trial_start_offset = -2000
-trial_lims = np.array([1000,4000])
+trial_lims = np.array([1500,4000])
 stim_t = 2000
-
 
 # Define basis kwargs
 basis_kwargs = dict(
-    n_basis = 20,
+    n_basis = 15,
     basis = 'cos',
     basis_spread = 'log',
     )
 
 # Number of fits on actual data (expensive)
-n_fits = 10
+n_fits = 1
 n_max_tries = 20
 # Number of shuffles tested against each fit
-n_shuffles_per_fit = 50
+n_shuffles_per_fit = 5
 
 # Save run parameters
 params_dict = dict(
@@ -191,7 +192,8 @@ stim_vec[stim_t] = 1
 
 def process_ind(ind_num, this_ind):
     #this_ind = fin_inds[0]
-    this_ind_str = '_'.join([str(x) for x in this_ind])
+    #this_ind_str = '_'.join([str(x) for x in this_ind])
+    this_ind_str = '_'.join([f'{x:03}' for x in this_ind])
     pval_save_name = f'{this_ind_str}_p_val_frame.csv'
     pval_save_path = os.path.join(fin_save_path,pval_save_name)
     ll_save_name = f'{this_ind_str}_ll_frame.csv'
@@ -260,7 +262,7 @@ def process_ind(ind_num, this_ind):
     for i in trange(n_max_tries):
         if len(fit_list) < n_fits:
             try:
-                res, _ = gt.gen_actual_fit(
+                res, temp_design_mat, = gt.gen_actual_fit(
                         data_frame, # Not used if design_mat is provided
                         hist_filter_len = hist_filter_len_bin,
                         stim_filter_len = stim_filter_len_bin,
@@ -291,12 +293,15 @@ def process_ind(ind_num, this_ind):
     p_val_frame.to_csv(pval_save_path)
 
     ll_names = ['actual','trial_sh','circ_sh','rand_sh']
-    ll_outs = [gt.calc_loglikelihood(actual_design_mat, res) for res in tqdm(fit_list)]
+    ll_outs = [[gt.calc_loglikelihood(actual_design_mat, res)\
+            for i in range(n_shuffles_per_fit)]\
+            for res in tqdm(fit_list)]
+    ll_outs = np.array(ll_outs).reshape(-1,4)
     ll_frame = pd.DataFrame(ll_outs, columns=ll_names)
-    ll_frame['fit_num'] = np.arange(len(ll_outs))
+    ll_frame['fit_num'] = np.repeat(np.arange(len(fit_list)), n_shuffles_per_fit)
     ll_frame.to_csv(ll_save_path)
 
-    del data_frame, actual_design_mat, fit_list, p_val_list, p_val_fin, ll_outs, ll_frame
+    del data_frame, actual_design_mat, fit_list, p_val_list, p_val_fin, ll_outs, ll_frame, temp_design_mat
     del this_session_dat, this_taste_dat, this_nrn_dat, other_nrn_dat, stim_dat
     del this_nrn_flat, other_nrn_flat, stim_flat
     print(f'Finished: {ind_num}, {this_ind}')
@@ -308,4 +313,4 @@ def try_process(this_ind):
     except:
         print('Failed')
         pass
-parallelize(try_process,fin_inds)
+parallelize(try_process,fin_inds, n_jobs = 8)
