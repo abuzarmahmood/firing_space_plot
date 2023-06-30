@@ -555,7 +555,8 @@ if make_example_plots:
                     print('Finished fitting')
                     break
 
-            if len(fit_list) > 0:
+            skip_bool = False
+            if len(fit_list) > 1:
                 ll_names = ['actual','trial_sh','circ_sh','rand_sh']
                 ll_outs = [[gt.calc_loglikelihood(actual_design_mat, res)\
                         for i in range(n_shuffles_per_fit)]\
@@ -564,32 +565,34 @@ if make_example_plots:
                 ll_frame = pd.DataFrame(ll_outs, columns=ll_names)
                 ll_frame['fit_num'] = np.repeat(np.arange(len(fit_list)), n_shuffles_per_fit)
 
+                best_fit_ind = ll_frame.actual.idxmax()
+                best_fit = fit_list[best_fit_ind]
 
             elif len(fit_list) == 1:
                 best_fit = fit_list[0]
             else:
+                skip_bool = True
                 # Grab best fit
-                best_fit_ind = ll_frame.actual.idxmax()
-                best_fit = fit_list[best_fit_ind]
 
-            # PSTH
-            time_bins = actual_design_mat.trial_time.unique()
-            design_trials = list(actual_design_mat.groupby('trial_labels'))
-            design_spikes = [x.sort_values('trial_time').spikes.values for _,x in design_trials]
-            design_spikes_array = np.stack(design_spikes)
-            design_spikes_list.append(design_spikes_array)
+            if not skip_bool:
+                # PSTH
+                time_bins = actual_design_mat.trial_time.unique()
+                design_trials = list(actual_design_mat.groupby('trial_labels'))
+                design_spikes = [x.sort_values('trial_time').spikes.values for _,x in design_trials]
+                design_spikes_array = np.stack(design_spikes)
+                design_spikes_list.append(design_spikes_array)
 
-            # Predicted PSTH
-            pred_spikes = pd.DataFrame(best_fit.predict(actual_design_mat[best_fit.params.index]), 
-                                       columns = ['spikes'])
-            # Cutoff at 1 spike per bin
-            pred_spikes.loc[pred_spikes.spikes > bin_width, 'spikes'] = bin_width
-            pred_spikes['trial_labels'] = actual_design_mat.trial_labels
-            pred_spikes['trial_time'] = actual_design_mat.trial_time
-            pred_trials = list(pred_spikes.groupby('trial_labels'))
-            pred_spikes = [x.sort_values('trial_time').spikes.values for _,x in pred_trials]
-            pred_spikes_array = np.stack(pred_spikes)
-            pred_spikes_list.append(pred_spikes_array)
+                # Predicted PSTH
+                pred_spikes = pd.DataFrame(best_fit.predict(actual_design_mat[best_fit.params.index]), 
+                                           columns = ['spikes'])
+                # Cutoff at 1 spike per bin
+                pred_spikes.loc[pred_spikes.spikes > bin_width, 'spikes'] = bin_width
+                pred_spikes['trial_labels'] = actual_design_mat.trial_labels
+                pred_spikes['trial_time'] = actual_design_mat.trial_time
+                pred_trials = list(pred_spikes.groupby('trial_labels'))
+                pred_spikes = [x.sort_values('trial_time').spikes.values for _,x in pred_trials]
+                pred_spikes_array = np.stack(pred_spikes)
+                pred_spikes_list.append(pred_spikes_array)
 
         design_spikes_stack = np.stack(design_spikes_list)
         pred_spikes_stack = np.stack(pred_spikes_list)
