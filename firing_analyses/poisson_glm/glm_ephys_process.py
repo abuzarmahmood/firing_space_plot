@@ -315,7 +315,6 @@ def process_ind(ind_num, this_ind):
     design_spikes_tuple = np.array(np.where(design_spikes))
     np.save(os.path.join(fin_save_path, f'{this_ind_str}_design_spikes.npy'), design_spikes_tuple)
 
-
     # Predicted PSTH
     pred_spikes = pd.DataFrame(best_fit.predict(actual_design_mat[best_fit.params.index]), 
                                columns = ['spikes'])

@@ -26,9 +26,14 @@ from sklearn.cluster import KMeans
 from sklearn.decomposition import PCA
 import seaborn as sns
 import pingouin as pg
+import json
 
+run_str = 'run_002'
 save_path = '/media/bigdata/firing_space_plot/firing_analyses/poisson_glm/artifacts'
-plot_dir=  '/media/bigdata/firing_space_plot/firing_analyses/poisson_glm/plots'
+plot_dir=  f'/media/bigdata/firing_space_plot/firing_analyses/poisson_glm/plots/{run_str}'
+
+if not os.path.exists(plot_dir):
+    os.makedirs(plot_dir)
 
 ############################################################
 # Get Spikes
@@ -70,8 +75,9 @@ unit_region_frame = pd.read_csv(os.path.join(save_path,'unit_region_frame.csv'),
 unit_region_frame.rename(columns = {'unit' : 'neuron'}, inplace=True)
 ind_frame = pd.read_csv(os.path.join(save_path,'ind_frame.csv'), index_col = 0)
 
-p_val_frame_paths = sorted(glob(os.path.join(save_path,'*p_val_frame.csv')))
-ll_frame_paths = sorted(glob(os.path.join(save_path,'*ll_frame.csv')))
+p_val_frame_paths = sorted(glob(os.path.join(save_path, run_str, '*p_val_frame.csv')))
+ll_frame_paths = sorted(glob(os.path.join(save_path, run_str, '*ll_frame.csv')))
+
 p_val_basenames = [os.path.basename(x) for x in p_val_frame_paths]
 ll_basenames = [os.path.basename(x) for x in ll_frame_paths]
 p_val_inds_str = [x.split('_p_val')[0] for x in p_val_basenames]
@@ -157,7 +163,7 @@ ll_stat_frame = ll_stat_frame.sort_values(by=['session','taste','neuron'])
 wanted_cols = [x for x in ll_pval_frame.columns if 'sh' in x]
 plot_dat = ll_pval_frame[wanted_cols]
 
-thresh = np.round(np.log10(0.005),2)
+thresh = np.round(np.log10(0.1),2)
 sig_frac = np.round((plot_dat< thresh).mean(axis=0),2)
 # Fraction significant for all 3 shuffles
 all_sig_frac = np.round(np.all((plot_dat < thresh).values, axis=-1).mean(),2)
@@ -228,6 +234,9 @@ mean_nrn_ll_frame = mean_nrn_ll_frame.merge(ll_pval_frame[ind_names], on = ind_n
 mean_nrn_ll_frame['top'] = False
 mean_nrn_ll_frame.loc[mean_nrn_ll_frame.index[:n_top],'top'] = True
 
+# Remove outliers
+mean_nrn_ll_frame = mean_nrn_ll_frame[mean_nrn_ll_frame['actual'] > -1e10]
+
 sns.jointplot(data = mean_nrn_ll_frame, 
               x = 'mean_rate', y = 'actual',
               hue = 'top', palette = ['b','r'],)
@@ -258,37 +267,69 @@ taste_top_inds = taste_top_inds_frame[['session','neuron']].values[:n_top]
 # Recalculate PSTHs for top inds
 ############################################################
 # Parameters
-hist_filter_len = 200
-stim_filter_len = 500
-coupling_filter_len = 200
 
-trial_start_offset = -2000
-trial_lims = np.array([1000,4000])
-stim_t = 2000
+# Load parameters from run
+json_path = os.path.join(save_path, run_str,'fit_params.json')
 
-bin_width = 10
+params_dict = json.load(open(json_path))
+
+hist_filter_len = params_dict['hist_filter_len']
+stim_filter_len = params_dict['stim_filter_len']
+coupling_filter_len = params_dict['coupling_filter_len']
+
+trial_start_offset = params_dict['trial_start_offset']
+trial_lims = np.array(params_dict['trial_lims'])
+stim_t = params_dict['stim_t']
+
+bin_width = params_dict['bin_width']
 
 # Reprocess filter lens
-hist_filter_len_bin = hist_filter_len // bin_width
-stim_filter_len_bin = stim_filter_len // bin_width
-coupling_filter_len_bin = coupling_filter_len // bin_width
+hist_filter_len_bin = params_dict['hist_filter_len_bin'] 
+stim_filter_len_bin = params_dict['stim_filter_len_bin']
+coupling_filter_len_bin = params_dict['coupling_filter_len_bin']
 
 # Define basis kwargs
-basis_kwargs = dict(
-    n_basis = 10,
-    basis = 'cos',
-    basis_spread = 'log',
-    )
+basis_kwargs = params_dict['basis_kwargs'] 
 
 # Number of fits on actual data (expensive)
-n_fits = 1
-n_max_tries = 20
-############################################################
-make_example_plots = False
+n_fits = params_dict['n_fits']
+n_max_tries = params_dict['n_max_tries']
+n_shuffles_per_fit = 5
 
+#hist_filter_len = 200
+#stim_filter_len = 500
+#coupling_filter_len = 200
+#
+#trial_start_offset = -2000
+#trial_lims = np.array([1000,4000])
+#stim_t = 2000
+#
+#bin_width = 10
+#
+## Reprocess filter lens
+#hist_filter_len_bin = hist_filter_len // bin_width
+#stim_filter_len_bin = stim_filter_len // bin_width
+#coupling_filter_len_bin = coupling_filter_len // bin_width
+#
+## Define basis kwargs
+#basis_kwargs = dict(
+#    n_basis = 10,
+#    basis = 'cos',
+#    basis_spread = 'log',
+#    )
+#
+## Number of fits on actual data (expensive)
+#n_fits = 1
+#n_max_tries = 20
+############################################################
+make_example_plots = True
 
 stim_vec = np.zeros(spike_list[0].shape[-1])
 stim_vec[stim_t] = 1
+
+example_nrns_path = os.path.join(plot_dir, 'example_nrns')
+if not os.path.exists(example_nrns_path):
+    os.makedirs(example_nrns_path)
 
 if make_example_plots:
     for num, this_ind in tqdm(enumerate(top_inds)):
@@ -363,13 +404,19 @@ if make_example_plots:
                 print('Finished fitting')
                 break
 
-        ll_names = ['actual','trial_sh','circ_sh','rand_sh']
-        ll_outs = [gt.calc_loglikelihood(actual_design_mat, res) for res in tqdm(fit_list)]
-        ll_frame = pd.DataFrame(ll_outs, columns=ll_names)
+        if len(fit_list) > 1:
+            ll_names = ['actual','trial_sh','circ_sh','rand_sh']
+            ll_outs = [[gt.calc_loglikelihood(actual_design_mat, res)\
+                    for i in range(n_shuffles_per_fit)]\
+                    for res in tqdm(fit_list)]
+            ll_outs = np.array(ll_outs).reshape(-1,4)
+            ll_frame = pd.DataFrame(ll_outs, columns=ll_names)
+            ll_frame['fit_num'] = np.repeat(np.arange(len(fit_list)), n_shuffles_per_fit)
 
-        # Grab best fit
-        best_fit_ind = ll_frame.actual.idxmax()
-        best_fit = fit_list[best_fit_ind]
+            # Grab best fit
+            best_fit_ind = ll_frame.actual.idxmax()
+        else:
+            best_fit = fit_list[0]
 
         # PSTH
         time_bins = actual_design_mat.trial_time.unique()
@@ -378,13 +425,14 @@ if make_example_plots:
         design_spikes_array = np.stack(design_spikes)
 
         # Predicted PSTH
-        pred_spikes = pd.DataFrame(best_fit.predict(actual_design_mat), columns = ['spikes'])
+        pred_spikes = pd.DataFrame(best_fit.predict(actual_design_mat[best_fit.params.index]), 
+                                   columns = ['spikes'])
+        pred_spikes.loc[pred_spikes.spikes > bin_width, 'spikes'] = bin_width
         pred_spikes['trial_labels'] = actual_design_mat.trial_labels
         pred_spikes['trial_time'] = actual_design_mat.trial_time
         pred_trials = list(pred_spikes.groupby('trial_labels'))
         pred_spikes = [x.sort_values('trial_time').spikes.values for _,x in pred_trials]
         pred_spikes_array = np.stack(pred_spikes)
-
 
         # Smoothen
         kern_len = 20
@@ -402,7 +450,7 @@ if make_example_plots:
                 pred_spikes_array,
                 )
 
-        fig, ax = plt.subplots(1,2, sharey = True, sharex = True, figsize = (7,3))
+        fig, ax = plt.subplots(1,2, sharey = False, sharex = True, figsize = (7,3))
         ax[0].plot(time_bins, smooth_design_spikes.T, color = 'k', alpha = 0.3)
         ax[0].plot(time_bins, smooth_design_spikes.mean(0), color = 'r', linewidth = 2)
         ax[1].plot(time_bins, smooth_pred_spikes.T, color = 'k', alpha = 0.3)
@@ -418,7 +466,7 @@ if make_example_plots:
         plt.tight_layout()
         plt.subplots_adjust(top = 0.85)
         plt.suptitle(f'Session {this_ind[0]}, Neuron {this_ind[2]}, Taste {this_ind[1]}')
-        plt.savefig(os.path.join(plot_dir, 'example_nrns',
+        plt.savefig(os.path.join(example_nrns_path,
                                  'psth_comp_'+ f'{num}_' + "_".join([str(x) for x in this_ind]) + '.png'),
                     dpi = 300, bbox_inches = 'tight')
         plt.close()
@@ -509,30 +557,39 @@ if make_example_plots:
 
             if len(fit_list) > 0:
                 ll_names = ['actual','trial_sh','circ_sh','rand_sh']
-                ll_outs = [gt.calc_loglikelihood(actual_design_mat, res) for res in tqdm(fit_list)]
+                ll_outs = [[gt.calc_loglikelihood(actual_design_mat, res)\
+                        for i in range(n_shuffles_per_fit)]\
+                        for res in tqdm(fit_list)]
+                ll_outs = np.array(ll_outs).reshape(-1,4)
                 ll_frame = pd.DataFrame(ll_outs, columns=ll_names)
+                ll_frame['fit_num'] = np.repeat(np.arange(len(fit_list)), n_shuffles_per_fit)
 
+
+            elif len(fit_list) == 1:
+                best_fit = fit_list[0]
+            else:
                 # Grab best fit
                 best_fit_ind = ll_frame.actual.idxmax()
                 best_fit = fit_list[best_fit_ind]
 
-                # PSTH
-                time_bins = actual_design_mat.trial_time.unique()
-                design_trials = list(actual_design_mat.groupby('trial_labels'))
-                design_spikes = [x.sort_values('trial_time').spikes.values for _,x in design_trials]
-                design_spikes_array = np.stack(design_spikes)
-                design_spikes_list.append(design_spikes_array)
+            # PSTH
+            time_bins = actual_design_mat.trial_time.unique()
+            design_trials = list(actual_design_mat.groupby('trial_labels'))
+            design_spikes = [x.sort_values('trial_time').spikes.values for _,x in design_trials]
+            design_spikes_array = np.stack(design_spikes)
+            design_spikes_list.append(design_spikes_array)
 
-                # Predicted PSTH
-                pred_spikes = pd.DataFrame(best_fit.predict(actual_design_mat), columns = ['spikes'])
-                # Cutoff at 1
-                pred_spikes.loc[pred_spikes.spikes > bin_width, 'spikes'] = bin_width
-                pred_spikes['trial_labels'] = actual_design_mat.trial_labels
-                pred_spikes['trial_time'] = actual_design_mat.trial_time
-                pred_trials = list(pred_spikes.groupby('trial_labels'))
-                pred_spikes = [x.sort_values('trial_time').spikes.values for _,x in pred_trials]
-                pred_spikes_array = np.stack(pred_spikes)
-                pred_spikes_list.append(pred_spikes_array)
+            # Predicted PSTH
+            pred_spikes = pd.DataFrame(best_fit.predict(actual_design_mat[best_fit.params.index]), 
+                                       columns = ['spikes'])
+            # Cutoff at 1 spike per bin
+            pred_spikes.loc[pred_spikes.spikes > bin_width, 'spikes'] = bin_width
+            pred_spikes['trial_labels'] = actual_design_mat.trial_labels
+            pred_spikes['trial_time'] = actual_design_mat.trial_time
+            pred_trials = list(pred_spikes.groupby('trial_labels'))
+            pred_spikes = [x.sort_values('trial_time').spikes.values for _,x in pred_trials]
+            pred_spikes_array = np.stack(pred_spikes)
+            pred_spikes_list.append(pred_spikes_array)
 
         design_spikes_stack = np.stack(design_spikes_list)
         pred_spikes_stack = np.stack(pred_spikes_list)
@@ -581,20 +638,19 @@ if make_example_plots:
 ############################################################
 alpha = 0.01
 
-basis_kwargs = dict(
-    n_basis = 10,
-    basis = 'cos',
-    basis_spread = 'log',
-    )
-
 # Length of basis is adjusted because models were fit on binned data
-cos_basis_200 = gt.cb.gen_raised_cosine_basis(
-        20,
+hist_cosine_basis = gt.cb.gen_raised_cosine_basis(
+        hist_filter_len_bin,
         n_basis = basis_kwargs['n_basis'],
         spread = basis_kwargs['basis_spread'],
         )
-cos_basis_500 = gt.cb.gen_raised_cosine_basis(
-        50,
+stim_cosine_basis = gt.cb.gen_raised_cosine_basis(
+        stim_filter_len_bin,
+        n_basis = basis_kwargs['n_basis'],
+        spread = basis_kwargs['basis_spread'],
+        )
+coup_cosine_basis = gt.cb.gen_raised_cosine_basis(
+        coupling_filter_len_bin,
         n_basis = basis_kwargs['n_basis'],
         spread = basis_kwargs['basis_spread'],
         )
@@ -635,7 +691,7 @@ kmeans = KMeans(n_clusters = 4, random_state = 0).fit(hist_val_array)
 hist_val_array = hist_val_array[kmeans.labels_.argsort()]
 
 # Reconstruct hist filters
-hist_recon = np.dot(hist_val_array, cos_basis_200)
+hist_recon = np.dot(hist_val_array, hist_cosine_basis)
 
 ## Plot
 #plt.imshow(hist_val_array, aspect = 'auto', interpolation = 'none')
@@ -697,7 +753,7 @@ print(f'Fraction of significant stimory filters: {frac_sig_stim_filters}')
 
 
 # Reconstruct stim filters
-stim_recon = np.dot(stim_val_array, cos_basis_500)
+stim_recon = np.dot(stim_val_array, stim_cosine_basis)
 zscore_stim_recon = zscore(stim_recon,axis=-1)
 
 # Cluster using Kmeans
@@ -802,7 +858,7 @@ coupling_pivoted_sig_inds = [y[x] for x,y in zip(coupling_pivoted_raw_inds, coup
 coupling_val_array = np.concatenate(coupling_pivoted_vals, axis = 0)
 
 # Reconstruct coupling filters
-coupling_recon = np.dot(coupling_val_array, cos_basis_200)
+coupling_recon = np.dot(coupling_val_array, coup_cosine_basis)
 
 # plot principle components
 pca = PCA(n_components = 5)
@@ -955,7 +1011,9 @@ plt.scatter(
         )
 plt.xlabel('log10(p_val)')
 plt.ylabel('log(values)')
-plt.show()
+plt.title('Coupling filters pvalues vs values')
+plt.savefig(os.path.join(plot_dir, 'coupling_pval_vs_val.png'), dpi = 300)
+plt.close()
 
 # Filter energy
 # Not sure whether to take absolute or not
@@ -995,57 +1053,3 @@ plt.tight_layout()
 #plt.show()
 plt.savefig(os.path.join(plot_dir, 'input_energy_boxplot.png'), dpi = 300)
 plt.close()
-
-##############################
-## Not sure if connectivity matrices are that useful
-#
-# # Convert to connectivity matrices
-# # First, remerge with ind_frame to recover all neurons
-# tuple_frame = ind_frame.merge(tuple_frame, how = 'left', on = ind_names)
-# 
-# session_taste_groups = [x[1] for x in list(tuple_frame.groupby(['session','taste']))]
-# session_taste_inds = [x[0] for x in list(tuple_frame.groupby(['session','taste']))]
-# 
-# def to_connectivity_mat(this_frame):
-#     """
-#     Rows are self, columns are input neurons
-#     """
-#     con_mat = np.zeros((len(this_frame), len(this_frame)))
-#     for i, row in this_frame.reset_index(drop=True).iterrows():
-#         if row.sig_inds is not np.nan and len(row.sig_inds) > 0: 
-#             con_mat[i, row.sig_inds] = 1
-#     con_mat[np.diag_indices_from(con_mat)] = np.nan
-#     return con_mat
-# 
-# session_taste_con_mats = [to_connectivity_mat(x) for x in session_taste_groups]
-#
-# # Region sorting inds for each session
-# region_sorting_frame = unit_region_frame.groupby('session').apply(lambda x: x.sort_values('region'))
-# region_sorting_frame = region_sorting_frame.reset_index(drop=True)
-# region_sorting_frame = region_sorting_frame[['session','region','neuron']]
-# region_sorting_list = [x[1] for x in region_sorting_frame.groupby(['session'])]
-# 
-# sorted_con_mats = []
-# sorted_region_vecs = []
-# for i in range(len(session_taste_con_mats)):
-#     this_mat = session_taste_con_mats[i]
-#     this_session_ind, _ = session_taste_inds[i]
-#     this_sorting_frame = region_sorting_list[this_session_ind]
-#     # Confirm this is the correct session
-#     assert all(this_sorting_frame.session == this_session_ind), "Session mismatch"
-#     this_sorting_inds = this_sorting_frame.neuron.values 
-#     sorted_mat = this_mat[np.ix_(this_sorting_inds, this_sorting_inds)]
-#     sorted_con_mats.append(sorted_mat)
-#     sorted_region_vecs.append(this_sorting_frame.region.values)
-# 
-# # Plot
-# fig, ax = plt.subplots(int(len(sorted_con_mats)/4),4, figsize = (10,10))
-# for i, this_mat in enumerate(sorted_con_mats):
-#     this_ax = ax.flatten()[i]
-#     #this_ax.matshow(this_mat, cmap = 'Greys')
-#     this_ax.imshow(this_mat, cmap = 'Greys', interpolation = 'none', aspect = 'auto')
-#     this_ax.set_title(f'{session_taste_inds[i]}')
-# plt.show()
-
-# Find fraction of gc-gc, bla-bla, and gc-bla connections
-# Note for connectivity matrices: Rows are self, columns are input neurons
