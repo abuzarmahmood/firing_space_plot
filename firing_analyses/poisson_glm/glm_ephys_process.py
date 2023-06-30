@@ -69,10 +69,10 @@ basis_kwargs = dict(
     )
 
 # Number of fits on actual data (expensive)
-n_fits = 1
+n_fits = 5
 n_max_tries = 20
 # Number of shuffles tested against each fit
-n_shuffles_per_fit = 5
+n_shuffles_per_fit = 10
 
 # Save run parameters
 params_dict = dict(
@@ -303,7 +303,8 @@ def process_ind(ind_num, this_ind):
 
     # Also save predicted firing rates 
     if len(fit_list) > 1:
-        best_fit_ind = ll_frame.actual.idxmax()
+        best_fit_ind = int(ll_frame.loc[ll_frame.actual.idxmax()].fit_num)
+        best_fit = fit_list[best_fit_ind]
     else:
         best_fit = fit_list[0]
 
