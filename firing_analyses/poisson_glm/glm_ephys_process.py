@@ -301,6 +301,32 @@ def process_ind(ind_num, this_ind):
     ll_frame['fit_num'] = np.repeat(np.arange(len(fit_list)), n_shuffles_per_fit)
     ll_frame.to_csv(ll_save_path)
 
+    # Also save predicted firing rates 
+    if len(fit_list) > 1:
+        best_fit_ind = ll_frame.actual.idxmax()
+    else:
+        best_fit = fit_list[0]
+
+    # PSTH
+    time_bins = actual_design_mat.trial_time.unique()
+    design_trials = list(actual_design_mat.groupby('trial_labels'))
+    design_spikes = [x.sort_values('trial_time').spikes.values for _,x in design_trials]
+    design_spikes_array = np.stack(design_spikes)
+    design_spikes_tuple = np.array(np.where(design_spikes))
+    np.save(os.path.join(fin_save_path, f'{this_ind_str}_design_spikes.npy'), design_spikes_tuple)
+
+
+    # Predicted PSTH
+    pred_spikes = pd.DataFrame(best_fit.predict(actual_design_mat[best_fit.params.index]), 
+                               columns = ['spikes'])
+    pred_spikes.loc[pred_spikes.spikes > bin_width, 'spikes'] = bin_width
+    pred_spikes['trial_labels'] = actual_design_mat.trial_labels
+    pred_spikes['trial_time'] = actual_design_mat.trial_time
+    pred_trials = list(pred_spikes.groupby('trial_labels'))
+    pred_spikes = [x.sort_values('trial_time').spikes.values for _,x in pred_trials]
+    pred_spikes_array = np.stack(pred_spikes).astype(np.float16)
+    np.save(os.path.join(fin_save_path, f'{this_ind_str}_pred_spikes.npy'), design_spikes_tuple)
+
     del data_frame, actual_design_mat, fit_list, p_val_list, p_val_fin, ll_outs, ll_frame, temp_design_mat
     del this_session_dat, this_taste_dat, this_nrn_dat, other_nrn_dat, stim_dat
     del this_nrn_flat, other_nrn_flat, stim_flat
