@@ -18,6 +18,7 @@ from itertools import product
 from joblib import Parallel, delayed, cpu_count
 from glob import glob
 import json
+from pprint import pprint
 
 os.environ["OMP_NUM_THREADS"] = "1" # export OMP_NUM_THREADS=4
 os.environ["MKL_NUM_THREADS"] = "1" # export MKL_NUM_THREADS=6
@@ -44,57 +45,89 @@ fin_save_path = os.path.join(save_path, f'run_{input_run_ind:03}')
 
 if not os.path.exists(fin_save_path):
     os.makedirs(fin_save_path)
+    run_exists_bool = False
+else:
+    run_exists_bool = True
+    json_path = os.path.join(fin_save_path, 'fit_params.json')
+    params_dict = json.load(open(json_path))
+    print('Run exists with following parameters :')
+    pprint(params_dict)
 
 ############################################################
-# Parameters
-hist_filter_len = 75
-stim_filter_len = 300
-coupling_filter_len = 75
+if run_exists_bool:
+    hist_filter_len = params_dict['hist_filter_len']
+    stim_filter_len = params_dict['stim_filter_len']
+    coupling_filter_len = params_dict['coupling_filter_len']
 
-bin_width = 2
-# Reprocess filter lens
-hist_filter_len_bin = hist_filter_len // bin_width
-stim_filter_len_bin = stim_filter_len // bin_width
-coupling_filter_len_bin = coupling_filter_len // bin_width
+    trial_start_offset = params_dict['trial_start_offset']
+    trial_lims = np.array(params_dict['trial_lims'])
+    stim_t = params_dict['stim_t']
 
-trial_start_offset = -2000
-trial_lims = np.array([1500,4000])
-stim_t = 2000
+    bin_width = params_dict['bin_width']
 
-# Define basis kwargs
-basis_kwargs = dict(
-    n_basis = 15,
-    basis = 'cos',
-    basis_spread = 'log',
-    )
+    # Reprocess filter lens
+    hist_filter_len_bin = params_dict['hist_filter_len_bin'] 
+    stim_filter_len_bin = params_dict['stim_filter_len_bin']
+    coupling_filter_len_bin = params_dict['coupling_filter_len_bin']
 
-# Number of fits on actual data (expensive)
-n_fits = 5
-n_max_tries = 20
-# Number of shuffles tested against each fit
-n_shuffles_per_fit = 10
+    # Define basis kwargs
+    basis_kwargs = params_dict['basis_kwargs'] 
 
-# Save run parameters
-params_dict = dict(
-        hist_filter_len = hist_filter_len,
-        stim_filter_len = stim_filter_len,
-        coupling_filter_len = coupling_filter_len,
-        bin_width = bin_width,
-        hist_filter_len_bin = hist_filter_len_bin,
-        stim_filter_len_bin = stim_filter_len_bin,
-        coupling_filter_len_bin = coupling_filter_len_bin,
-        trial_start_offset = trial_start_offset,
-        trial_lims = list(trial_lims),
-        stim_t = stim_t,
-        basis_kwargs = basis_kwargs,
-        n_fits = n_fits,
-        n_max_tries = n_max_tries,
-        n_shuffles_per_fit = n_shuffles_per_fit,
+    # Number of fits on actual data (expensive)
+    n_fits = params_dict['n_fits']
+    n_max_tries = params_dict['n_max_tries']
+    n_shuffles_per_fit = params_dict['n_shuffles_per_fit']
+
+else:
+    # Parameters
+    hist_filter_len = 75
+    stim_filter_len = 300
+    coupling_filter_len = 75
+
+    bin_width = 2
+    # Reprocess filter lens
+    hist_filter_len_bin = hist_filter_len // bin_width
+    stim_filter_len_bin = stim_filter_len // bin_width
+    coupling_filter_len_bin = coupling_filter_len // bin_width
+
+    trial_start_offset = -2000
+    trial_lims = np.array([1500,4000])
+    stim_t = 2000
+
+    # Define basis kwargs
+    basis_kwargs = dict(
+        n_basis = 15,
+        basis = 'cos',
+        basis_spread = 'log',
         )
 
-params_save_path = os.path.join(fin_save_path, 'fit_params.json')
-with open(params_save_path, 'w') as outf:
-    json.dump(params_dict, outf, indent = 4, default = int)
+    # Number of fits on actual data (expensive)
+    n_fits = 5
+    n_max_tries = 20
+    # Number of shuffles tested against each fit
+    n_shuffles_per_fit = 10
+
+    # Save run parameters
+    params_dict = dict(
+            hist_filter_len = hist_filter_len,
+            stim_filter_len = stim_filter_len,
+            coupling_filter_len = coupling_filter_len,
+            bin_width = bin_width,
+            hist_filter_len_bin = hist_filter_len_bin,
+            stim_filter_len_bin = stim_filter_len_bin,
+            coupling_filter_len_bin = coupling_filter_len_bin,
+            trial_start_offset = trial_start_offset,
+            trial_lims = list(trial_lims),
+            stim_t = stim_t,
+            basis_kwargs = basis_kwargs,
+            n_fits = n_fits,
+            n_max_tries = n_max_tries,
+            n_shuffles_per_fit = n_shuffles_per_fit,
+            )
+
+    params_save_path = os.path.join(fin_save_path, 'fit_params.json')
+    with open(params_save_path, 'w') as outf:
+        json.dump(params_dict, outf, indent = 4, default = int)
 
 ############################################################
 
