@@ -37,7 +37,7 @@ def gen_spike_train(spike_inds):
 
 # Check if previous runs present
 run_list = sorted(glob(os.path.join(save_path, 'run*')))
-run_basenames = [os.path.basename(x) for x in run_list]
+run_basenames = sorted([os.path.basename(x) for x in run_list])
 print(f'Present runs : {run_basenames}')
 input_run_ind = int(input('Please specify current run (integer) :'))
 fin_save_path = os.path.join(save_path, f'run_{input_run_ind:03}')
@@ -279,53 +279,56 @@ def process_ind(ind_num, this_ind):
             print('Finished fitting')
             break
 
-    p_val_list = [res.pvalues for res in fit_list]
-    p_val_fin = []
-    for i, p_vals in enumerate(p_val_list):
-        p_vals = pd.DataFrame(p_vals)
-        p_vals['fit_num'] = i
-        p_vals['values'] = fit_list[i].params.values 
-        p_val_fin.append(p_vals)
+    if len(fit_list) > 0:
+        p_val_list = [res.pvalues for res in fit_list]
+        p_val_fin = []
+        for i, p_vals in enumerate(p_val_list):
+            p_vals = pd.DataFrame(p_vals)
+            p_vals['fit_num'] = i
+            p_vals['values'] = fit_list[i].params.values 
+            p_val_fin.append(p_vals)
 
-    p_val_frame = pd.concat(p_val_fin)
-    p_val_frame.reset_index(inplace=True)
-    p_val_frame.rename(columns={'index':'param', 0 : 'p_val'},inplace=True)
-    p_val_frame.to_csv(pval_save_path)
+        p_val_frame = pd.concat(p_val_fin)
+        p_val_frame.reset_index(inplace=True)
+        p_val_frame.rename(columns={'index':'param', 0 : 'p_val'},inplace=True)
+        p_val_frame.to_csv(pval_save_path)
 
-    ll_names = ['actual','trial_sh','circ_sh','rand_sh']
-    ll_outs = [[gt.calc_loglikelihood(actual_design_mat, res)\
-            for i in range(n_shuffles_per_fit)]\
-            for res in tqdm(fit_list)]
-    ll_outs = np.array(ll_outs).reshape(-1,4)
-    ll_frame = pd.DataFrame(ll_outs, columns=ll_names)
-    ll_frame['fit_num'] = np.repeat(np.arange(len(fit_list)), n_shuffles_per_fit)
-    ll_frame.to_csv(ll_save_path)
+        ll_names = ['actual','trial_sh','circ_sh','rand_sh']
+        ll_outs = [[gt.calc_loglikelihood(actual_design_mat, res)\
+                for i in range(n_shuffles_per_fit)]\
+                for res in tqdm(fit_list)]
+        ll_outs = np.array(ll_outs).reshape(-1,4)
+        ll_frame = pd.DataFrame(ll_outs, columns=ll_names)
+        ll_frame['fit_num'] = np.repeat(np.arange(len(fit_list)), n_shuffles_per_fit)
+        ll_frame.to_csv(ll_save_path)
 
-    # Also save predicted firing rates 
-    if len(fit_list) > 1:
-        best_fit_ind = int(ll_frame.loc[ll_frame.actual.idxmax()].fit_num)
-        best_fit = fit_list[best_fit_ind]
+        # Also save predicted firing rates 
+        if len(fit_list) > 1:
+            best_fit_ind = int(ll_frame.loc[ll_frame.actual.idxmax()].fit_num)
+            best_fit = fit_list[best_fit_ind]
+        else:
+            best_fit = fit_list[0]
+
+        # PSTH
+        time_bins = actual_design_mat.trial_time.unique()
+        design_trials = list(actual_design_mat.groupby('trial_labels'))
+        design_spikes = [x.sort_values('trial_time').spikes.values for _,x in design_trials]
+        design_spikes_array = np.stack(design_spikes)
+        design_spikes_tuple = np.array(np.where(design_spikes))
+        np.save(os.path.join(fin_save_path, f'{this_ind_str}_design_spikes.npy'), design_spikes_tuple)
+
+        # Predicted PSTH
+        pred_spikes = pd.DataFrame(best_fit.predict(actual_design_mat[best_fit.params.index]), 
+                                   columns = ['spikes'])
+        pred_spikes.loc[pred_spikes.spikes > bin_width, 'spikes'] = bin_width
+        pred_spikes['trial_labels'] = actual_design_mat.trial_labels
+        pred_spikes['trial_time'] = actual_design_mat.trial_time
+        pred_trials = list(pred_spikes.groupby('trial_labels'))
+        pred_spikes = [x.sort_values('trial_time').spikes.values for _,x in pred_trials]
+        pred_spikes_array = np.stack(pred_spikes).astype(np.float16)
+        np.save(os.path.join(fin_save_path, f'{this_ind_str}_pred_spikes.npy'), design_spikes_tuple)
     else:
-        best_fit = fit_list[0]
-
-    # PSTH
-    time_bins = actual_design_mat.trial_time.unique()
-    design_trials = list(actual_design_mat.groupby('trial_labels'))
-    design_spikes = [x.sort_values('trial_time').spikes.values for _,x in design_trials]
-    design_spikes_array = np.stack(design_spikes)
-    design_spikes_tuple = np.array(np.where(design_spikes))
-    np.save(os.path.join(fin_save_path, f'{this_ind_str}_design_spikes.npy'), design_spikes_tuple)
-
-    # Predicted PSTH
-    pred_spikes = pd.DataFrame(best_fit.predict(actual_design_mat[best_fit.params.index]), 
-                               columns = ['spikes'])
-    pred_spikes.loc[pred_spikes.spikes > bin_width, 'spikes'] = bin_width
-    pred_spikes['trial_labels'] = actual_design_mat.trial_labels
-    pred_spikes['trial_time'] = actual_design_mat.trial_time
-    pred_trials = list(pred_spikes.groupby('trial_labels'))
-    pred_spikes = [x.sort_values('trial_time').spikes.values for _,x in pred_trials]
-    pred_spikes_array = np.stack(pred_spikes).astype(np.float16)
-    np.save(os.path.join(fin_save_path, f'{this_ind_str}_pred_spikes.npy'), design_spikes_tuple)
+        print('Could not fit a model')
 
     del data_frame, actual_design_mat, fit_list, p_val_list, p_val_fin, ll_outs, ll_frame, temp_design_mat
     del this_session_dat, this_taste_dat, this_nrn_dat, other_nrn_dat, stim_dat
@@ -339,4 +342,6 @@ def try_process(this_ind):
     except:
         print('Failed')
         pass
-parallelize(try_process,fin_inds, n_jobs = 8)
+parallelize(try_process,fin_inds, n_jobs = 4)
+#for num, this_ind in tqdm(enumerate(fin_inds)):
+#    process_ind(num, this_ind)
