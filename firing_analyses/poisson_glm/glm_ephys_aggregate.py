@@ -27,6 +27,7 @@ from sklearn.decomposition import PCA
 import seaborn as sns
 import pingouin as pg
 import json
+import matplotlib_venn as venn
 
 run_str = 'run_002'
 save_path = '/media/bigdata/firing_space_plot/firing_analyses/poisson_glm/artifacts'
@@ -294,35 +295,10 @@ basis_kwargs = params_dict['basis_kwargs']
 # Number of fits on actual data (expensive)
 n_fits = params_dict['n_fits']
 n_max_tries = params_dict['n_max_tries']
-n_shuffles_per_fit = 5
+n_shuffles_per_fit = params_dict['n_shuffles_per_fit']
 
-#hist_filter_len = 200
-#stim_filter_len = 500
-#coupling_filter_len = 200
-#
-#trial_start_offset = -2000
-#trial_lims = np.array([1000,4000])
-#stim_t = 2000
-#
-#bin_width = 10
-#
-## Reprocess filter lens
-#hist_filter_len_bin = hist_filter_len // bin_width
-#stim_filter_len_bin = stim_filter_len // bin_width
-#coupling_filter_len_bin = coupling_filter_len // bin_width
-#
-## Define basis kwargs
-#basis_kwargs = dict(
-#    n_basis = 10,
-#    basis = 'cos',
-#    basis_spread = 'log',
-#    )
-#
-## Number of fits on actual data (expensive)
-#n_fits = 1
-#n_max_tries = 20
 ############################################################
-make_example_plots = True
+make_example_plots = False
 
 stim_vec = np.zeros(spike_list[0].shape[-1])
 stim_vec[stim_t] = 1
@@ -639,8 +615,6 @@ if make_example_plots:
 ############################################################
 # Process inferred filters 
 ############################################################
-alpha = 0.01
-
 # Length of basis is adjusted because models were fit on binned data
 hist_cosine_basis = gt.cb.gen_raised_cosine_basis(
         hist_filter_len_bin,
@@ -672,18 +646,31 @@ max_inds = max_ll_frame.groupby(ind_names).actual.idxmax().reset_index().actual
 max_vals = max_ll_frame.loc[max_inds].drop(columns = 'actual') 
 
 fin_pval_frame = fin_pval_frame.merge(max_vals, on = ['fit_num',*ind_names])
+fin_pval_frame['agg_index'] = ["_".join([str(x) for x in y]) for y in fin_pval_frame[ind_names].values]
 
 sig_alpha = 0.05
 ############################################################
 # Extract history filters
 hist_frame = fin_pval_frame.loc[fin_pval_frame.param.str.contains('hist')]
 #hist_frame.drop(columns = ['trial_sh','circ_sh','rand_sh'], inplace = True)
-hist_frame = hist_frame[['fit_num','param','p_val','values', *ind_names]]
+hist_frame = hist_frame[['fit_num','param','p_val','values', *ind_names, 'agg_index']]
 hist_frame['lag'] = hist_frame.param.str.extract('(\d+)').astype(int)
-hist_groups = [x[1] for x in list(hist_frame.groupby(ind_names))]
-hist_groups = [x.sort_values('lag') for x in hist_groups]
-hist_val_array = np.stack([x['values'].values for x in hist_groups])
-hist_pval_array = np.stack([x['p_val'].values for x in hist_groups])
+#hist_groups = [x[1] for x in list(hist_frame.groupby(ind_names))]
+#hist_groups = [x.sort_values('lag') for x in hist_groups]
+
+hist_val_pivot = hist_frame.pivot_table(
+        index = 'agg_index',
+        columns = 'lag',
+        values = 'values',
+        )
+hist_pval_pivot = hist_frame.pivot_table(
+        index = 'agg_index',
+        columns = 'lag',
+        values = 'p_val',
+        )
+
+hist_val_array = hist_val_pivot.values 
+hist_pval_array = hist_pval_pivot.values
 
 sig_hist_filters = np.where((hist_pval_array < sig_alpha).sum(axis=1))[0]
 frac_sig_hist_filters = np.round(len(sig_hist_filters) / len(hist_pval_array), 2)
@@ -705,18 +692,21 @@ hist_recon = np.dot(hist_val_array, hist_cosine_basis)
 pca = PCA(n_components = 5)
 pca.fit(hist_recon.T)
 pca_array = pca.transform(hist_recon.T)
+hist_tvec = np.arange(hist_recon.shape[1]) * bin_width
 
 fig, ax = plt.subplots(2,1, sharex=True)
 for i, dat in enumerate(pca_array.T):
-    ax[0].plot(dat, label = f'PC {i}, {np.round(pca.explained_variance_ratio_[i],2)}', 
+    ax[0].plot(hist_tvec, dat, 
+               label = f'PC {i}, {np.round(pca.explained_variance_ratio_[i],2)}', 
                linewidth = 5, alpha = 0.7)
 ax[0].legend()
 ax[0].set_ylabel('PC Magnitude')
-ax[1].imshow(pca_array.T, aspect = 'auto', interpolation = 'none')
+ax[1].pcolormesh(hist_tvec, np.arange(pca_array.shape[1]), pca_array.T) 
 ax[1].set_ylabel('PC #')
 ax[1].set_xlabel('Time (ms)')
 fig.suptitle(f'PCA of history filters, \n Total variance explained: {np.round(pca.explained_variance_ratio_.sum(),2)}')
-fig.savefig(os.path.join(plot_dir, 'hist_filter_pca.png'), dpi = 300, bbox_inches = 'tight')
+fig.savefig(os.path.join(plot_dir, 'hist_filter_pca.png'), 
+            dpi = 300, bbox_inches = 'tight')
 plt.close(fig)
 #plt.show()
 
@@ -726,7 +716,7 @@ fig, ax = plt.subplots(len(pca_array.T), 1, sharex=True, sharey=True,
                        figsize = (3,10))
 peak_markers = [3,6,11,19]
 for i, (this_dat, this_ax) in enumerate(zip(pca_array.T[:,:plot_cutoff], ax)):
-    this_ax.plot(this_dat)
+    this_ax.plot(hist_tvec, this_dat)
     this_ax.set_ylabel(f'PC {i} : {np.round(pca.explained_variance_ratio_[i],2)}')
     for this_peak in peak_markers:
         this_ax.axvline(this_peak, linestyle = '--', color = 'k', alpha = 0.5)
@@ -743,12 +733,24 @@ plt.close(fig)
 # Extract stimulus filters
 stim_frame = fin_pval_frame.loc[fin_pval_frame.param.str.contains('stim')]
 #stim_frame.drop(columns = ['trial_sh','circ_sh','rand_sh'], inplace = True)
-stim_frame = stim_frame[['fit_num','param','p_val','values', *ind_names]]
+stim_frame = stim_frame[['fit_num','param','p_val','values', *ind_names, 'agg_index']]
 stim_frame['lag'] = stim_frame.param.str.extract('(\d+)').astype(int)
-stim_groups = [x[1] for x in list(stim_frame.groupby(ind_names))]
-stim_groups = [x.sort_values('lag') for x in stim_groups]
-stim_val_array = np.stack([x['values'].values for x in stim_groups])
-stim_pval_array = np.stack([x['p_val'].values for x in stim_groups])
+#stim_groups = [x[1] for x in list(stim_frame.groupby(ind_names))]
+#stim_groups = [x.sort_values('lag') for x in stim_groups]
+
+stim_val_pivot = stim_frame.pivot_table(
+        index = 'agg_index',
+        columns = 'lag',
+        values = 'values',
+        )
+stim_pval_pivot = stim_frame.pivot_table(
+        index = 'agg_index',
+        columns = 'lag',
+        values = 'p_val',
+        )
+
+stim_val_array = stim_val_pivot.values #np.stack([x['values'].values for x in stim_groups])
+stim_pval_array = stim_pval_pivot.values #np.stack([x['p_val'].values for x in stim_groups])
 
 sig_stim_filters = np.where((stim_pval_array < sig_alpha).sum(axis=1))[0]
 frac_sig_stim_filters = np.round(len(sig_stim_filters) / len(stim_pval_array), 2)
@@ -764,6 +766,8 @@ kmeans = KMeans(n_clusters = 4, random_state = 0).fit(zscore_stim_recon)
 zscore_stim_recon = zscore_stim_recon[kmeans.labels_.argsort()]
 stim_recon = stim_recon[kmeans.labels_.argsort()]
 
+stim_tvec = np.arange(stim_recon.shape[1]) * bin_width
+
 ## Plot
 #fig, ax = plt.subplots(1,2)
 #ax[0].imshow(stim_recon, aspect = 'auto', interpolation = 'none')
@@ -778,11 +782,11 @@ pca_array = pca.transform(stim_recon.T)
 
 fig, ax = plt.subplots(2,1, sharex=True)
 for i, dat in enumerate(pca_array.T):
-    ax[0].plot(dat, label = f'PC {i}, {np.round(pca.explained_variance_ratio_[i],2)}', 
+    ax[0].plot(stim_tvec, dat, label = f'PC {i}, {np.round(pca.explained_variance_ratio_[i],2)}', 
                linewidth = 2, alpha = 0.7)
-ax[0].legend()
+ax[0].legend(loc='right')
 ax[0].set_ylabel('PC Magnitude')
-ax[1].imshow(pca_array.T, aspect = 'auto', interpolation = 'none')
+ax[1].pcolormesh(stim_tvec, np.arange(pca_array.shape[1]), pca_array.T) 
 ax[1].set_ylabel('PC #')
 ax[1].set_xlabel('Time (ms)')
 fig.suptitle(f'PCA of stimulus filters, \n Total variance explained: {np.round(pca.explained_variance_ratio_.sum(),2)}')
@@ -794,29 +798,29 @@ plt.close(fig)
 fig, ax = plt.subplots(len(pca_array.T), 1, sharex=True, sharey=True,
                        figsize = (3,10))
 for i, (this_dat, this_ax) in enumerate(zip(pca_array.T, ax)):
-    this_ax.plot(this_dat)
+    this_ax.plot(stim_tvec, this_dat)
     this_ax.set_ylabel(f'PC {i} : {np.round(pca.explained_variance_ratio_[i],2)}')
 ax[-1].set_xlabel('Time (ms)')
 fig.suptitle(f'PCA of stimulus filters, \n Total variance explained: {np.round(pca.explained_variance_ratio_.sum(),2)}')
 fig.savefig(os.path.join(plot_dir, 'stim_filter_pca2.png'), dpi = 300, bbox_inches = 'tight')
 plt.close(fig)
 
-# Plot each filter in it's own subplot
-plot_cutoff = 50
-fig, ax = plt.subplots(len(pca_array.T), 1, sharex=True, sharey=True,
-                       figsize = (3,10))
-peak_markers = [2,4,8,16]
-for i, (this_dat, this_ax) in enumerate(zip(pca_array.T[:,:plot_cutoff], ax)):
-    this_ax.plot(this_dat)
-    this_ax.set_ylabel(f'PC {i} : {np.round(pca.explained_variance_ratio_[i],2)}')
-    for this_peak in peak_markers:
-        this_ax.axvline(this_peak, linestyle = '--', color = 'k', alpha = 0.5)
-ax[-1].set_xlabel('Time (ms)')
-pca_str = f'Total variance explained: {np.round(pca.explained_variance_ratio_.sum(),2)}'
-marker_str = f'Peak markers: {peak_markers} ms'
-fig.suptitle(f'PCA of Stim filters (zoomed) \n' + pca_str + '\n' + marker_str)
-fig.savefig(os.path.join(plot_dir, 'stim_filter_pca2_zoom.png'), dpi = 300, bbox_inches = 'tight')
-plt.close(fig)
+## Plot each filter in it's own subplot
+#plot_cutoff = 50
+#fig, ax = plt.subplots(len(pca_array.T), 1, sharex=True, sharey=True,
+#                       figsize = (3,10))
+#peak_markers = [2,4,8,16]
+#for i, (this_dat, this_ax) in enumerate(zip(pca_array.T[:,:plot_cutoff], ax)):
+#    this_ax.plot(this_dat)
+#    this_ax.set_ylabel(f'PC {i} : {np.round(pca.explained_variance_ratio_[i],2)}')
+#    for this_peak in peak_markers:
+#        this_ax.axvline(this_peak, linestyle = '--', color = 'k', alpha = 0.5)
+#ax[-1].set_xlabel('Time (ms)')
+#pca_str = f'Total variance explained: {np.round(pca.explained_variance_ratio_.sum(),2)}'
+#marker_str = f'Peak markers: {peak_markers} ms'
+#fig.suptitle(f'PCA of Stim filters (zoomed) \n' + pca_str + '\n' + marker_str)
+#fig.savefig(os.path.join(plot_dir, 'stim_filter_pca2_zoom.png'), dpi = 300, bbox_inches = 'tight')
+#plt.close(fig)
 
 ############################################################
 
@@ -851,6 +855,7 @@ coupling_pivoted_pvals = [x.pivot(index = 'other_nrn', columns = 'lag', values =
 
 # Count each filter as significant if a value is below alpha
 # Note, these are the neuron inds as per the array of each session
+alpha = 0.001
 coupling_pivoted_raw_inds = [np.where((x < alpha).sum(axis=1))[0] \
         for x in coupling_pivoted_pvals]
 coupling_pivoted_frame_index = [x.index.values for x in coupling_pivoted_vals]
@@ -862,6 +867,7 @@ coupling_val_array = np.concatenate(coupling_pivoted_vals, axis = 0)
 
 # Reconstruct coupling filters
 coupling_recon = np.dot(coupling_val_array, coup_cosine_basis)
+coupling_tvec = np.arange(coupling_recon.shape[1]) * bin_width
 
 # plot principle components
 pca = PCA(n_components = 5)
@@ -870,11 +876,12 @@ pca_array = pca.transform(coupling_recon.T)
 
 fig, ax = plt.subplots(2,1, sharex=True)
 for i, dat in enumerate(pca_array.T):
-    ax[0].plot(dat, label = f'PC {i}, {np.round(pca.explained_variance_ratio_[i],2)}', 
+    ax[0].plot(coupling_tvec, dat, 
+               label = f'PC {i}, {np.round(pca.explained_variance_ratio_[i],2)}', 
                linewidth = 2, alpha = 0.7)
-ax[0].legend()
+ax[0].legend(loc='right')
 ax[0].set_ylabel('PC Magnitude')
-ax[1].imshow(pca_array.T, aspect = 'auto', interpolation = 'none')
+ax[1].pcolormesh(coupling_tvec, np.arange(pca_array.shape[1]), pca_array.T) 
 ax[1].set_ylabel('PC #')
 ax[1].set_xlabel('Time (ms)')
 fig.suptitle(f'PCA of coupling filters, \n Total variance explained: {np.round(pca.explained_variance_ratio_.sum(),2)}')
@@ -886,7 +893,7 @@ plt.close(fig)
 fig, ax = plt.subplots(len(pca_array.T), 1, sharex=True, sharey=True,
                        figsize = (3,10))
 for i, (this_dat, this_ax) in enumerate(zip(pca_array.T, ax)):
-    this_ax.plot(this_dat)
+    this_ax.plot(coupling_tvec, this_dat)
     this_ax.set_ylabel(f'PC {i} : {np.round(pca.explained_variance_ratio_[i],2)}')
 ax[-1].set_xlabel('Time (ms)')
 fig.suptitle(f'PCA of coupling filters, \n Total variance explained: {np.round(pca.explained_variance_ratio_.sum(),2)}')
@@ -899,7 +906,7 @@ fig, ax = plt.subplots(len(pca_array.T), 1, sharex=True, sharey=True,
                        figsize = (3,10))
 peak_markers = [6,11,19]
 for i, (this_dat, this_ax) in enumerate(zip(pca_array.T[:,:plot_cutoff], ax)):
-    this_ax.plot(this_dat)
+    this_ax.plot(coupling_tvec, this_dat)
     this_ax.set_ylabel(f'PC {i} : {np.round(pca.explained_variance_ratio_[i],2)}')
     for this_peak in peak_markers:
         this_ax.axvline(this_peak, linestyle = '--', color = 'k', alpha = 0.5)
@@ -909,6 +916,77 @@ marker_str = f'Peak markers: {peak_markers} ms'
 fig.suptitle(f'PCA of coupling filters (zoomed) \n' + pca_str + '\n' + marker_str)
 fig.savefig(os.path.join(plot_dir, 'coupling_filter_pca2_zoom.png'), dpi = 300, bbox_inches = 'tight')
 plt.close(fig)
+
+########################################
+# Do filters from BLA-->GC and GC-->BLA have different shapes
+
+coupling_list_frame = coupling_frame.groupby([*ind_names, 'other_nrn']).\
+        agg({'values' : lambda x : x.tolist(),
+             'p_val' : lambda x: x.tolist()}).reset_index()
+coupling_list_frame = coupling_list_frame.merge(unit_region_frame[['neuron','region','session']],
+                                how = 'left', on = ['session','neuron'])
+coupling_list_frame = coupling_list_frame.merge(unit_region_frame[['neuron','region', 'session']],
+                                how = 'left', left_on = ['session', 'other_nrn'], 
+                                right_on = ['session','neuron'])
+coupling_list_frame.drop(columns = 'neuron_y', inplace = True)
+coupling_list_frame.rename(columns = {
+    'neuron_x':'neuron', 
+    'region_x' : 'region',
+    'region_y' : 'input_region'}, 
+                   inplace = True)
+
+coupling_io_groups_list = list(coupling_list_frame.groupby(['region','input_region']))
+coupling_io_group_names = [x[0] for x in coupling_io_groups_list]
+
+coupling_io_group_filters = [np.stack(x[1]['values']) for x in coupling_io_groups_list]
+coupling_io_group_filter_recon = [x.dot(coup_cosine_basis) for x in coupling_io_group_filters]
+coupling_io_group_filter_pca = np.stack([PCA(n_components=3).fit_transform(x.T) \
+        for x in coupling_io_group_filter_recon])
+
+vmin,vmax = np.min(coupling_io_group_filter_pca), np.max(coupling_io_group_filter_pca)
+fig,ax = plt.subplots(2,2, sharex=True, sharey=True)
+for i, (this_dat, this_ax) in enumerate(zip(coupling_io_group_filter_pca, ax.flatten())):
+    #this_ax.plot(coupling_tvec, this_dat)
+    im = this_ax.pcolormesh(coupling_tvec, np.arange(len(this_dat.T)),
+                       this_dat.T, vmin = vmin, vmax = vmax)
+    this_ax.set_ylabel('PC #')
+    this_ax.set_title("<--".join(coupling_io_group_names[i]))
+cax = fig.add_axes([0.95, 0.1, 0.03, 0.8])
+fig.colorbar(im, cax=cax)
+ax[-1,-1].set_xlabel('Time (ms)')
+fig.suptitle('PCA of coupling filters')
+#plt.show()
+fig.savefig(os.path.join(plot_dir, 'coupling_by_connection.png'), dpi = 300, bbox_inches = 'tight')
+plt.close(fig)
+
+fig,ax = plt.subplots(2,2, sharex=True, sharey=True)
+for i, (this_dat, this_ax) in enumerate(zip(coupling_io_group_filter_pca, ax.flatten())):
+    for num, this_pc in enumerate(this_dat.T):
+        this_ax.plot(coupling_tvec, this_pc, label = f'PC{num}')
+    this_ax.set_title("<--".join(coupling_io_group_names[i]))
+ax[-1,-1].set_xlabel('Time (ms)')
+ax[-1,-1].legend()
+fig.suptitle('PCA of coupling filters')
+fig.savefig(os.path.join(plot_dir, 'coupling_by_connection2.png'), dpi = 300, bbox_inches = 'tight')
+plt.close(fig)
+
+# Check whether filter shapes and pvalue distributions are different
+coupling_pval_dat = coupling_list_frame.drop(columns = 'values') 
+coupling_pval_dat = coupling_pval_dat.explode('p_val')
+coupling_pval_dat['log_pval'] = np.vectorize(np.log10)(coupling_pval_dat['p_val'])
+coupling_pval_dat.reset_index(inplace=True)
+coupling_pval_dat['group_str'] = coupling_pval_dat.apply(lambda x: f'{x.region} <-- {x.input_region}', axis = 1)
+
+g = sns.displot(
+        data = coupling_pval_dat,
+        x = 'log_pval',
+        kind = 'ecdf',
+        hue = 'group_str',
+        )
+this_ax = g.axes[0][0]
+this_ax.set_yscale('log')
+this_ax.set_ylim([0.005,1])
+plt.show()
 
 ########################################
 
@@ -995,9 +1073,35 @@ plt.close()
 
 ##############################
 # Segregation of projecting populations
-# bla --> gc
-bla_to_gc = tuple_frame.dropna().query('region == "gc" and input_region == "bla"').groupby(['session','input_neuron']).mean().reset_index()[['session','input_neuron']]
-gc_to_bla = tuple_frame.dropna().query('region == "bla" and input_region == "gc"').groupby(['session','input_neuron']).mean().reset_index()[['session','input_neuron']]
+tuple_frame['neuron_idx'] = ["_".join([str(y) for y in x]) for x in tuple_frame[ind_names].values] 
+tuple_frame['input_neuron_idx'] = ["_".join([str(y) for y in x]) \
+        for x in tuple_frame[['session','taste','input_neuron']].values] 
+tuple_frame['cxn_type'] = ["<--".join([str(y) for y in x]) \
+        for x in tuple_frame[['region','input_region']].values]
+
+inter_region_frame = tuple_frame.loc[tuple_frame.cxn_type.isin(['gc<--bla','bla<--gc'])]
+
+gc_neurons_rec = inter_region_frame.loc[inter_region_frame.cxn_type == 'gc<--bla']['neuron_idx'].unique()
+gc_neurons_send = inter_region_frame.loc[inter_region_frame.cxn_type == 'bla<--gc']['input_neuron_idx'].unique()
+
+bla_neurons_rec = inter_region_frame.loc[inter_region_frame.cxn_type == 'bla<--gc']['neuron_idx'].unique()
+bla_neurons_send = inter_region_frame.loc[inter_region_frame.cxn_type == 'gc<--bla']['input_neuron_idx'].unique()
+
+fig,ax = plt.subplots(2,1)
+venn.venn2(
+        [set(gc_neurons_rec), set(gc_neurons_send)], 
+        set_labels = ('GC rec', 'GC send'),
+        ax = ax[0])
+venn.venn2(
+        [set(bla_neurons_rec), set(bla_neurons_send)],
+        set_labels = ('BLA rec', 'BLA send'),
+        ax = ax[1])
+ax[0].set_title('GC neurons')
+ax[1].set_title('BLA neurons')
+fig.suptitle('Overlap in neurons sending and receiving input')
+fig.savefig(os.path.join(plot_dir, 'projecting_neuron_venn.png'), dpi = 300)
+plt.close()
+#plt.show()
 
 # Do these groups receive more or less input than the general population
 # e.g. do the bla_to_gc projecting BLA neurons receive more or less input from 
