@@ -29,8 +29,14 @@ import pingouin as pg
 import json
 import matplotlib_venn as venn
 
-run_str = 'run_004'
+#run_str = 'run_004'
 save_path = '/media/bigdata/firing_space_plot/firing_analyses/poisson_glm/artifacts'
+# Check if previous runs present
+run_list = sorted(glob(os.path.join(save_path, 'run*')))
+run_basenames = sorted([os.path.basename(x) for x in run_list])
+print(f'Present runs : {run_basenames}')
+input_run_ind = int(input('Please specify current run (integer) :'))
+run_str = f'run_{input_run_ind:03d}'
 plot_dir=  f'/media/bigdata/firing_space_plot/firing_analyses/poisson_glm/plots/{run_str}'
 
 if not os.path.exists(plot_dir):

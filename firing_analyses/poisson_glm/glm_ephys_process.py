@@ -28,7 +28,7 @@ save_path = os.path.join(base_path,'artifacts')
 
 def parallelize(func, iterator, n_jobs = 16):
     #return Parallel(n_jobs = cpu_count()-2)\
-    return Parallel(n_jobs = n_jobs)\
+    return Parallel(n_jobs = n_jobs, max_nbytes = 1e6)\
             (delayed(func)(this_iter) for this_iter in tqdm(enumerate(iterator)))
 
 def gen_spike_train(spike_inds):
@@ -213,6 +213,13 @@ else:
     ind_frame = pd.read_csv(os.path.join(save_path,'ind_frame.csv'),index_col=0)
     fin_inds = ind_frame.values
 
+# Sort inds by total number of neurons per session
+# This is needed because larger sessions take a long time to fit
+count_per_session = ind_frame.groupby(by='session').count().values[:,0]
+ind_frame['count'] = count_per_session[ind_frame['session'].values]
+ind_frame = ind_frame.sort_values(by='count')
+fin_inds = ind_frame.values[:,:-1] # Drop Count
+
 ############################################################
 
 # While iterating, will have to keep track of
@@ -347,8 +354,9 @@ def process_ind(ind_num, this_ind):
         design_trials = list(actual_design_mat.groupby('trial_labels'))
         design_spikes = [x.sort_values('trial_time').spikes.values for _,x in design_trials]
         design_spikes_array = np.stack(design_spikes)
-        design_spikes_tuple = np.array(np.where(design_spikes))
-        np.save(os.path.join(fin_save_path, f'{this_ind_str}_design_spikes.npy'), design_spikes_tuple)
+        #design_spikes_tuple = np.array(np.where(design_spikes))
+        #np.save(os.path.join(fin_save_path, f'{this_ind_str}_design_spikes.npy'), design_spikes_tuple)
+        np.save(os.path.join(fin_save_path, f'{this_ind_str}_design_spikes.npy'), design_spikes_array)
 
         # Predicted PSTH
         pred_spikes = pd.DataFrame(best_fit.predict(actual_design_mat[best_fit.params.index]), 
@@ -359,11 +367,12 @@ def process_ind(ind_num, this_ind):
         pred_trials = list(pred_spikes.groupby('trial_labels'))
         pred_spikes = [x.sort_values('trial_time').spikes.values for _,x in pred_trials]
         pred_spikes_array = np.stack(pred_spikes).astype(np.float16)
-        np.save(os.path.join(fin_save_path, f'{this_ind_str}_pred_spikes.npy'), design_spikes_tuple)
+        np.save(os.path.join(fin_save_path, f'{this_ind_str}_pred_spikes.npy'), pred_spikes_array)
+        del p_val_list, p_val_fin, ll_outs, ll_frame, temp_design_mat
     else:
         print('Could not fit a model')
 
-    del data_frame, actual_design_mat, fit_list, p_val_list, p_val_fin, ll_outs, ll_frame, temp_design_mat
+    del data_frame, actual_design_mat, fit_list 
     del this_session_dat, this_taste_dat, this_nrn_dat, other_nrn_dat, stim_dat
     del this_nrn_flat, other_nrn_flat, stim_flat
     print(f'Finished: {ind_num}, {this_ind}')
@@ -375,6 +384,9 @@ def try_process(this_ind):
     except:
         print('Failed')
         pass
-parallelize(try_process,fin_inds, n_jobs = 4)
-#for num, this_ind in tqdm(enumerate(fin_inds)):
-#    process_ind(num, this_ind)
+#parallelize(try_process,fin_inds, n_jobs = 8)
+
+for num, this_ind in tqdm(enumerate(fin_inds)):
+    process_ind(num, this_ind)
+
+# TODO: Some large models max out ram and make parallelize crash. These can be tracked and ignored till the end so the rest of the fits can be completed

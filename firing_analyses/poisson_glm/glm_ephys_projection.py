@@ -438,7 +438,9 @@ time_vec = outs[0]['exp_mean_pred'].index.values
 input_frame = pd.DataFrame(outs)
 input_frame_groups = list(input_frame.groupby(['neuron_region', 'input_region']))
 
-for (nrn_region, input_region), dat in input_frame_groups: 
+fig,ax = plt.subplots(3,4, sharex=True, sharey='row', figsize = (15,10))
+fig2, ax2 = plt.subplots(4,1, sharex=True, sharey=True, figsize = (5,10))
+for i, ((nrn_region, input_region), dat) in enumerate(input_frame_groups): 
     cont_dat = np.stack([x.values for x in dat.exp_mean_pred])
     cont_dat_smooth = np.apply_along_axis(conv_1d, axis=1, arr=cont_dat)
     time_smooth = np.convolve(time_vec, kern, mode='valid')
@@ -454,36 +456,59 @@ for (nrn_region, input_region), dat in input_frame_groups:
     sort_inds = np.argsort(peak_inds)[::-1]
     zscore_cont_dat = zscore_cont_dat[sort_inds,:]
 
-    fig,ax = plt.subplots(3,1, sharex=True, figsize = (5,10))
-    ax[0].hist(time_smooth[peak_inds], bins = 30, density=True, alpha = 0.5);
     kde = gaussian_kde(time_smooth[peak_inds])
     kde_dat = kde(time_smooth)
-    ax[0].plot(time_smooth, kde_dat)
-    ax[0].axvline(stim_t, color='r', linestyle='--')
-    ax[0].set_title(f'{input_region}-->{nrn_region}' + '\n' + 'Peak time distribution')
-    ax[1].pcolormesh(
+
+    ax2[i].hist(time_smooth[peak_inds], bins = 30, density=True, alpha = 0.5);
+    ax2[i].plot(time_smooth, kde_dat)
+    ax2[i].axvline(stim_t, color='r', linestyle='--')
+    ax2[i].set_title(f'{input_region}-->{nrn_region}')
+
+    ax[0,i].hist(time_smooth[peak_inds], bins = 30, density=True, alpha = 0.5);
+    ax[0,i].plot(time_smooth, kde_dat)
+    ax[0,i].axvline(stim_t, color='r', linestyle='--')
+    ax[0,i].set_title(f'{input_region}-->{nrn_region}' + '\n' + 'Peak time distribution')
+    ax[1,i].pcolormesh(
          time_smooth, np.arange(cont_dat.shape[0]),
          zscore_cont_dat, cmap='RdBu_r', vmin=-2, vmax=2)
-    ax[1].axvline(stim_t, color='r', linestyle='--')
-    ax[1].set_title('Zscored Contribution matrix')
+    ax[1,i].axvline(stim_t, color='r', linestyle='--')
+    ax[1,i].set_title('Zscored Contribution matrix')
     # Perform PCA
     pca = PCA(n_components=3)
     pca.fit(zscore_cont_dat.T)
     pca_dat = pca.transform(zscore_cont_dat.T)
     explained_variances = np.round(pca.explained_variance_ratio_,2)
-    for i in range(3):
-        ax[2].plot(time_smooth, pca_dat[:,i], label=f'PC{i+1}',
+    for j in range(len(pca_dat.T)):
+        ax[2,i].plot(time_smooth, pca_dat[:,j], label=f'PC{j+1}',
                    linewidth=2, alpha=0.8)
-    ax[2].axvline(stim_t, color='r', linestyle='--')
-    ax[2].legend()
-    ax[2].set_title('PCA' + '\n' + \
+    ax[2,i].axvline(stim_t, color='r', linestyle='--')
+    ax[2,i].legend()
+    ax[2,i].set_title('PCA' + '\n' + \
             f'Explained variances: {explained_variances}' + '\n' + \
             f'SUM: {np.round(explained_variances.sum(),2)}')
-    ax[2].set_xlabel('Time (ms)')
+    ax[2,i].set_xlabel('Time (ms)')
     #plt.show()
-    plt.tight_layout()
-    plt.savefig(os.path.join(
-        contribution_plot_dir, f'{nrn_region}_contribution_{input_region}.png'),
-        bbox_inches='tight', dpi=300)
-    plt.close()
+fig.tight_layout()
+fig.savefig(os.path.join(
+    contribution_plot_dir, 'projection_contribution_agg.png'),
+    bbox_inches='tight', dpi=300)
+plt.close(fig)
+
+fig2_peaks = [
+        [2400],
+        [2300, 2900],
+        [2600],
+        [2300, 2800],
+        ]
+for peaks, this_ax in zip(fig2_peaks, ax2):
+    for this_peak in peaks:
+        this_ax.axvline(this_peak, color='k', linestyle='--', alpha = 0.7)
+        this_ax.text(this_peak, 0.001, f'{this_peak}', rotation=90, fontsize=8)
+
+fig2.suptitle('Peak time distribution')
+fig2.tight_layout()
+fig2.savefig(os.path.join(
+    contribution_plot_dir, 'peak_time_distribution.png'),
+    bbox_inches='tight', dpi=300)
+plt.close(fig2)
 
