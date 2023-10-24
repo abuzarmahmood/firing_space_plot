@@ -7,7 +7,7 @@ Use Rayleigh test to generate plots of:
 
 # Import required modules
 from pycircstat.tests import rayleigh
-from scipy.stats import mannwhitneyu
+from scipy.stats import mannwhitneyu, linregress
 import seaborn as sns
 # from astropy.stats import rayleightest
 import xarray as xr
@@ -65,85 +65,47 @@ def rolling_rayleigh(x, start=-1000, stop=2500, window=250, step=25):
     return return_frame
     # return pd.DataFrame(dict(time = window_starts, p_val = p_val_list))
 
-def interp_phase(df, t_vec):
-    t = df.time.values/1000
-    phi = np.unwrap(df.phases.values)
-    f = interp1d(t, phi, kind='linear', fill_value='extrapolate')
-    phi_vec = f(t_vec)
-    return phi_vec
-
-def wrap_phase(phase_vec):
+# Note: Window size must be adjusted according to frequency
+def rolling_rayleigh2(x, start = -1000, stop = 2500, f_mult = 1, step = 25):
     """
-    Wrap phase vector to -pi to pi
+    Calculate rayleigh statistic for a given frequency band
+    and adjust window size accordingly
+
+    Inputs:
+        x: pandas dataframe
+        f: frequency band of interest
+        start: start time of selected data 
+        stop: stop time of selected data 
+        f_mult: multiplier to adjust window size according to frequency
     """
-    phase_vec = np.mod(phase_vec, 2*np.pi)
-    phase_vec[phase_vec > np.pi] = phase_vec[phase_vec > np.pi] - 2*np.pi
-    return phase_vec
+    f = x.freq.iloc[0]
+    window = int(f_mult*1000/f)
+    window_starts = np.arange(start, stop-window+step, step)
+    window_ends = window_starts + window
+    windows = list(zip(window_starts, window_ends))
+    p_val_list = []
+    for this_window in windows:
+        this_dat = x.loc[(x.time >= this_window[0]) &
+                         (x.time < this_window[1])]
+        p_val = custom_rayleigh(this_dat)
+        p_val_list.append(p_val)
+    p_val_frame = np.array(p_val_list)
+    # Window ends is taken as time for window, otherwise -100 will get
+    # data for post-stim if window > 100
+    return_frame = pd.DataFrame(
+            dict(
+                time=window_ends,
+                p_val=p_val_frame[:, 0],
+                z_stat=p_val_frame[:, 1],
+                time_bins = list(zip(window_starts, window_ends))
+                     )
+    )
+    z_stat = return_frame['z_stat']
+    return_frame['scaled_z_stat'] = (
+        z_stat - z_stat.min()) / (z_stat.max() - z_stat.min())
+    return return_frame
 
-# Align phases per trial
-def return_alignment_times(phase_array, t_vec, freq):
-    """
-    Find most common start and end points of phase across trials
-    Stretch everything to fit in that window
-    """
-    unwrap_phase = np.unwrap(phase_array, axis = 1)
-    start_phi = unwrap_phase[:,0]
-    set_start_phi = np.median(start_phi)
-    delta_phi = set_start_phi - start_phi 
 
-    delta_t = delta_phi / (2*np.pi*freq)
-    new_t_vecs = np.stack([t_vec - x for x in delta_t])
-
-    # Now stretch or shrink each trial to fit in the window
-    set_end_phi = np.median(unwrap_phase[:,-1])
-    set_delta_phi = set_end_phi - set_start_phi
-    set_time_taken = set_delta_phi / (2*np.pi*freq)
-
-    ind_at_set_end = np.argmin(np.abs(unwrap_phase - set_end_phi), axis = 1)
-    t_at_set_end = np.array([x[y] for x,y in zip(new_t_vecs, ind_at_set_end)])
-    new_t_vecs = np.stack([(this_t / this_end)*set_time_taken \
-            for this_t, this_end in zip(new_t_vecs, t_at_set_end)])
-
-    return new_t_vecs
-
-def remove_outliers(X, thresh = 3):
-    """
-    Remove outliers using distance from median
-
-    Input:
-        X: samples x features
-        thresh: number of median absolute deviations from median to consider outlier
-
-    Output:
-        outlier_inds: indices of outliers
-        non_outlier_inds: indices of non-outliers
-    """
-    median = np.median(X, axis = 0)
-    dist_from_median = np.abs(X - median)
-    sum_dist_from_median = dist_from_median.sum(axis=-1)
-    median_dist_from_median = np.median(sum_dist_from_median)
-    MAD = np.median(np.abs(sum_dist_from_median - median_dist_from_median))
-    outlier_inds = np.where(sum_dist_from_median > median_dist_from_median + thresh*MAD)[0]
-    non_outlier_inds = np.where(sum_dist_from_median <= median_dist_from_median + thresh*MAD)[0]
-    return outlier_inds, non_outlier_inds
-
-# Make array with aligned phases
-def register_phases(phase_array, aligned_t_vec):
-    min_t = aligned_t_vec.min(axis=None)
-    max_t = aligned_t_vec.max(axis=None)
-    new_t_vec = np.linspace(min_t, max_t, 100)
-    new_phase_array = np.stack([np.interp(new_t_vec, this_t, this_phase) \
-            for this_t, this_phase in zip(aligned_t_vec, phase_array)])
-    return new_phase_array, new_t_vec
-
-def register_spikes(df, aligned_t_vec, t_vec):
-    """
-    Take positions of spikes according to old t_vec and put them in aligned_t_vec
-    """
-    spike_times = df.time.values / 1000
-    old_t_vec_inds = np.argmin(np.abs(t_vec - spike_times[:,None]), axis = 1)
-    new_t_vec_times = aligned_t_vec[old_t_vec_inds]
-    return new_t_vec_times
 
 ##################################################
 ## Read in data
@@ -183,6 +145,8 @@ fin_phase_frame.reset_index(inplace=True, drop=False, level = 'freq')
 fin_phase_frame['freq'] = freq_vec[fin_phase_frame['freq']]
 fin_phase_frame['freq'] = fin_phase_frame['freq'].astype(int)
 fin_phase_frame.set_index('freq', append=True, inplace=True)
+# Drop 0 Hz
+fin_phase_frame = fin_phase_frame.loc[fin_phase_frame.freq != 0]
 
 # Plot histogram of spike counts
 spike_counts = fin_phase_frame.reset_index(level=['spikes_region', 'freq'])
@@ -205,13 +169,14 @@ group_name_list = ['basename', 'spikes_region',
 group_obj = fin_phase_frame.groupby(group_name_list)
 group_list = list(group_obj)
 
+
 ########################################
 # Run rayleigh test on each neuron
 
 window_size = 250
 step_size = 250
 def temp_rolling_rayleigh(x): 
-    return rolling_rayleigh(x[1], window = window_size, step = step_size)
+    return rolling_rayleigh2(x[1], step = step_size)
 
 meta_list = [x[0] for x in group_list]
 group_rolling_rayleigh = parallelize(temp_rolling_rayleigh, group_list)
@@ -263,10 +228,17 @@ plt.close()
 ########################################
 # Further analysis using scaled_z_stat
 subset_cols = ['spikes_region', 'phase_region','freq', 
-               'time', 'scaled_z_stat', 'p_val_sig']
+               'time',  'time_bins',
+               'scaled_z_stat', 'p_val_sig',
+               ]
 imp_dat = group_rayleigh[subset_cols]
 imp_dat = imp_dat.groupby(subset_cols[:-2]).mean().reset_index()
 region_dat = [imp_dat[imp_dat['spikes_region'] == x] for x in imp_dat['spikes_region'].unique()]
+
+def manual_pivot(df):
+    """
+    Due to different sized time bins, we need to manually pivot
+    """
 
 # Generate timeseries of scaled_z_stat
 region_z_stat_pivot = [x.pivot(index='freq', columns='time', values='scaled_z_stat') for x in region_dat]
@@ -393,147 +365,41 @@ for this_ind in wanted_nrn_group_inds[:10]:
     fig.colorbar(im[3], ax=ax)
     plt.show()
 
+##############################
+# Examples of single neuron spike trains locked to a frequency 
+time_lims = [0,500]
+t_vec = np.arange(time_lims[0], time_lims[1], 1)
+wanted_freqs = [2,4,6,8,10]
+cut_group_rayleigh = group_rayleigh[(group_rayleigh['time'] >= time_lims[0]) & \
+        (group_rayleigh['time'] < time_lims[1])]
+cut_group_rayleigh = cut_group_rayleigh[cut_group_rayleigh['freq'].isin(wanted_freqs)]
+mean_cut_nrn_rayleigh = cut_group_rayleigh.groupby(['nrn_id','freq']).mean()
+mean_cut_nrn_rayleigh.reset_index(inplace=True, drop=False)
+# Get nrn_id for max z_stat per frequency
+min_pval_frame = mean_cut_nrn_rayleigh.groupby('freq')['p_val'].idxmin()
+min_pval_frame = mean_cut_nrn_rayleigh.loc[min_pval_frame, :]
 
-###############
-test_nrn = group_rayleigh[group_rayleigh.nrn_id == 54]
-test_nrn_pivot = test_nrn.pivot(index='freq', columns='time_bins', values='z_stat')
+# The nrn_id's we want
+wanted_raw_nrn_id = [nrn_id_map[x] for x in min_pval_frame['nrn_id'].values]
 
-plt.imshow(np.log10(test_nrn_pivot), aspect='auto', cmap='jet' ,origin='lower')
-plt.colorbar()
+# These are the inds in the nrn_group_list_dat in descending order of mean z_stat
+wanted_nrn_group_inds = \
+        [[i for i,x in enumerate(nrn_group_list_nrn_id) if x == y] \
+        for y in tqdm(wanted_raw_nrn_id)]
+wanted_nrn_group_inds = [x for y in wanted_nrn_group_inds for x in y]
+
+for ind in range(len(min_pval_frame)):
+    wanted_freq = min_pval_frame.iloc[ind]['freq']
+    this_dat = nrn_group_list_dat[wanted_nrn_group_inds[ind]]
+    this_dat = this_dat.loc[:, ['time','phases','freq', 'trials']]
+    this_dat = this_dat[this_dat['freq'] == wanted_freq]
+    this_dat = this_dat[(this_dat['time'] > time_lims[0]) & (this_dat['time'] < time_lims[1])]
+    ax = plt.subplot(int(f'1{len(min_pval_frame)}{ind+1}'),projection = 'polar')
+    ax.hist2d(this_dat.phases.values, this_dat.time.values, 
+              bins = [8,5])
+    ax.set_title(f'{int(wanted_freq)} Hz')
 plt.show()
 
-test_nrn_raw_dat = nrn_group_list_dat[wanted_nrn_group_inds[0]]
-test_nrn_raw_dat = test_nrn_raw_dat.loc[:, ['time','freq','phases','trials']]
-# Drop 0 Hz
-test_nrn_raw_dat = test_nrn_raw_dat[test_nrn_raw_dat.freq != 0]
-
-# Time between 0 and 250
-# Freq between 0 and 10
-max_t = 500
-wanted_freq = 4
-test_nrn_raw_dat = test_nrn_raw_dat[(test_nrn_raw_dat.time > 0) & (test_nrn_raw_dat.time < max_t)]
-test_nrn_raw_dat = test_nrn_raw_dat[test_nrn_raw_dat.freq == wanted_freq]
-
-# Generate twilight colormap from -pi to pi
-cmap = plt.get_cmap('twilight')
-norm = mpl.colors.Normalize(vmin=-np.pi, vmax=np.pi)
-cmap = mpl.cm.ScalarMappable(norm=norm, cmap=cmap)
-
-# Plot raw dat for a frequency across trials
-plot_dat = test_nrn_raw_dat[test_nrn_raw_dat.trials < 30]
-
-# For each trial, interpolate phases
-# Every time phase decreases, add 2pi
-group_plot_dat = [x[1] for x in list(plot_dat.groupby('trials'))]
-
-t_vec = np.linspace(0,max_t/1000)
-group_trial_phase = np.stack([interp_phase(x,t_vec) for x in group_plot_dat])
-group_trial_phase = np.stack([wrap_phase(x) for x in group_trial_phase])
-
-aligned_t_vec = return_alignment_times(group_trial_phase, t_vec, 2)
-
-out_inds, nonout_inds = remove_outliers(aligned_t_vec)
-aligned_t_vec = aligned_t_vec[nonout_inds]
-phase_array = group_trial_phase[nonout_inds]
-fin_group_plot_dat = [group_plot_dat[i] for i in nonout_inds]
-fin_plot_dat = plot_dat[plot_dat.trials.isin(nonout_inds)]
-trial_map = dict(zip(nonout_inds, np.arange(len(nonout_inds))))
-fin_plot_dat['cont_trials'] = [trial_map[x] for x in fin_plot_dat.trials] 
-
-new_phase_array, new_t_vec = register_phases(phase_array, aligned_t_vec)
-new_spike_times = [register_spikes(x, aligned_t_vec[i], t_vec) for i,x in enumerate(fin_group_plot_dat)]
-flat_new_spike_times = [x for y in new_spike_times for x in y]
-
-fig,ax = plt.subplots(2,2, sharex=True, sharey=False)
-ax[0,0].hist(fin_plot_dat.time.values.flatten()/1000, bins = 20)
-ax[0,1].hist(flat_new_spike_times, bins = 20)
-im = ax[1,0].pcolormesh(t_vec, 
-               np.arange(len(nonout_inds)), 
-               phase_array,
-               cmap = cmap.cmap)
-ax[1,0].scatter(fin_plot_dat['time'].values/1000, fin_plot_dat['cont_trials'], 
-            marker = "|", color = 'k', linewidth = 2)
-ax[1,0].colorbar(im)
-ax[1,1].pcolor(new_t_vec, np.arange(new_phase_array.shape[0]), new_phase_array,
-             cmap = cmap.cmap)
-for i,dat in enumerate(new_spike_times):
-    ax[1,1].scatter(dat, [i]*len(dat), color = 'k', marker = '|', linewidth = 2)
-ax[1,1].colorbar()
-plt.show()
-
-#ind = 3
-#plt.plot(t_vec, phase_array[ind])
-#plt.plot(new_t_vecs[ind], phase_array[ind])
-#plt.axhline(set_start_phi)
-#plt.axvline(0, color = 'r')
-#plt.show()
-
-fig,ax = plt.subplots(2,1, sharex=True)
-ax[0].plot(t_vec, phase_array.T) 
-for this_t, this_dat in zip(aligned_t_vec, phase_array):
-    ax[1].plot(this_t, this_dat)
-ax[1].axhline(set_start_phi)
-ax[1].axvline(0, color = 'r')
-plt.show()
-
-
-plt.imshow(phase_array, aspect='auto')
-plt.colorbar()
-plt.show()
-
-
-
-trial0 = plot_dat[plot_dat.trials == 0]
-trial0_phase = interp_phase(trial0, t_vec)
-plt.plot(trial0['time']/1000, trial0['phases'], 'x', label = 'actual')
-plt.plot(t_vec, wrap_phase(trial0_phase), 'o', label = 'interp', alpha = 0.1)
-plt.scatter(trial0['time']/1000, np.ones(len(trial0)))
-plt.legend()
-plt.show()
-
-# Plot histogram of phases for each frequency
-wanted_freqs = test_nrn_raw_dat.freq.unique()
-phi_bins = np.linspace(-np.pi, np.pi, 30)
-hist_list = []
-for num, (this_freq, this_ax) in enumerate(zip(wanted_freqs, ax)):
-    this_dat = test_nrn_raw_dat[test_nrn_raw_dat.freq == this_freq]
-    hist_out = np.histogram(this_dat['phases'], bins=phi_bins)
-    hist_list.append(hist_out[0])
-
-# Min max scaling
-hist_array = np.array(hist_list)
-hist_array = (hist_array - hist_array.min(axis=-1, keepdims=True)) / (hist_array.max(axis=-1, keepdims=True) - hist_array.min(axis=-1, keepdims=True))
-# Smoothen hist array with Savitzky-Golay filter
-from scipy.signal import savgol_filter
-smooth_hist_array = savgol_filter(hist_array, 7, 2, axis=-1)
-
-fig,ax = plt.subplots(len(wanted_freqs), 1, sharey=True, sharex=True)
-for num, (this_freq, this_ax) in enumerate(zip(wanted_freqs, ax)):
-    this_ax.plot(phi_bins[:-1], smooth_hist_array[num,:], '-x')
-    this_ax.set_title(this_freq)
-plt.show()
-
-fig, ax = plt.subplots(1,2)
-ax[0].pcolormesh(phi_bins[:-1], wanted_freqs, hist_array,
-               cmap='viridis', shading='auto')
-ax[1].pcolormesh(phi_bins[:-1], wanted_freqs, smooth_hist_array,
-                 cmap='viridis', shading='auto')
-ax[0].set_title('Raw')
-ax[1].set_title('Smooth')
-ax[0].set_ylabel('Frequency (Hz)')
-ax[0].set_xlabel('Phase (radians)')
-ax[1].set_xlabel('Phase (radians)')
-plt.show()
-
-cmap = plt.get_cmap('viridis')
-fig, ax = plt.subplots(1, 1, subplot_kw=dict(projection='polar'))
-for num, this_dat in enumerate(smooth_hist_array):
-    ax.fill(phi_bins[:-1], this_dat, '-x', 
-            alpha = 0.5, c = cmap(num/len(smooth_hist_array)),
-            label = wanted_freqs[num])
-ax.set_title('Smooth')
-ax.legend(wanted_freqs)
-plt.show()
 
 ############################################################
 # Only neurons and frequencies with significant changes
