@@ -232,8 +232,10 @@ wald_frame['region'] = [x['spikes_region'].iloc[0] for x in region_group_rayleig
 g = sns.lmplot(data=mean_group_rayleigh, x='spike_counts', y='z_stat', 
            hue='spikes_region',scatter=False)
 for this_dat in region_mean_group_rayleigh:
-    g.axes[0][0].scatter(this_dat['spike_counts'], this_dat['z_stat'],
-                         alpha = 0.3)
+    sns.histplot(data = this_dat, x = 'spike_counts', hue = 'spikes_region', bins = 25, log_scale = True,
+                 kde = True, ax = g.axes[0][0])
+    #g.axes[0][0].scatter(this_dat['spike_counts'], this_dat['z_stat'],
+    #                     alpha = 0.3)
 g.axes[0][0].set_xscale('log')
 g.axes[0][0].set_yscale('log')
 g.axes[0][0].set_xlim([0, 1000])
