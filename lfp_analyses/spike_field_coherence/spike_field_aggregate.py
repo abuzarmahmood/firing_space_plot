@@ -43,9 +43,11 @@ def rolling_rayleigh(x, start=-1000, stop=2500, window=250, step=25):
     window_ends = window_starts + window
     windows = list(zip(window_starts, window_ends))
     p_val_list = []
+    spike_count_list = []
     for this_window in windows:
         this_dat = x.loc[(x.time >= this_window[0]) &
                          (x.time < this_window[1])]
+        spike_count_list.append(len(this_dat))
         p_val = custom_rayleigh(this_dat)
         p_val_list.append(p_val)
     p_val_frame = np.array(p_val_list)
@@ -56,7 +58,8 @@ def rolling_rayleigh(x, start=-1000, stop=2500, window=250, step=25):
                 time=window_ends,
                 p_val=p_val_frame[:, 0],
                 z_stat=p_val_frame[:, 1],
-                time_bins = list(zip(window_starts, window_ends))
+                time_bins = list(zip(window_starts, window_ends)),
+                spike_counts = spike_count_list,
                      )
     )
     z_stat = return_frame['z_stat']
@@ -78,7 +81,7 @@ def rolling_rayleigh2(x, start = -1000, stop = 2500, f_mult = 1, step = 25):
         stop: stop time of selected data 
         f_mult: multiplier to adjust window size according to frequency
     """
-    f = x.freq.iloc[0]
+    f = x['freq'].iloc[0]
     window = int(f_mult*1000/f)
     window_starts = np.arange(start, stop-window+step, step)
     window_ends = window_starts + window
@@ -152,12 +155,13 @@ fin_phase_frame = fin_phase_frame.loc[fin_phase_frame.freq != 0]
 spike_counts = fin_phase_frame.reset_index(level=['spikes_region', 'freq'])
 spike_counts = spike_counts[spike_counts['freq'] == 0]
 spike_counts.reset_index(inplace=True, drop=False)
-spike_counts = spike_counts.groupby(['spikes_region','basename','nrn_num']).count().freq.reset_index()
+spike_counts = spike_counts.groupby(['spikes_region','basename','nrn_num']).count()['freq'].reset_index()
 spike_counts = spike_counts.rename(columns = {'freq':'spike_count'})
 
 # Plot histogram with x-axis on log scale
 pval = pg.mwu(*[x[1].spike_count for x in list(spike_counts.groupby('spikes_region'))])['p-val'].values[0]
-sns.histplot(data = spike_counts, x = 'spike_count', hue = 'spikes_region', bins = 50, log_scale = True)
+sns.histplot(data = spike_counts, x = 'spike_count', hue = 'spikes_region', bins = 25, log_scale = True,
+             kde=True,) 
 plt.title('Total spikes per neuron per region\n' + f'MWU p = {pval:.3f}')
 plt.savefig(os.path.join(plot_dir, 'spike_rate_distributions.png'))
 plt.close()
@@ -173,10 +177,10 @@ group_list = list(group_obj)
 ########################################
 # Run rayleigh test on each neuron
 
-window_size = 250
-step_size = 250
+window_size = 150
+step_size = 150
 def temp_rolling_rayleigh(x): 
-    return rolling_rayleigh2(x[1], step = step_size)
+    return rolling_rayleigh(x[1], step = step_size)
 
 meta_list = [x[0] for x in group_list]
 group_rolling_rayleigh = parallelize(temp_rolling_rayleigh, group_list)
@@ -210,6 +214,49 @@ group_rayleigh['p_val_sig'] = group_rayleigh['p_val'] < alpha
 # Drop irrelevant columns
 group_rayleigh.drop(columns=['basename', 'nrn_num'], inplace=True)
 
+mean_group_rayleigh = group_rayleigh.groupby(
+        ['spikes_region', 'phase_region', 'nrn_id']).mean().reset_index()
+region_mean_group_rayleigh = [x[1] for x in list(mean_group_rayleigh.groupby('spikes_region'))]
+region_group_rayleigh = [x[1] for x in list(group_rayleigh.groupby('spikes_region'))]
+
+# Make plot of spike_counts vs. z_stat
+# Perform wald test for each region
+thinning = 100
+wald_output = [linregress(x['spike_counts'].iloc[::thinning], x['z_stat'].iloc[::thinning]) \
+        for x in region_group_rayleigh]
+wald_output = [[x.slope, x.rvalue, x.pvalue] for x in wald_output] 
+wald_frame = pd.DataFrame(wald_output, columns = ['slope', 'rvalue', 'pvalue'])
+wald_frame['region'] = [x['spikes_region'].iloc[0] for x in region_group_rayleigh]
+
+
+g = sns.lmplot(data=mean_group_rayleigh, x='spike_counts', y='z_stat', 
+           hue='spikes_region',scatter=False)
+for this_dat in region_mean_group_rayleigh:
+    g.axes[0][0].scatter(this_dat['spike_counts'], this_dat['z_stat'],
+                         alpha = 0.3)
+g.axes[0][0].set_xscale('log')
+g.axes[0][0].set_yscale('log')
+g.axes[0][0].set_xlim([0, 1000])
+#g.axes[0][0].set_xscale('log')
+plt.title('Rayleigh Z-statistic vs. spike count (nrn average)')
+plt.savefig(os.path.join(plot_dir, 'z_stat_vs_spike_count_nrn_average.png'), bbox_inches='tight')
+plt.close()
+
+g = sns.lmplot(data=group_rayleigh.iloc[::100], x='spike_counts', y='z_stat', 
+           hue='spikes_region',scatter=False)
+for this_dat in region_group_rayleigh:
+    g.axes[0][0].scatter(this_dat['spike_counts'][::100], this_dat['z_stat'][::100],
+                         alpha = 0.3)
+g.axes[0][0].set_xscale('log')
+g.axes[0][0].set_yscale('log')
+g.axes[0][0].set_ylim([0.1, 25])
+# g.axes[0][0].set_xlim([0, 1000])
+plt.title('Rayleigh Z-statistic vs. spike count\n\n' +\
+          wald_frame.to_string(index=False, float_format='%.3f'))
+plt.savefig(os.path.join(plot_dir, 'z_stat_vs_spike_count.png'), bbox_inches='tight')
+plt.close()
+
+
 # Count number of unique neurons by spike region
 nrn_count = group_rayleigh.groupby(
     ['spikes_region', 'nrn_id']).size().reset_index()
@@ -220,10 +267,13 @@ nrn_count.columns = ['spikes_region', 'nrn_count']
 mean_rayleigh = group_rayleigh.groupby(
     ['spikes_region', 'nrn_id']).mean().reset_index()
 pval = pg.mwu(*[x[1].z_stat for x in list(mean_rayleigh.groupby('spikes_region'))])['p-val'].values[0]
-sns.histplot(data=mean_rayleigh, x='z_stat', hue='spikes_region', bins=50, log_scale=True)
+sns.histplot(data=mean_rayleigh, x='z_stat', hue='spikes_region', bins=50, log_scale=True,
+             kde=True)
 plt.title('Average Rayleigh Z-statistic per neuron per region\n' + f'MWU p = {pval:.3f}')
 plt.savefig(os.path.join(plot_dir, 'rayleigh_z_stat_distributions.png'))
 plt.close()
+
+
 
 ########################################
 # Further analysis using scaled_z_stat
@@ -347,6 +397,10 @@ wanted_nrn_group_inds = \
         for y in tqdm(wanted_raw_nrn_id)]
 wanted_nrn_group_inds = [x for y in wanted_nrn_group_inds for x in y]
 
+single_nrn_plot_dir = os.path.join(plot_dir, 'single_neuron_examples')
+if not os.path.exists(single_nrn_plot_dir):
+    os.makedirs(single_nrn_plot_dir)
+
 for this_ind in wanted_nrn_group_inds[:10]:
     this_dat = nrn_group_list_dat[this_ind].loc[:, ['phases','freq']]
     # Drop 0 hz
@@ -363,7 +417,35 @@ for this_ind in wanted_nrn_group_inds[:10]:
             )
     ax.set_title(nrn_group_list_nrn_id[this_ind])
     fig.colorbar(im[3], ax=ax)
-    plt.show()
+    fig.savefig(
+            os.path.join(
+                single_nrn_plot_dir, nrn_group_list_nrn_id[this_ind]+'_phase_freq_polar.png'))
+    #plt.show()
+    plt.close(fig)
+
+freq_bins = [[0,4],[4,7],[7,12],[12,30],[30,80]]
+freq_bin_names = ['delta','theta','alpha','beta','gamma']
+for this_ind in wanted_nrn_group_inds[:10]:
+    this_dat = nrn_group_list_dat[this_ind].loc[:, ['phases','freq']]
+    # Drop 0 hz
+    this_dat = this_dat[this_dat['freq'] != 0]
+
+    fig, ax = plt.subplots(len(freq_bins), 1, sharex=True, sharey=True)
+    for this_freq, this_ax in zip(freq_bins, ax):
+        freq_dat = this_dat.loc[
+                np.logical_and(
+                    this_dat['freq'] >= this_freq[0],
+                    this_dat['freq'] < this_freq[1])
+                , :]
+        this_ax.hist(freq_dat['phases'], bins = 50)
+        this_ax.set_title(this_freq)
+    fig.suptitle(nrn_group_list_nrn_id[this_ind])
+    fig.savefig(
+            os.path.join(
+                single_nrn_plot_dir, nrn_group_list_nrn_id[this_ind]+'_phase_freq.png'))
+    #plt.show()
+    plt.close(fig)
+
 
 ##############################
 # Examples of single neuron spike trains locked to a frequency 
