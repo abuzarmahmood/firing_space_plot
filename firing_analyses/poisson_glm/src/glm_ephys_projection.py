@@ -48,8 +48,8 @@ run_list = sorted(glob(os.path.join(save_path, 'run*')))
 run_basenames = sorted([os.path.basename(x) for x in run_list])
 print(f'Present runs : {run_basenames}')
 
-#input_run_ind = int(input('Please specify current run (integer) :'))
-input_run_ind = 2
+input_run_ind = int(input('Please specify current run (integer) :'))
+#input_run_ind = 2
 run_str = f'run_{input_run_ind:03d}'
 plot_dir = f'/media/bigdata/firing_space_plot/firing_analyses/poisson_glm/plots/{run_str}'
 fin_save_path = os.path.join(save_path, f'run_{input_run_ind:03}')

@@ -195,7 +195,7 @@ ll_stat_frame = ll_stat_frame.sort_values(by=['session','taste','neuron'])
 wanted_cols = [x for x in ll_pval_frame.columns if 'sh' in x]
 plot_dat = ll_pval_frame[wanted_cols]
 
-thresh = np.round(np.log10(0.1),2)
+thresh = np.round(np.log10(0.001),2)
 sig_frac = np.round((plot_dat< thresh).mean(axis=0),2)
 # Fraction significant for all 3 shuffles
 all_sig_frac = np.round(np.all((plot_dat < thresh).values, axis=-1).mean(),2)
@@ -741,7 +741,13 @@ g = sns.displot(
 this_ax = g.axes[0][0]
 this_ax.set_yscale('log')
 this_ax.set_ylim([0.005,1])
-plt.show()
+this_ax.set_ylabel('Fraction of filters')
+this_ax.set_xlabel('log10(p-value)')
+this_ax.set_title('Cumulative distribution of p-values')
+fig = plt.gcf()
+fig.savefig(os.path.join(plot_dir, 'coupling_pval_dist.png'), dpi = 300, bbox_inches = 'tight')
+plt.close(fig)
+#plt.show()
 
 ########################################
 
