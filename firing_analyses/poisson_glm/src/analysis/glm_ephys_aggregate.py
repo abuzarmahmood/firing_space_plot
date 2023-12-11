@@ -37,7 +37,7 @@ run_list = sorted(glob(os.path.join(save_path, 'run*')))
 run_basenames = sorted([os.path.basename(x) for x in run_list])
 print(f'Present runs : {run_basenames}')
 # input_run_ind = int(input('Please specify current run (integer) :'))
-input_run_ind = 4
+input_run_ind = 6
 run_str = f'run_{input_run_ind:03d}'
 plot_dir=  f'/media/bigdata/firing_space_plot/firing_analyses/poisson_glm/plots/{run_str}'
 
@@ -55,79 +55,230 @@ reload(aggregate_utils)
     ind_frame,
     ) = aggregate_utils.return_data(save_path, run_str)
 
+fin_ll_frame['actual>shuffle'] = \
+        fin_ll_frame['actual'] > fin_ll_frame['trial_shuffled']
+
+# To avoid crazy numbers in ll, pull out a specific range of the distribution
+perc_range = 0.95
+perc_lims = np.array([(1-0.95)/2, 1-(1-0.95)/2])*100
+# Adjust x and y lims to include percentile range indicated
+actual_lims = np.percentile(fin_ll_frame['actual'], perc_lims)*1.1
+shuffle_lims = np.percentile(fin_ll_frame['trial_shuffled'], perc_lims)*1.1
+
+# Take the higher of the lower limits
+low_lim = np.max([x[0] for x in [actual_lims, shuffle_lims]])
+
+inds = np.logical_and(
+        fin_ll_frame['actual'] > low_lim, 
+        fin_ll_frame['trial_shuffled'] > low_lim, 
+        )
+pretty_ll_data = fin_ll_frame.loc[inds]
+
 ############################################################
 ############################################################
+# Show that paired actual ll > trial shuffled ll
+# Generate scatter of actual vs trial shuffled
+# Also plot histogram along diagonal
 
-# How many neurons are significant
-# Can perform paired test as all were tested on same model
-grouped_ll_frame = list(fin_ll_frame.groupby(['session','taste', 'neuron']))
-grouped_ll_inds, grouped_ll_frame = zip(*grouped_ll_frame)
-sh_cols = [x for x in grouped_ll_frame[0].columns if 'sh' in x]
-
-ll_pval_list = []
-ll_stat_list = []
-for i in trange(len(grouped_ll_frame)):
-    this_frame = grouped_ll_frame[i]
-    pval_dict = {}
-    stat_dict = {}
-    for this_col in sh_cols:
-        try:
-            this_pval = wilcoxon(this_frame[this_col], this_frame['actual'])
-            pval_dict[this_col] = this_pval.pvalue
-            stat_dict[this_col] = this_pval.statistic
-        except ValueError:
-            pval_dict[this_col] = np.nan
-            stat_dict[this_col] = np.nan
-    ll_pval_list.append(pval_dict)
-    ll_stat_list.append(stat_dict)
-
-ll_pval_frame = np.log10(pd.DataFrame(ll_pval_list))
-grouped_ll_inds_frame = pd.DataFrame(grouped_ll_inds, columns = ['session','taste','neuron'])
-ll_pval_frame = pd.concat([grouped_ll_inds_frame, ll_pval_frame], axis=1)
-
-ll_stat_frame = pd.DataFrame(ll_stat_list)
-ll_stat_frame = pd.concat([grouped_ll_inds_frame, ll_stat_frame], axis=1)
-
-# Drop nan rows
-ll_pval_frame = ll_pval_frame.dropna()
-ll_stat_frame = ll_stat_frame.dropna()
-
-# Sort by session, taste, neuron
-ll_pval_frame = ll_pval_frame.sort_values(by=['session','taste','neuron'])
-ll_stat_frame = ll_stat_frame.sort_values(by=['session','taste','neuron'])
-
-# log10(0.005) = -2.3
-wanted_cols = [x for x in ll_pval_frame.columns if 'sh' in x]
-plot_dat = ll_pval_frame[wanted_cols]
-
-thresh = np.round(np.log10(0.001),2)
-sig_frac = np.round((plot_dat< thresh).mean(axis=0),2)
-# Fraction significant for all 3 shuffles
-all_sig_frac = np.round(np.all((plot_dat < thresh).values, axis=-1).mean(),2)
-
-# Sort frame by KMeans and plot
-kmeans = KMeans(n_clusters=4, random_state=0).fit(plot_dat.values)
-plot_dat = plot_dat.iloc[kmeans.labels_.argsort()] 
-
-plt.imshow(plot_dat.values, interpolation = 'none', aspect = 'auto')
-plt.colorbar(label = 'Log10 P-Value')
-plt.title('Log10 P-Values for Wilcoxon Signed Rank Test' \
-        + '\n' + f'Significant Fraction {thresh} (log)-> {np.round(10**thresh,3)}: ' \
-        + str(sig_frac.values) + '\n' + f'All Significant Fraction: {all_sig_frac}')
-plt.xlabel('Shuffle Type')
-plt.xticks(np.arange(len(plot_dat.columns)), plot_dat.columns, rotation = 90)
-fig=plt.gcf()
-fig.set_size_inches(4,10)
-plt.tight_layout()
-#plt.show()
-plt.savefig(os.path.join(plot_dir,'log10_pval_frame.png'), dpi = 300, bbox_inches = 'tight')
+fig, ax = plt.subplots(figsize = (5,5))
+ax.scatter(
+        -fin_ll_frame['actual'],
+        -fin_ll_frame['trial_shuffled'],
+        s = 2, 
+        c = 'k',
+        alpha = 0.3,
+        )
+x_lims = actual_lims.copy()
+y_lims = shuffle_lims.copy()
+x_lims[1] = 0
+y_lims[1] = 0
+ax.set_xlim(-np.array(y_lims)[::-1])
+ax.set_ylim(-np.array(y_lims)[::-1])
+ax.plot(-y_lims, -y_lims, color = 'red', linestyle = '--', linewidth = 2)
+ax.set_ylabel('-LL : Actual')
+ax.set_xlabel('-LL : Trial Shuffled')
+ax.set_aspect('equal')
+# Also plot a hist2d underneath
+# Only plot datapoints within the ax lims
+#plt.hist2d(
+#        fin_ll_frame.loc[inds, 'actual'],
+#        fin_ll_frame.loc[inds, 'trial_shuffled'],
+#        bins = 100,
+#        zorder = -1
+#        )
+# sns.kdeplot(
+#         x = -fin_ll_frame.loc[inds, 'actual'],
+#         y = -fin_ll_frame.loc[inds, 'trial_shuffled'],
+#         fill = True,
+#         alpha = 0.7,
+#         cmap = 'mako',
+#         ax = ax
+#         )
+# plt.show()
+plt.suptitle('Actual vs Trial Shuffled Log Likelihood')
+plt.title(f'N = {len(fin_ll_frame)}')
+ax.spines['right'].set_visible(False)
+ax.spines['top'].set_visible(False)
+plt.savefig(os.path.join(plot_dir, 'actual_vs_trial_shuffled_ll.svg'),
+            bbox_inches='tight')
 plt.close()
+
+
+# Histogram along diagonal
+# Convert data to vectors
+vec_data = np.array([
+    pretty_ll_data['actual'],
+    pretty_ll_data['trial_shuffled']
+    ]).T
+proj_vec = np.array([-1,1])
+proj_data = np.dot(vec_data, proj_vec)
+
+fig, ax = plt.subplots(figsize = (5,3))
+ax.hist(proj_data, bins = 50, density = True, alpha = 0.5, color = 'k');
+ax.hist(proj_data, bins = 50, histtype = 'step', color = 'k', density = True);
+ax.axvline(0, color = 'red', linestyle = '--', linewidth = 2)
+ax.set_xlabel('Actual - Trial Shuffled Likelihood')
+# ax.set_ylabel('Count')
+plt.suptitle('Actual vs Trial Shuffled Log Likelihood')
+# Mark median with arrow
+med_val = np.median(proj_data)
+ax.annotate(
+        '',
+        xy = (med_val, ax.get_ylim()[0]),
+        xytext = (med_val, 0.1*ax.get_ylim()[1]),
+        arrowprops = dict(
+            facecolor = 'white', 
+            edgecolor = 'black',
+            shrink = 0.05
+            ),
+        label = 'Median',
+        )
+#ax.legend()
+# Remove all axes except bottom
+ax.spines['right'].set_visible(False)
+ax.spines['top'].set_visible(False)
+ax.spines['left'].set_visible(False)
+ax.set_yticks([])
+plt.savefig(os.path.join(plot_dir, 'actual_vs_trial_shuffled_ll_hist.svg'),
+            bbox_inches='tight')
+plt.close()
+#plt.show()
+
+
+# Pie char showing actual > shuffle, and shuffle > actual
+
+fig,ax = plt.subplots(figsize=(3,3))
+ax.pie(
+        fin_ll_frame['actual>shuffle'].value_counts().values,
+        labels = ['Actual > Shuffle', 'Shuffle > Actual'],
+        autopct = '%1.1f%%',
+        )
+plt.title('Actual vs Trial Shuffled Log Likelihood')
+plt.savefig(os.path.join(plot_dir, 'actual_vs_trial_shuffled_ll_pie.png'),
+            bbox_inches='tight')
+plt.close()
+#plt.show()
+
+# Mean firing rate per category
+
+cat_vals = [x[1]['mean_rate'] \
+        for x in list(fin_ll_frame.groupby(['actual>shuffle']))]
+
+test_stat, p_val = mwu(*cat_vals)
+
+fig,ax = plt.subplots(figsize=(3,3))
+sns.boxplot(
+        data = fin_ll_frame,
+        x = 'actual>shuffle',
+        y = 'mean_rate',
+        ax=ax
+        )
+# sns.ecdfplot(
+#         data = fin_ll_frame,
+#         hue = 'actual>shuffle',
+#         x = 'mean_rate',
+#         )
+plt.title('Mean Firing Rate per Category\n' + \
+        f'MWU pval: {p_val:.3f}')
+plt.savefig(os.path.join(plot_dir, 'mean_firing_rate_per_category.png'),
+            bbox_inches='tight')
+plt.close()
+#plt.show()
+
+############################################################
+############################################################
+
+# # How many neurons are significant
+# # Can perform paired test as all were tested on same model
+# grouped_ll_frame = list(fin_ll_frame.groupby(['session','taste', 'neuron']))
+# grouped_ll_inds, grouped_ll_frame = zip(*grouped_ll_frame)
+# sh_cols = [x for x in grouped_ll_frame[0].columns if 'sh' in x]
+# 
+# ll_pval_list = []
+# ll_stat_list = []
+# for i in trange(len(grouped_ll_frame)):
+#     this_frame = grouped_ll_frame[i]
+#     pval_dict = {}
+#     stat_dict = {}
+#     for this_col in sh_cols:
+#         try:
+#             this_pval = wilcoxon(this_frame[this_col], this_frame['actual'])
+#             pval_dict[this_col] = this_pval.pvalue
+#             stat_dict[this_col] = this_pval.statistic
+#         except ValueError:
+#             pval_dict[this_col] = np.nan
+#             stat_dict[this_col] = np.nan
+#     ll_pval_list.append(pval_dict)
+#     ll_stat_list.append(stat_dict)
+# 
+# ll_pval_frame = np.log10(pd.DataFrame(ll_pval_list))
+# grouped_ll_inds_frame = pd.DataFrame(grouped_ll_inds, columns = ['session','taste','neuron'])
+# ll_pval_frame = pd.concat([grouped_ll_inds_frame, ll_pval_frame], axis=1)
+# 
+# ll_stat_frame = pd.DataFrame(ll_stat_list)
+# ll_stat_frame = pd.concat([grouped_ll_inds_frame, ll_stat_frame], axis=1)
+# 
+# # Drop nan rows
+# ll_pval_frame = ll_pval_frame.dropna()
+# ll_stat_frame = ll_stat_frame.dropna()
+# 
+# # Sort by session, taste, neuron
+# ll_pval_frame = ll_pval_frame.sort_values(by=['session','taste','neuron'])
+# ll_stat_frame = ll_stat_frame.sort_values(by=['session','taste','neuron'])
+# 
+# # log10(0.005) = -2.3
+# wanted_cols = [x for x in ll_pval_frame.columns if 'sh' in x]
+# plot_dat = ll_pval_frame[wanted_cols]
+# 
+# thresh = np.round(np.log10(0.001),2)
+# sig_frac = np.round((plot_dat< thresh).mean(axis=0),2)
+# # Fraction significant for all 3 shuffles
+# all_sig_frac = np.round(np.all((plot_dat < thresh).values, axis=-1).mean(),2)
+# 
+# # Sort frame by KMeans and plot
+# kmeans = KMeans(n_clusters=4, random_state=0).fit(plot_dat.values)
+# plot_dat = plot_dat.iloc[kmeans.labels_.argsort()] 
+# 
+# plt.imshow(plot_dat.values, interpolation = 'none', aspect = 'auto')
+# plt.colorbar(label = 'Log10 P-Value')
+# plt.title('Log10 P-Values for Wilcoxon Signed Rank Test' \
+#         + '\n' + f'Significant Fraction {thresh} (log)-> {np.round(10**thresh,3)}: ' \
+#         + str(sig_frac.values) + '\n' + f'All Significant Fraction: {all_sig_frac}')
+# plt.xlabel('Shuffle Type')
+# plt.xticks(np.arange(len(plot_dat.columns)), plot_dat.columns, rotation = 90)
+# fig=plt.gcf()
+# fig.set_size_inches(4,10)
+# plt.tight_layout()
+# #plt.show()
+# plt.savefig(os.path.join(plot_dir,'log10_pval_frame.png'), dpi = 300, bbox_inches = 'tight')
+# plt.close()
 
 ############################################################
 ############################################################
 # Toss out neurons that are not significant for all 3 shuffles
-sig_rows = np.all((ll_pval_frame[wanted_cols] < thresh).values, axis=-1) 
-ll_pval_frame = ll_pval_frame[sig_rows]
+# sig_rows = np.all((ll_pval_frame[wanted_cols] < thresh).values, axis=-1) 
+# ll_pval_frame = ll_pval_frame[sig_rows]
+# fin_ll_frame = fin_ll_frame.loc[fin_ll_frame['actual>shuffle']]
 
 ############################################################
 ############################################################
@@ -144,9 +295,9 @@ ll_pval_frame = ll_pval_frame[sig_rows]
 #plt.show()
 
 # Merge ll_pval_frame with unit_region_frame
-ll_pval_frame = ll_pval_frame.merge(unit_region_frame, on = ['session','neuron'])
+#ll_pval_frame = ll_pval_frame.merge(unit_region_frame, on = ['session','neuron'])
 
-sns.jointplot(data = ll_pval_frame, x = 'mean_rate', y = 'trial_sh', 
+sns.jointplot(data = pretty_data, x = 'mean_rate', y = 'trial_shuffled', 
               hue = 'region', kind = 'hist')
 plt.axhline(y = thresh, color = 'r', linestyle = '--', label = '0.05')
 plt.suptitle('Mean Firing Rate vs. Significance')

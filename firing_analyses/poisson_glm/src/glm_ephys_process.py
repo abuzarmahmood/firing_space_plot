@@ -145,6 +145,8 @@ fin_inds = ind_frame.values[:,:-1] # Drop Count
 
 stim_vec = process_utils.gen_stim_vec(spike_list, params_dict)
 
+
+pbar = tqdm(total=len(fin_inds))
 for num, this_ind in tqdm(enumerate(fin_inds)):
     args = (
             num, 
@@ -157,11 +159,17 @@ for num, this_ind in tqdm(enumerate(fin_inds)):
     # process_utils.process_ind(*args)
     process_utils.try_process(args)
 
+    # Manually update tqdm
+    
+
     print()
     print('############################################################')
     print(f'Finished processing {num} of {len(fin_inds)} --- {num/len(fin_inds)*100:.2f}%')
+    pbar.update(1)
     print('############################################################')
     print()
+
+pbar.close()
 
 # TODO: Some large models max out ram and make parallelize crash. 
 # These can be tracked and ignored till the end so the rest of the fits can be completed

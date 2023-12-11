@@ -82,6 +82,10 @@ def return_data(save_path, run_str = 'run_1'):
 
     p_val_frame_list = [pd.read_csv(x, index_col=0) for x in p_val_frame_paths]
     ll_frame_list = [pd.read_csv(x, index_col = 0) for x in ll_frame_paths]
+    # Reset index and mark as fit_num
+    for i in range(len(p_val_frame_list)):
+        ll_frame_list[i].reset_index(inplace=True)
+        ll_frame_list[i].rename(columns = {'index' : 'fit_num'}, inplace=True)
     pred_spikes_list = [np.load(x) for x in pred_spikes_paths]
     design_spikes_list = [np.load(x) for x in design_spikes_paths]
 
