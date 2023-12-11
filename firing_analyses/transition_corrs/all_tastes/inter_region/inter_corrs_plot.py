@@ -43,7 +43,7 @@ from ephys_data import ephys_data
 import visualize as vz
 
 sys.path.append('/media/bigdata/firing_space_plot/'\
-        'firing_analyses/transition_corrs')
+        'firing_analyses/transition_corrs/all_tastes')
 from check_data import check_data 
 
 def load_model_data(model_path):
@@ -163,7 +163,7 @@ def create_split_changepoint_plots(array1, array2, tau1, tau2,
 ##################################################
 
 plot_dir = '/media/bigdata/firing_space_plot/firing_analyses/'\
-        'transition_corrs/plots/multi_region'
+        'transition_corrs/all_tastes/plots/multi_region'
 
 # Path to save noise corrs in HDF5
 save_path = '/ancillary_analysis/changepoint_alignment/inter_region'
@@ -171,13 +171,18 @@ wanted_names = ['rho_percentiles','mode_tau','rho_shuffles',
         'tau_corrs','tau_list'] 
 
 # Load pkl detailing which recordings have split changepoints
+#data_dir_pkl = '/media/bigdata/firing_space_plot/firing_analyses/'\
+#        'transition_corrs/multi_region_frame.pkl'
 data_dir_pkl = '/media/bigdata/firing_space_plot/firing_analyses/'\
-        'transition_corrs/multi_region_frame.pkl'
+        'transition_corrs/all_tastes/inter_region/multi_region_frame.pkl'
 inter_frame = pd.read_pickle(data_dir_pkl)
 inter_frame['animal_name'] = [x.split('_')[0] for x in inter_frame['name']]
 
+#all_tau_ps = []
+
 for num, data_dir in tqdm(enumerate(inter_frame.path)):
     #num = 0
+    stim_t = 2000
     data_dir = inter_frame.path.iloc[num]
     dat = ephys_data(data_dir)
 
@@ -189,6 +194,10 @@ for num, data_dir in tqdm(enumerate(inter_frame.path)):
     state4_models = [path for path in inter_region_paths if '4state' in path]
     #split_basenames = [os.path.basename(x) for x in state4_models]
     # Check params for both fits add up
+    if not len(state4_models):
+        print(f'No models for {data_dir}')
+        continue
+
     check_params_bool = params_from_path(state4_models[0]).to_dict() ==\
                         params_from_path(state4_models[1]).to_dict()
     region_check = all([any([region_name in params_from_path(x).model_name \
@@ -217,13 +226,18 @@ for num, data_dir in tqdm(enumerate(inter_frame.path)):
     # Convert tau's to real-values
     tau_list = np.array(tau_list)
     tau_list = (tau_list * params.bin_width) + params.time_lims[0]
+    tau_list = tau_list - stim_t
     tau_corr_dat = [stats.spearmanr(x,y) for x,y in zip(*tau_list)] 
     tau_corrs, tau_ps = list(zip(*tau_corr_dat))
+    #all_tau_ps.append(tau_ps)
 
-    shuffle_count = 1000
-    tau_shuffle = np.array([[np.array(this_tau)[np.random.choice(
-                            np.arange(len(this_tau)), shuffle_count)] \
-                    for this_tau in this_split] for this_split in tau_list])
+    #tau_shuffle = [stats.spearmanr(np.random.permutation(x),y) for x,y in zip(*tau_list)] 
+    tau_shuffle = np.array([(np.random.permutation(x),y) for x,y in zip(*tau_list)]).swapaxes(0,1)
+    rho_shuffles, tau_sh_ps = list(zip(*[stats.spearmanr(*x) for x in tau_shuffle.swapaxes(0,1)]))
+    #shuffle_count = 1000
+    #tau_shuffle = np.array([[np.array(this_tau)[np.random.choice(
+    #                        np.arange(len(this_tau)), shuffle_count)] \
+    #                for this_tau in this_split] for this_split in tau_list])
 
 
     ########################################
@@ -238,7 +252,7 @@ for num, data_dir in tqdm(enumerate(inter_frame.path)):
     ########################################
     fin_plot_dir = os.path.join(plot_dir,params.session_name)
 
-    x = np.linspace(*params.time_lims)
+    x = np.linspace(*params.time_lims) - stim_t
     # Plot scatter plots for each tau and tau shuffled
     fig, ax = plt.subplots(len(tau_list[0]),2, 
             sharex = True, sharey=True, figsize = (7,10))
@@ -271,8 +285,10 @@ for num, data_dir in tqdm(enumerate(inter_frame.path)):
     #plt.show()
 
     ## Scatter plots with contours
-    fig, ax = plt.subplots(len(tau_list[0]),2, 
-            sharex = True, sharey=True, figsize = (7,10))
+    fig, ax = plt.subplots(2, len(tau_list[0]),
+            sharex = True, 
+            #sharey=True, 
+            figsize = (10,7))
     for change_num in range(len(tau_list[0])):
         rho_str = f'Rho : {np.round(tau_corrs[change_num],3)}'
         percentile_str = f'Perc : {rho_percentiles[change_num]}'
@@ -299,28 +315,32 @@ for num, data_dir in tqdm(enumerate(inter_frame.path)):
         #kernel = stats.gaussian_kde(values)
         #Z_actual = np.reshape(kernel(positions).T, X.shape)
 
-        ax[change_num, 0].scatter(*actual_data, alpha = 0.5,
-                label = rho_str )#+ "\n" + percentile_str + "\n" + p_val_str)
-        ax[change_num, 0].legend(loc = 'upper left')
-        ax[change_num, 0].set_ylabel(f'Change {change_num}')
+        ax[0, change_num].scatter(*actual_data, alpha = 0.5,)
+        ax[0, change_num].set_title(rho_str + "\n" + p_val_str)
+        #ax[0, change_num].legend(loc = 'upper left')
+        ax[0, change_num].set_ylabel(f'Change {change_num}')
         rho_str_sh = f'Rho : {np.round(np.mean(rho_shuffles[change_num]),3)}'# +\
+        p_val_str_sh = f'p_val : {np.round(tau_sh_ps[change_num],3)}'
                 #f'+/- {np.round(np.std(rho_shuffles[change_num]),3)}'
-        ax[change_num, 1].scatter(*shuffle_data, alpha = 0.2,label = rho_str_sh)
-        ax[change_num, 1].contour(X, Y, Z_shuff, alpha = 0.7)
-        ax[change_num, 0].contour(X, Y, Z_actual, alpha = 0.7)
-        ax[change_num, 1].legend(loc = 'upper left')
-        ax[change_num, 0].set(adjustable='box', aspect='equal')
-        ax[change_num, 1].set(adjustable='box', aspect='equal')
-        ax[change_num, 0].plot(x,x, alpha = 0.5, 
+        #ax[1, change_num].scatter(*shuffle_data, alpha = 0.2,label = rho_str_sh)
+        ax[1, change_num].scatter(*shuffle_data, alpha = 0.5)
+        ax[1, change_num].set_title(rho_str_sh + "\n" + p_val_str_sh)
+        ax[1, change_num].contour(X, Y, Z_shuff, alpha = 0.7)
+        ax[0, change_num].contour(X, Y, Z_actual, alpha = 0.7)
+        #ax[1, change_num].legend(loc = 'upper left')
+        ax[0, change_num].set(adjustable='box', aspect='equal')
+        ax[1, change_num].set(adjustable='box', aspect='equal')
+        ax[0, change_num].plot(x,x, alpha = 0.5, 
                 linestyle = 'dashed', color = 'red')
-        ax[change_num, 1].plot(x,x, alpha = 0.5, 
+        ax[1, change_num].plot(x,x, alpha = 0.5, 
                 linestyle = 'dashed', color = 'red')
-        #ax[change_num, 0].text(0,0,f'Rho : {np.round(tau_corrs[change_num],3)}')
+        #ax[0, change_num].text(0,0,f'Rho : {np.round(tau_corrs[change_num],3)}')
     plt.suptitle(params.session_name + ": Tau Corrs")
+    plt.tight_layout()
     ax[0,0].set_title('Actual')
-    ax[0,1].set_title('Shuffle')
+    ax[1,0].set_title('Shuffle')
     fig.savefig(os.path.join(fin_plot_dir,
-        f'{params.session_name}_tau_scatter_contour'))
+        f'{params.session_name}_tau_scatter_contour'), dpi = 300)
     plt.close(fig)
     #plt.show()
 

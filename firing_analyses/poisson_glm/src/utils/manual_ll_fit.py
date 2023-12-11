@@ -13,17 +13,6 @@ from sklearn.model_selection import train_test_split
 from scipy.sparse import csc_matrix
 from scipy.optimize import minimize
 
-from scipy.special import gammaln
-def poisson_ll(lam, k):
-    """
-    Poisson log likelihood
-    """
-    lam += 1e-10 # To ensure there is no log(0)
-    assert len(lam) == len(k), 'lam and k must be same length'
-    assert all(lam > 0), 'lam must be non-negative'
-    assert all(k >= 0), 'k must be non-negative'
-    return np.sum(k*np.log(lam) - lam - gammaln(k+1))
-
 def neg_log_lik_lnp(theta, X, y):
   """Return -loglike for the Poisson GLM model.
 

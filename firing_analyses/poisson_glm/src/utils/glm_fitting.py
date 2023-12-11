@@ -6,8 +6,11 @@ import numpy as np
 from scipy.stats import zscore
 import pandas as pd
 import sys
+##############################
 sys.path.append('/media/bigdata/firing_space_plot/firing_analyses/poisson_glm')
-import makeRaisedCosBasis as cb
+import utils.makeRaisedCosBasis as cb
+from utils import utils
+##############################
 import statsmodels.api as sm
 from statsmodels.genmod.families import Poisson
 import statsmodels.formula.api as smf
@@ -159,32 +162,33 @@ def fit_stim_glm(
 ##############################
 
 def fit_stim_history_coupled_glm(
-        spike_data = None, 
-        coupled_spikes = None,
-        stim_data = None,
-        hist_filter_len = 10,
-        coupling_filter_len = 10,
-        stim_filter_len = 500,
-        n_basis = 10,
-        basis = 'cos',
-        basis_spread = 'log',
-        regularized = True,
-        alpha = 0,
+        # spike_data = None, 
+        # coupled_spikes = None,
+        # stim_data = None,
+        # hist_filter_len = 10,
+        # coupling_filter_len = 10,
+        # stim_filter_len = 500,
+        # n_basis = 10,
+        # basis = 'cos',
+        # basis_spread = 'log',
+        # regularized = True,
+        # alpha = 0,
         glmdata = None
         ):
 
     if glmdata is None:
-        glmdata = gen_stim_history_coupled_design(
-                spike_data, 
-                coupled_spikes,
-                stim_data,
-                hist_filter_len = 10,
-                coupling_filter_len = 10,
-                stim_filter_len = 500,
-                n_basis = 10,
-                basis = 'cos',
-                basis_spread = 'log',
-                )
+        raise Exception('glmdata must be provided')
+        # glmdata = gen_stim_history_coupled_design(
+        #         spike_data, 
+        #         coupled_spikes,
+        #         stim_data,
+        #         hist_filter_len = 10,
+        #         coupling_filter_len = 10,
+        #         stim_filter_len = 500,
+        #         n_basis = 10,
+        #         basis = 'cos',
+        #         basis_spread = 'log',
+        #         )
 
     dv_cols = [x for x in glmdata.columns if 'lag' in x]
     dv_cols.append('intercept')
@@ -202,12 +206,33 @@ def fit_stim_history_coupled_glm(
     #            glmdata['spikes'], 
     #            glmdata[dv_cols], 
     #            family = sm.families.poisson())
+    
+    # # Check corr of dv against iv
+    # corr_dat = glmdata[[*dv_cols, 'spikes']].corr()
+    # high_corr_dat = corr_dat.spikes.loc[corr_dat.spikes > 0.95]
+    # high_corr_dat = high_corr_dat.drop('spikes')
+    # high_corr_vars = high_corr_dat.index.values
+    
+    # # Remove high corr vars
+    # dv_cols = [x for x in dv_cols if x not in high_corr_vars]
+
     model = sm.GLM(
             glmdata['spikes'], 
             glmdata[dv_cols], 
             family = sm.families.Poisson())
-    res = model.fit()
+
+    # u, s, vt = np.linalg.svd(model.exog, 0)
+    # np.mean(s>0)
+    # # print(s)
+
+    res = model.fit(method="lbfgs")
+    # res = model.fit_regularized(L1_wt = 0, alpha = 0.1)
     pred = res.predict(glmdata[dv_cols])
+
+    # plt.plot(glmdata.spikes.values)
+    # plt.plot(pred.values, '-x', alpha = 0.5) 
+    # plt.show()
+
     return res, pred, glmdata
 
 def fit_history_coupled_glm(
@@ -341,35 +366,161 @@ def fit_stim_history_glm(
 ##############################
 # Complex Fits 
 ##############################
-def gen_actual_fit(
+def perform_fit(
 		data_frame,
 		hist_filter_len = 10,
 		coupling_filter_len = 10,
 		stim_filter_len = 500,
 		basis_kwargs = {},
-		actual_design_mat = None,
+		design_mat = None,
+                fit_type = 'actual',
 		):
     """
     Generate fit using dataframe
+
+    Inputs:
+        data_frame: pandas dataframe with columns
+                    Not used if actual_design_mat is given
+        hist_filter_len: length of history filter (in bins)
+        coupling_filter_len: length of coupling filter (in bins)
+        stim_filter_len: length of stimulus filter (in bins)
+        basis_kwargs: keyword arguments for basis functions
+        actual_design_mat: design matrix to use for fitting
+        fit_type: type of fit to use
+            'actual': fit to actual data
+            'trial_shuffled': fit to trial shuffled data
+            'circle_shuffled': fit to circularly shuffled data
+            'ranom_shuffled': fit to randomly shuffled data
+
+    Returns:
+        res: result of fit
+        actual_design_mat: design matrix used for fitting
+        held_out_ll: held out log likelihood
+
     """
 
     # If not given, generate an actual_design_mat
     # Otherwise use the given one
-    if actual_design_mat is None:
-            actual_input_dat = data_frame.copy()
-            actual_design_mat = dataframe_to_design_mat(actual_input_dat)
+    if design_mat is None:
+            input_dat = data_frame.copy()
+            design_mat = utils.dataframe_to_design_mat(
+                    input_dat,
+                    hist_filter_len,
+                    coupling_filter_len,
+                    stim_filter_len,
+                    basis_kwargs,
+                    )
+
+    if fit_type == 'actual':
+        pass
+    elif fit_type == 'trial_shuffled':
+        design_mat = utils.gen_trial_shuffle(design_mat)
+    elif fit_type == 'circle_shuffled':
+        design_mat = utils.gen_circular_shuffle(design_mat)
+    elif fit_type == 'random_shuffled':
+        design_mat = utils.gen_random_shuffle(design_mat)
+
 
     # Generate train test splits
-    actual_train_dat, actual_test_dat = return_train_test_split(actual_design_mat)
+    train_dat, test_dat = \
+            utils.return_train_test_split(
+                    design_mat,
+                    test_size = 0.25,
+                    )
 
     # Fit model to actual data
-    res,pred,actual_train_dat = fit_stim_history_coupled_glm(
-                    glmdata = actual_train_dat,
+    res, pred, train_dat = fit_stim_history_coupled_glm(
+                    glmdata = train_dat,
                     hist_filter_len = hist_filter_len,
                     coupling_filter_len = coupling_filter_len,
                     stim_filter_len= stim_filter_len,
                     regularized=False,
                     **basis_kwargs
                     )
-    return res, actual_design_mat
 
+    # Calculate log likelihood on test data
+    test_pred = res.predict(test_dat[res.params.index])
+    test_ll = utils.poisson_ll(test_pred, test_dat['spikes'].values)
+    test_ll = np.round(test_ll, 2)
+
+    return res, design_mat, test_ll
+
+def perform_fit_actual_and_trial_shuffled_fit(
+		# hist_filter_len = 10,
+		# coupling_filter_len = 10,
+		# stim_filter_len = 500,
+		# basis_kwargs = {},
+		design_mat = None,
+		):
+    """
+    Since there can be significant variability in the test set,
+    compare the actual fit to a trial shuffled fit on the
+    same data set
+
+    Inputs:
+        data_frame: pandas dataframe with columns
+                    Not used if actual_design_mat is given
+        hist_filter_len: length of history filter (in bins)
+        coupling_filter_len: length of coupling filter (in bins)
+        stim_filter_len: length of stimulus filter (in bins)
+        basis_kwargs: keyword arguments for basis functions
+        actual_design_mat: design matrix to use for fitting
+        fit_type: type of fit to use
+            'actual': fit to actual data
+            'trial_shuffled': fit to trial shuffled data
+            'circle_shuffled': fit to circularly shuffled data
+            'ranom_shuffled': fit to randomly shuffled data
+
+    Returns:
+        res: result of fit
+        actual_design_mat: design matrix used for fitting
+        held_out_ll: held out log likelihood
+
+    """
+    # Check for nan values
+    if design_mat.isnull().values.any():
+        print('Nan values in design matrix...dropping')
+        design_mat = design_mat.dropna()
+
+    # Generate train test splits
+    train_dat, test_dat = \
+            utils.return_train_test_split(
+                    design_mat,
+                    test_size = 0.25,
+                    )
+
+    actual_train_dat = train_dat.copy()
+    trial_shuffled_train_dat = utils.gen_trial_shuffle(train_dat)
+
+    # Check similarity of trial shuffled data
+    # np.mean(
+    #         actual_train_dat.values == trial_shuffled_train_dat.values, 
+    #         axis = 0)
+
+    # Fit model to actual data
+    out_list = []
+    for this_train_dat in [actual_train_dat, trial_shuffled_train_dat]:
+        #res, pred, train_dat = fit_stim_history_coupled_glm(
+        outs = fit_stim_history_coupled_glm(
+                        glmdata = this_train_dat,
+                        # hist_filter_len = hist_filter_len,
+                        # coupling_filter_len = coupling_filter_len,
+                        # stim_filter_len= stim_filter_len,
+                        # regularized=False,
+                        # **basis_kwargs
+                        )
+        out_list.append(outs)
+
+    # Calculate log likelihood on test data
+    res_list = [out[0] for out in out_list]
+    ll_list = []
+    for this_res in res_list: 
+        test_pred = this_res.predict(test_dat[this_res.params.index])
+        test_ll = utils.poisson_ll(test_pred, test_dat['spikes'].values)
+        test_ll = np.round(test_ll, 2)
+        ll_list.append(test_ll)
+
+    zipped_outs = list(zip(*out_list)) # res, pred, train_dat
+
+    # Return res, train_dat, ll_list
+    return zipped_outs[0], zipped_outs[2], ll_list 

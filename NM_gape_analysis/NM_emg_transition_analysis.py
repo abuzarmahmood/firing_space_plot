@@ -90,8 +90,20 @@ quin_spikes_clusters = [
         [x[:num], x[num:]] for x,num in zip(quin_spikes_list, cluster_div)
         ]
 
-# Changes in mean firing rate across clusters and epochs
-
+#############################################################
+## Changes in population firing rate across clusters and epochs
+#stim_t = 2000
+#epoch_lims = np.stack([
+#        [0,250],
+#        [250,750],
+#        [750,1250],
+#        [1250,1750]
+#        ]) + stim_t
+#
+#
+## Compare similarity between normalize population vectors for each cluster
+#
+############################################################
 quin_clust_flat = [x for y in quin_spikes_clusters for x in y]
 
 id_frame = pd.DataFrame(

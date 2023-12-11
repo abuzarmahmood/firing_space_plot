@@ -532,6 +532,9 @@ fin_x = x[lim_inds[0]:lim_inds[1]]
 fin_dev_bool = dev_bool_array[..., lim_inds[0]: lim_inds[1]]
 filtered_fin_dev = np.stack([savgol_filter(x, 201, 2) for x in fin_dev_bool])
 
+plt.plot(*filtered_fin_dev[:2,750:2500])
+plt.show()
+
 fig,ax = plt.subplots(2,1)
 ax[0].imshow(fin_dev_bool, interpolation = 'nearest', aspect = 'auto'); 
 ax[1].imshow(filtered_fin_dev, interpolation = 'nearest', aspect = 'auto'); 
@@ -698,7 +701,7 @@ cbar = plt.colorbar(mpl.cm.ScalarMappable(norm=norm, cmap=cmap), cax = cax,
 cbar.set_ticklabels(['Decrease', 'No Change', 'Increase'])  
 plt.subplots_adjust(right=0.8)
 fig.suptitle('BLA-GC Phase Coherence Dynamics')
-fig.savefig(os.path.join(plot_dir,'aggregate_phase_coherence'),
+fig.savefig(os.path.join(plot_dir,'aggregate_phase_coherence.png'),
                 dpi = 300, format = 'png')
 plt.close(fig)
 #plt.show()

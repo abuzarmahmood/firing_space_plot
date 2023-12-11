@@ -1,13 +1,107 @@
+import os
+import json
+from pprint import pprint
 import numpy as np
 from scipy.stats import zscore
 import pandas as pd
 import sys
 sys.path.append('/media/bigdata/firing_space_plot/firing_analyses/poisson_glm')
-import makeRaisedCosBasis as cb
+##############################
+import utils.makeRaisedCosBasis as cb
+from utils.generate_tools import gen_stim_history_coupled_design
+##############################
 from pandas import DataFrame as df
 from pandas import concat
 from sklearn.model_selection import train_test_split
+from scipy.special import gammaln
 
+##############################
+## Functions
+##############################
+
+def get_unit_spikes_and_regions(file_list):
+    basenames = [os.path.basename(x) for x in file_list]
+
+    spike_list = []
+    unit_region_list = []
+    for ind in trange(len(file_list)):
+        dat = ephys_data(file_list[ind])
+        dat.get_spikes()
+        spike_list.append(np.array(dat.spikes))
+        # Calc mean firing rate
+        mean_fr = np.array(dat.spikes).mean(axis=(0,1,3))
+        dat.get_region_units()
+        region_units = dat.region_units
+        region_names = dat.region_names
+        region_names = [[x]*len(y) for x,y in zip(region_names,region_units)]
+        region_units = np.concatenate(region_units)
+        region_names = np.concatenate(region_names)
+        unit_region_frame = df(
+                {'region':region_names,
+                 'unit':region_units,
+                 }
+                )
+        unit_region_frame['basename'] = basenames[ind]
+        unit_region_frame['session'] = ind
+        unit_region_frame = unit_region_frame.sort_values(by=['unit'])
+        unit_region_frame['mean_rate'] = mean_fr
+        unit_region_list.append(unit_region_frame)
+    return spike_list, unit_region_list
+
+
+def generate_params_dict(fin_save_path):
+    # Parameters
+    hist_filter_len = 100 # ms
+    stim_filter_len = 300 # ms
+    coupling_filter_len = 100 # ms
+    bin_width = 10 # ms
+
+    trial_start_offset = -2000 # ms # No clue what this does
+    trial_lims = np.array([1000,4500])
+    stim_t = 2000
+
+    # Define basis kwargs
+    basis_kwargs = dict(
+        n_basis = 10,
+        basis = 'cos',
+        basis_spread = 'log',
+        )
+
+    # Number of fits on actual data (expensive)
+    n_fits = 5
+    n_max_tries = 20
+    # Number of shuffles tested against each fit
+    n_shuffles_per_fit = 10
+
+    # Reprocess filter lens
+    hist_filter_len_bin = hist_filter_len // bin_width
+    stim_filter_len_bin = stim_filter_len // bin_width
+    coupling_filter_len_bin = coupling_filter_len // bin_width
+
+    # Save run parameters
+    params_dict = dict(
+            hist_filter_len = hist_filter_len,
+            stim_filter_len = stim_filter_len,
+            coupling_filter_len = coupling_filter_len,
+            bin_width = bin_width,
+            hist_filter_len_bin = hist_filter_len_bin,
+            stim_filter_len_bin = stim_filter_len_bin,
+            coupling_filter_len_bin = coupling_filter_len_bin,
+            trial_start_offset = trial_start_offset,
+            trial_lims = list(trial_lims),
+            stim_t = stim_t,
+            basis_kwargs = basis_kwargs,
+            n_fits = n_fits,
+            n_max_tries = n_max_tries,
+            n_shuffles_per_fit = n_shuffles_per_fit,
+            )
+
+    params_save_path = os.path.join(fin_save_path, 'fit_params.json')
+    with open(params_save_path, 'w') as outf:
+        json.dump(params_dict, outf, indent = 4, default = int)
+    print('Creating run with following parameters :')
+    pprint(params_dict)
+    return params_dict
 
 def calc_sta(data, filter_len):
     """
@@ -243,5 +337,29 @@ def gen_random_shuffle(data_frame, dv = 'spikes'):
     iv_dat = data_frame[[x for x in data_frame.columns if x not in rm_cols]]
     iv_dat = iv_dat.sample(frac = 1, replace=False)
     iv_dat.reset_index(inplace=True, drop=True)
-    out_frame = pd.concat([spike_dat.reset_index(drop=True), iv_dat, trial_dat.reset_index(drop=True)], axis=1)
+    out_frame = pd.concat(
+            [
+                spike_dat.reset_index(drop=True), 
+                iv_dat, 
+                trial_dat.reset_index(drop=True)
+                ], 
+            axis=1)
     return out_frame
+
+def poisson_ll(lam, k):
+    """
+    Poisson log likelihood
+    # Note: This has been tested against scipy.stats.poisson.logpmf
+
+    Inputs:
+        lam: lambda parameter of poisson distribution
+        k: observed counts
+
+    Outputs:
+        ll: log likelihood
+    """
+    lam += 1e-10 # To ensure there is no log(0)
+    assert len(lam) == len(k), 'lam and k must be same length'
+    assert all(lam > 0), 'lam must be non-negative'
+    assert all(k >= 0), 'k must be non-negative'
+    return np.sum(k*np.log(lam) - lam - gammaln(k+1))

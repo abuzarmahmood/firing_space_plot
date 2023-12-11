@@ -3,12 +3,13 @@ from scipy.stats import zscore
 import pandas as pd
 import sys
 sys.path.append('/media/bigdata/firing_space_plot/firing_analyses/poisson_glm')
-import makeRaisedCosBasis as cb
+import utils.makeRaisedCosBasis as cb
 import statsmodels.api as sm
 from statsmodels.genmod.families import Poisson
 import statsmodels.formula.api as smf
 from pandas import DataFrame as df
 from pandas import concat
+from sklearn.model_selection import train_test_split
 
 ############################################################
 # Miscelaneous 

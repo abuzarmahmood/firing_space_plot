@@ -264,12 +264,12 @@ def chop_by_state(spike_array, tau_array):
     #    ax[this_ind].imshow(state_firing[:,this_ind[1], this_ind[0]], **img_kwargs)
     #plt.show()
 
-    nrn = 0
-    this_reg_firing = reg_state_firing[:,:,nrn].swapaxes(0,1)
-    this_firing = state_firing[:,:,nrn].swapaxes(0,1)
-    fig,ax = plt.subplots(2, this_reg_firing.shape[0], sharey = True, sharex=True)
-    img_kwargs = dict(interpolation = 'nearest', aspect = 'auto')
-    for num in range(states): 
-        ax[0,num].imshow(this_firing[num], **img_kwargs)
-        ax[1,num].imshow(this_reg_firing[num], **img_kwargs)
-    plt.show()
+nrn = 0
+this_reg_firing = reg_state_firing[:,:,nrn].swapaxes(0,1)
+this_firing = state_firing[:,:,nrn].swapaxes(0,1)
+fig,ax = plt.subplots(2, this_reg_firing.shape[0], sharey = True, sharex=True)
+img_kwargs = dict(interpolation = 'nearest', aspect = 'auto')
+for num in range(states): 
+    ax[0,num].imshow(this_firing[num], **img_kwargs)
+    ax[1,num].imshow(this_reg_firing[num], **img_kwargs)
+plt.show()

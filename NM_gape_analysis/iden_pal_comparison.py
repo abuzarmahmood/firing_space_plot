@@ -38,6 +38,7 @@ from sklearn.discriminant_analysis import LinearDiscriminantAnalysis as LDA
 from sklearn.preprocessing import StandardScaler
 from scipy.spatial.distance import pdist
 from scipy.spatial import distance_matrix
+import itertools as it
 
 sys.path.append('/media/bigdata/firing_space_plot/ephys_data')
 from ephys_data import ephys_data
@@ -76,6 +77,7 @@ clustered_cut_quin = np.stack(
         [[x[:y].mean(axis=None), x[y:].mean(axis=None)] \
                 for x,y in zip(cut_sorted_quin, cluster_div)]
         ) 
+clustered_quin_diff = np.diff(clustered_cut_quin,axis=-1)
 
 quin_firing_list = [x[taste_dict['quin']] for x in off_firing_list]
 # Sort quinine to have same order of trials as gape array
@@ -128,6 +130,81 @@ for epoch_num in range(len(epoch_lims)):
         firing_frame_list.append(this_frame)
 firing_frame = pd.concat(firing_frame_list)
 
+############################################################
+# Significance of difference in population activity
+def get_dists(x,y = None):
+    if y is None:
+        y = x.copy()
+    full_dists = distance_matrix(x,y)
+    inds = np.indices(full_dists.shape)
+    wanted_inds = inds[0] > inds[1]
+    fin_dists = full_dists[wanted_inds]
+    return fin_dists
+
+dist_frame_list = []
+iters = list(it.product(firing_frame.epoch.unique(), firing_frame.session.unique()))
+for epoch, session in tqdm(iters):
+    this_dat = quin_epochs[session][epoch]
+    norm_dat = zscore(this_dat, axis = 0)
+    this_cluster_div = cluster_div[session]
+    clust_dat = [norm_dat[:this_cluster_div], norm_dat[this_cluster_div:]]
+    ############################################################ 
+    # Look at distances
+    intra_dists = [get_dists(x) for x in clust_dat] 
+    inter_dists = get_dists(clust_dat[0], clust_dat[1])
+    intra_frames = [pd.DataFrame(dict(clust = num, type = 'intra', dist = x)) \
+            for num, x in enumerate(intra_dists)]
+    inter_frame = pd.DataFrame(
+            dict(
+                clust = 'both',
+                type = 'inter',
+                dist = inter_dists
+                )
+            )
+    fin_frame = pd.concat([*intra_frames, inter_frame])
+    fin_frame['epoch'] = epoch
+    fin_frame['session'] = session
+    dist_frame_list.append(fin_frame)
+fin_dist_frame = pd.concat(dist_frame_list)
+
+# Replace cluster numbers with labels
+label_dict = {0 : 'low', 1 : 'high', 'both' : 'both'}
+fin_dist_frame['clust'] = [label_dict[x] for x in fin_dist_frame['clust']]
+
+group_frame = [x[1] for x in list(fin_dist_frame.groupby(['session','epoch']))]
+for x in group_frame:
+    x['norm_dist'] = x['dist'] / x.loc[x.clust == 'low'].dist.mean()
+fin_dist_frame = pd.concat(group_frame)
+fin_dist_frame['dist_type'] = fin_dist_frame['type'].astype('str') \
+        + '_' + fin_dist_frame['clust'].astype('str')
+fin_dist_frame.drop(columns = ['clust','type'], inplace=True)
+
+sns.catplot(
+        data = fin_dist_frame,
+        x = 'dist_type',
+        y = 'norm_dist',
+        col = 'session',
+        row = 'epoch',
+        kind = 'box'
+        )
+plt.tight_layout()
+fig = plt.gcf()
+fig.savefig(os.path.join(plot_dir, f'cluster_distance_comparison.png'))
+plt.close(fig)
+#plt.show()
+
+#mean_dist_frame = fin_dist_frame.groupby(['session','epoch','dist_type'])\
+#        .mean().reset_index()
+#
+#sns.boxplot(
+#       data = mean_dist_frame,
+#       x = 'dist_type',
+#       y = 'dist'
+#        )
+#plt.show()
+
+
+############################################################
 # Look at individual epochs first, and then sum of epochs
 alpha = 0.05
 grouped_list = list(firing_frame.groupby(['epoch','session','neuron']))

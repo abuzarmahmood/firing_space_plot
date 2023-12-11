@@ -5,6 +5,7 @@ import os
 from scipy.signal import savgol_filter as savgol
 import pandas as pd
 import seaborn as sns
+import pingouin as pg
 
 def rose_plot(ax, angles, bins=16, density=None, offset=0, lab_unit="degrees",
               start_zero=False, **param_dict):
@@ -146,28 +147,31 @@ std_shuf_coh_sm = savgol(std_shuf_coh, 101, 2)
 #med_coh = np.convolve(med_coh, kern, mode = 'same')
 #std_coh = np.convolve(std_coh, kern, mode = 'same')
 
-fig = plt.figure(figsize = (4,4))
-plt.plot(time_vec, med_coh_sm)
+cmap = plt.get_cmap('jet')
+fig = plt.figure(figsize = (3,3))
+plt.plot(time_vec, med_coh_sm, c = cmap(0))
 plt.fill_between(
         x = time_vec,
         y1 = med_coh_sm + std_coh_sm,
         y2 = med_coh_sm - std_coh_sm,
-        alpha = 0.3
+        alpha = 0.3,
+        color = cmap(0)
         )
-plt.plot(time_vec, med_shuf_coh_sm)
+plt.plot(time_vec, med_shuf_coh_sm, color = cmap(255))
 plt.fill_between(
         x = time_vec,
         y1 = med_shuf_coh_sm + std_shuf_coh_sm,
         y2 = med_shuf_coh_sm - std_shuf_coh_sm,
-        alpha = 0.3
+        alpha = 0.3,
+        color = cmap(255))
         )
 plt.axvline(0, color = 'red', linestyle = '--', linewidth = 2)
 plt.xlabel('Time post-transition (ms)')
 plt.ylabel('Coherence (0-1)')
 plt.tight_layout()
+#plt.show()
 fig.savefig(os.path.join(plot_dir, 'transition_aligned_coherence.png'), dpi = 300)
 plt.close(fig)
-#plt.show()
 
 
 ############################################################
@@ -192,14 +196,62 @@ med_coh_frame = pd.DataFrame(dict(
     Coherence = med_coh_split.flatten()
     ))
 sh_frame = pd.DataFrame(dict(
-    State = 3,
+    State = 2,
     Time = np.arange(len(med_shuf_coh)),
     Coherence = med_shuf_coh
     ))
+sh_frame.loc[sh_frame.Time > 350, 'State'] = 3
 med_coh_frame = pd.concat([med_coh_frame, sh_frame])
 
-fig,ax = plt.subplots(figsize = (2,2))
-sns.barplot(data = med_coh_frame,
+med_coh_frame['Type'] = None
+med_coh_frame.loc[med_coh_frame.State < 2, 'Type'] = 'Actual'
+med_coh_frame.loc[med_coh_frame.State >= 2, 'Type'] = 'Shuffle'
+
+actual_data = med_coh_frame.loc[med_coh_frame.Type == 'Actual']
+shuffle_data = med_coh_frame.loc[med_coh_frame.Type == 'Shuffle']
+actual_vs_shuffle_mwu_frame = pg.mwu(
+        x = actual_data['Coherence'],
+        y = shuffle_data['Coherence'],
+        )
+
+actual_state_mwu = pg.mwu(
+        x = actual_data.loc[actual_data.State == 0, 'Coherence'],
+        y = actual_data.loc[actual_data.State == 1, 'Coherence']
+        )
+
+shuffle_state_mwu = pg.mwu(
+        x = shuffle_data.loc[shuffle_data.State == 2, 'Coherence'],
+        y = shuffle_data.loc[shuffle_data.State == 3, 'Coherence']
+        )
+
+tukey_frame = pg.pairwise_tukey(
+        data = med_coh_frame,
+        dv = 'Coherence',
+        between = 'Type'
+        )
+tukey_frame.to_csv(os.path.join(plot_dir, 'pairwise_tukey.csv'))
+
+med_coh_frame['timebin'] = pd.cut(
+                            med_coh_frame.Time, 
+                            bins = 14,
+                            labels = np.arange(14),
+                            retbins = True)[0]
+
+med_coh_dec = med_coh_frame.groupby(['timebin', 'State', 'Type']).first().dropna()
+med_coh_dec.reset_index(drop=False, inplace=True)
+
+anova_frame = pg.anova(
+        data = med_coh_dec,
+        dv = 'Coherence',
+        between = ['Type','State']
+        )
+anova_frame.to_csv(os.path.join(plot_dir, 'two_way_anova.csv'))
+
+
+c_vals = [0,30,225,255]
+colors = [cmap(x) for x in c_vals]
+fig,ax = plt.subplots(figsize = (3,3))
+bar = sns.barplot(data = med_coh_frame,
         x = 'State',
         y = 'Coherence',
         ci = 'sd',
@@ -208,9 +260,13 @@ sns.barplot(data = med_coh_frame,
         linewidth = 3,
         edgecolor = ".5",
         ax=ax)
+for num in range(len(bar.patches)):
+    bar.patches[num].set_facecolor(colors[num])
 ax.set_ylabel('Mean Coherence')
 ax.set_xlabel('State Coherence')
-ax.set_xticklabels(['High','Low','Shuffle'])
+#x = [0,1.5,1,2,2.5,3]
+#plt.xticks(x)
+#ax.set_xticklabels(['State 1','\n\nActual', 'State 2','State 1', '\n\nShuffle', 'State 2'])
 ax.spines['top'].set_visible(False)
 ax.spines['right'].set_visible(False)
 plt.tight_layout()

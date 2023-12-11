@@ -5,6 +5,9 @@ Entropy of classifier predictions can be used to classify certainty
 """
 import numpy as np
 from scipy.special import softmax
+from sklearn.decomposition import PCA
+from sklearn.mixture import GaussianMixture
+from sklearn.preprocessing import OneHotEncoder
 
 class template_classifier():
     """
@@ -35,6 +38,42 @@ class template_classifier():
         return -np.sum(self.predict_proba(X) * \
                 np.log(self.predict_proba(X)),axis=0)
 
+class gaussian_classifier():
+    """
+    Classifier for gaussian mixture model
+    """
+    def __init__(self, variance_explained = 0.95):
+        self.variance_explained = variance_explained
+
+    def fit(self, X, y):
+        self.X = X
+        #self.preprocessed_X = self.preprocess(X)
+        self.y = y
+        self.classes = np.unique(y)
+        self.gmm = GaussianMixture(n_components = len(self.classes))
+        self.gmm.fit(self.X, self.y)
+        return self
+
+    def preprocess(self, X):
+        """
+        Get components which preserve 95% of variance
+        """
+        pca_model = PCA()
+        pca_model.fit(X)
+        self.n_components = np.where(np.cumsum(pca_model.explained_variance_ratio_) \
+                > self.variance_explained)[0][0]
+        preprocessed_data = pca_model.transform(X)[:,:self.n_components]
+        return preprocessed_data
+
+    def predict(self, X):
+        return self.gmm.predict(X)
+
+    def predict_proba(self, X):
+        return self.gmm.predict_proba(X)
+
+    def prediction_entropy(self, X):
+        return -np.sum(self.predict_proba(X) * \
+                np.log(self.predict_proba(X)),axis=-1)
 
 ############################################################
 if __name__ == '__main__':
@@ -43,6 +82,7 @@ if __name__ == '__main__':
     ephys_data_dir = '/media/bigdata/firing_space_plot/ephys_data'
     sys.path.append(ephys_data_dir)
     from ephys_data import ephys_data
+    import visualize as vz
 
     ## Log all stdout and stderr to a log file in results folder
     #sys.stdout = open(os.path.join(granger_causality_path, 'stdout.txt'), 'w')
@@ -64,6 +104,11 @@ if __name__ == '__main__':
     print(f'Processing {basename}')
     dat = ephys_data(dir_name)
     dat.get_spikes()
+    dat.firing_rate_params = dat.default_firing_params
+    dat.get_firing_rates()
+
+    vz.firing_overview(dat.all_firing_array)
+    plt.show()
 
     dat.get_info_dict()
     taste_names = dat.info_dict['taste_params']['tastes']
@@ -116,6 +161,16 @@ if __name__ == '__main__':
     pred = clf.predict(this_epoch)
     pred_proba = clf.predict_proba(this_epoch).T
     pred_entropy = clf.prediction_entropy(this_epoch)
+
+    preprocessed_epoch = gaussian_classifier().preprocess(this_epoch)
+    clf = gaussian_classifier().fit(preprocessed_epoch, y)
+    pred = clf.predict(preprocessed_epoch)
+    pred_proba = clf.predict_proba(preprocessed_epoch)
+    pred_entropy = clf.prediction_entropy(preprocessed_epoch)
+
+    one_hot_y = OneHotEncoder(sparse=False).fit_transform(y[:,None])
+    out_corr = np.cov(pred_proba.T, one_hot_y.T)
+    plt.imshow(out_corr); plt.show()
 
     # Plot classifier predictions
     fig, ax = plt.subplots(1,4, sharey=True)

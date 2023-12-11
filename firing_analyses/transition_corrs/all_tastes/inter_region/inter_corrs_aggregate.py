@@ -174,6 +174,26 @@ for num, data_dir in tqdm(enumerate(inter_frame.path)):
         continue
     fin_dir_list.append(data_dir)
 
+# Pull out number of neurons per recording
+region_unit_list = []
+for this_session in fin_dir_list:
+    dat = ephys_data(this_session)
+    dat.get_region_units()
+    unit_dict=  dict(zip(dat.region_names, [len(x) for x in dat.region_units]))
+    region_unit_list.append(unit_dict)
+region_unit_frame = pd.DataFrame(region_unit_list)
+region_unit_frame = region_unit_frame.melt(
+        value_vars = region_unit_frame.columns,
+        var_name = 'region',
+        value_name = 'count')
+
+sns.boxplot(data = region_unit_frame,
+        x = 'region',
+        y = 'count')
+plt.show()
+
+region_unit_frame.describe().iloc[:3]
+
 fin_basenames = [os.path.basename(x) for x in fin_dir_list]
 
 # Pull out fit params for one file
@@ -235,6 +255,12 @@ dat_list_zip = list(zip(*dat_list))
 dat_list_zip = [np.stack(x) for x in dat_list_zip]
 for this_var, this_dat in zip(wanted_names, dat_list_zip):
     globals()[this_var] = this_dat 
+
+#spearman_outs = [[stats.spearmanr(trans[0],trans[1]) \
+#        for trans in session.swapaxes(0,1)] for session in tau_list]
+#spearman_outs = np.stack(spearman_outs)
+#corr, p_vals = spearman_outs.T 
+#(p_vals < 0.1).sum(axis=1)
 
 ########################################
 ## All to all transition correlation
