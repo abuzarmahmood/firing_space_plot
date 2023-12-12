@@ -13,6 +13,7 @@ sys.path.append('/media/bigdata/firing_space_plot/ephys_data')
 from ephys_data import ephys_data
 from itertools import product
 from glob import glob
+import json
 
 ############################################################
 # Get Spikes
@@ -123,4 +124,7 @@ def return_data(save_path, run_str = 'run_1'):
             pred_spikes_list, 
             design_spikes_list, 
             ind_frame,
+            session_taste_inds,
+            all_taste_inds,
             )
+
