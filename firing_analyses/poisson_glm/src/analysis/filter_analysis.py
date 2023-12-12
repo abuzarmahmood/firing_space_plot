@@ -63,6 +63,10 @@ input_run_ind = 6
 run_str = f'run_{input_run_ind:03d}'
 plot_dir=  f'/media/bigdata/firing_space_plot/firing_analyses/poisson_glm/plots/{run_str}'
 
+filter_plot_dir = os.path.join(plot_dir, 'filter_analysis')
+if not os.path.exists(filter_plot_dir):
+    os.makedirs(filter_plot_dir)
+
 # Parameters
 set_params_to_globals(save_path, run_str)
 
@@ -103,7 +107,7 @@ sns.displot(
         col = 'filt_type',
         facet_kws=dict(sharey=False)
         )
-plt.savefig(os.path.join(plot_dir, 'filter_p_val_distributions.png'))
+plt.savefig(os.path.join(filter_plot_dir, 'filter_p_val_distributions.png'))
 plt.close()
 # plt.show()
 
@@ -128,10 +132,6 @@ max_vals = max_ll_frame.loc[max_inds].drop(columns = 'actual')
 fin_pval_frame = fin_pval_frame.merge(max_vals, on = ['fit_num',*ind_names])
 fin_pval_frame['agg_index'] = ["_".join([str(x) for x in y]) for y in fin_pval_frame[ind_names].values]
 # fin_pval_frame.dropna(inplace=True)
-
-filter_plot_dir = os.path.join(plot_dir, 'filter_analysis')
-if not os.path.exists(filter_plot_dir):
-    os.makedirs(filter_plot_dir)
 
 # Length of basis is adjusted because models were fit on binned data
 hist_cosine_basis = cb.gen_raised_cosine_basis(

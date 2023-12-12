@@ -269,50 +269,6 @@ plt.close()
 
 ############################################################
 ############################################################
-# Pretty examples --> High firing rate and high log-likelihood
-# Actual and predicted PSTHs
-
-# n_top = 100
-# Plot log_ll vs mean_rate
-# mean_nrn_ll_frame = fin_ll_frame.groupby(ind_names).median().reset_index(drop=False)
-# mean_nrn_ll_frame = mean_nrn_ll_frame.sort_values(by = ['mean_rate','actual'], ascending = False)
-# # Take out rows which don't match with ll_pval_frame
-# mean_nrn_ll_frame = mean_nrn_ll_frame.merge(ll_sig_inds, on = ind_names)
-# # Remove outliers
-# mean_nrn_ll_frame = mean_nrn_ll_frame[mean_nrn_ll_frame['actual'] > -1e4]
-# # Mark top
-# mean_nrn_ll_frame['top'] = False
-# mean_nrn_ll_frame.loc[mean_nrn_ll_frame.index[:n_top],'top'] = True
-
-# sns.jointplot(data = mean_nrn_ll_frame, 
-#               x = 'mean_rate', y = 'actual',
-#               hue = 'top', palette = ['b','r'],)
-# plt.suptitle('Mean Firing Rate vs. Log Likelihood')
-# plt.xlabel('Mean Firing Rate')
-# plt.ylabel('Actual Log Likelihood')
-# plt.savefig(os.path.join(plot_dir,'mean_rate_vs_log_ll.png'), dpi = 300, bbox_inches = 'tight')
-# plt.close()
-# #plt.show()
-
-# # Extract top inds
-# top_inds_frame = mean_nrn_ll_frame[mean_nrn_ll_frame['top']]
-# top_inds_frame = top_inds_frame.sort_values(by = 'actual', ascending = False)
-# top_inds = top_inds_frame[ind_names].values[:n_top]
-# 
-# ##############################
-# # Also find neurons which have high likelihood averaged across all tastes
-# mean_nrn_taste_ll_frame = mean_nrn_ll_frame.groupby(['session','neuron']).mean().reset_index(drop=False)
-# mean_nrn_taste_ll_frame = mean_nrn_taste_ll_frame.sort_values(by = ['mean_rate','actual'], ascending = False)
-# mean_nrn_taste_ll_frame['top'] = False
-# mean_nrn_taste_ll_frame.loc[mean_nrn_taste_ll_frame.index[:n_top],'top'] = True
-# 
-# # Extract top inds
-# taste_top_inds_frame = mean_nrn_taste_ll_frame[mean_nrn_taste_ll_frame['top']]
-# taste_top_inds_frame = taste_top_inds_frame.sort_values(by = 'actual', ascending = False)
-# taste_top_inds = taste_top_inds_frame[['session','neuron']].values[:n_top]
-
-# Recalculate PSTHs for top inds
-############################################################
 # Generate PSTHs for all tastes
 psth_plot_dir = os.path.join(plot_dir, 'example_psths')
 if not os.path.exists(psth_plot_dir):
@@ -351,6 +307,11 @@ for idx, dat_inds in \
 
 ########################################
 # Do filters from BLA-->GC and GC-->BLA have different shapes
+coupling_frame = fin_pval_frame.loc[fin_pval_frame.param.str.contains('coup')]
+coupling_frame = coupling_frame[['fit_num','param','p_val','values', *ind_names]]
+
+coupling_frame['lag'] = [int(x.split('_')[-1]) for x in coupling_frame.param]
+coupling_frame['other_nrn'] = [int(x.split('_')[-2]) for x in coupling_frame.param]
 
 coupling_list_frame = coupling_frame.groupby([*ind_names, 'other_nrn']).\
         agg({'values' : lambda x : x.tolist(),
@@ -417,7 +378,7 @@ g = sns.displot(
         )
 this_ax = g.axes[0][0]
 this_ax.set_yscale('log')
-this_ax.set_ylim([0.005,1])
+# this_ax.set_ylim([0.005,1])
 this_ax.set_ylabel('Fraction of filters')
 this_ax.set_xlabel('log10(p-value)')
 this_ax.set_title('Cumulative distribution of p-values')
