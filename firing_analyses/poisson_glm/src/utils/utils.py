@@ -54,7 +54,7 @@ def generate_params_dict(fin_save_path):
     hist_filter_len = 100 # ms
     stim_filter_len = 300 # ms
     coupling_filter_len = 100 # ms
-    bin_width = 10 # ms
+    bin_width = 1 # ms
 
     trial_start_offset = -2000 # ms # No clue what this does
     trial_lims = np.array([1000,4500])

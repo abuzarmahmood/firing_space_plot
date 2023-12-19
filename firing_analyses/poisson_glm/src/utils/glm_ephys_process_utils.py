@@ -6,12 +6,6 @@ base_path = '/media/bigdata/firing_space_plot/firing_analyses/poisson_glm'
 #base_path = '/home/exouser/Desktop/ABU/firing_space_plot/firing_analyses/poisson_glm'
 sys.path.append(base_path)
 ##############################
-# import glm_tools as gt
-# from utils.utils import (
-#         gen_data_frame,
-#         dataframe_to_design_mat,
-#         calc_loglikelihood,
-#         )
 from utils import utils
 from utils import glm_fitting 
 ##############################
@@ -38,7 +32,6 @@ def gen_stim_vec(spike_list, params_dict):
 
 
 def parallelize(func, iterator, n_jobs = 16):
-    #return Parallel(n_jobs = cpu_count()-2)\
     return Parallel(n_jobs = n_jobs, max_nbytes = 1e6)\
             (delayed(func)(this_iter) for this_iter in tqdm(enumerate(iterator)))
 
@@ -50,72 +43,45 @@ def gen_spike_train(spike_inds):
     spike_train[tuple(spike_inds)] = 1
     return spike_train
 
+def set_params_to_globals(params_dict):
+    # json_path = os.path.join(save_path, run_str,'fit_params.json')
+    # params_dict = json.load(open(json_path))
 
+    param_names = ['hist_filter_len',
+                   'stim_filter_len',
+                   'coupling_filter_len',
+                   'trial_start_offset',
+                   'trial_lims',
+                   'stim_t',
+                   'bin_width',
+                   'hist_filter_len_bin',
+                   'stim_filter_len_bin',
+                   'coupling_filter_len_bin',
+                   'basis_kwargs',
+                   'n_fits',
+                   'n_max_tries',
+                   'n_shuffles_per_fit',
+                   ]
 
-def process_ind(
-        ind_num, 
-        this_ind,
+    for param_name in param_names:
+        globals()[param_name] = params_dict[param_name]
+
+def return_design_mat(
+        this_ind, 
         spike_list,
         stim_vec,
         params_dict,
-        fin_save_path,
         ):
     """
-    Process a single index
+    Generates design matrix for a given index
 
     Inputs:
-        ind_num : index number for progress tracking
-        this_ind : index tuple for extracting data
-        spike_list : list of spike data
-        stim_vec : stimulus vector
-        params_dict : dictionary of parameters
+        this_ind: tuple of indices (session, taste, neuron)
 
-    Outputs:
-        p_val : p value for this index
-        ll : log likelihood for this index
+    Returns:
+        design_mat: pandas dataframe of design matrix
     """
-
-    ############################## 
-    # Extract values from params_dict
-    ############################## 
-    hist_filter_len = params_dict['hist_filter_len']
-    stim_filter_len = params_dict['stim_filter_len']
-    coupling_filter_len = params_dict['coupling_filter_len']
-
-    trial_start_offset = params_dict['trial_start_offset']
-    trial_lims = np.array(params_dict['trial_lims'])
-    stim_t = params_dict['stim_t']
-
-    bin_width = params_dict['bin_width']
-
-    # Reprocess filter lens
-    hist_filter_len_bin = params_dict['hist_filter_len_bin'] 
-    stim_filter_len_bin = params_dict['stim_filter_len_bin']
-    coupling_filter_len_bin = params_dict['coupling_filter_len_bin']
-
-    # Define basis kwargs
-    basis_kwargs = params_dict['basis_kwargs'] 
-
-    # Number of fits on actual data (expensive)
-    n_fits = params_dict['n_fits']
-    n_max_tries = params_dict['n_max_tries']
-    n_shuffles_per_fit = params_dict['n_shuffles_per_fit']
-
-    #this_ind = fin_inds[0]
-    #this_ind_str = '_'.join([str(x) for x in this_ind])
-
-    ############################## 
-    # Generate save paths
-    ############################## 
-    this_ind_str = '_'.join([f'{x:03}' for x in this_ind])
-    pval_save_name = f'{this_ind_str}_p_val_frame.csv'
-    pval_save_path = os.path.join(fin_save_path,pval_save_name)
-    ll_save_name = f'{this_ind_str}_ll_frame.csv'
-    ll_save_path = os.path.join(fin_save_path,ll_save_name)
-
-    if os.path.exists(pval_save_path) and os.path.exists(ll_save_path):
-        print(f'Already processed {this_ind_str}')
-        return
+    set_params_to_globals(params_dict)
 
     ############################## 
     # Load data 
@@ -182,6 +148,145 @@ def process_ind(
                     actual_design_mat.trial_time.isin(trial_lims_vec)
                     ]
 
+    return actual_design_mat
+
+def gen_enough_fits(
+        design_mat,
+        # single_fit_kwargs,
+        n_fits = 10,
+        n_max_tries = 100,
+        ):
+    """
+    Generate enough fits to get n_fits in n_max_tries
+
+    Inputs:
+        single_fit_kwargs: dict
+            kwargs for glm_fitting.gen_actual_fit
+        n_fits: int
+        n_max_tries: int
+
+    Returns:
+        fit_list: list of GLMResults
+    """
+
+    # Try to get n_fits in max_tries 
+    fit_list = []
+    for i in trange(n_max_tries):
+        if len(fit_list) < n_fits:
+            try:
+                res_list, train_dat_list, test_ll_list, test_dat_list = \
+                        glm_fitting.perform_fit_actual_and_trial_shuffled_fit(
+                                design_mat,
+                                )
+                fit_list.append([
+                    res_list, 
+                    train_dat_list, 
+                    test_ll_list,
+                    test_dat_list
+                    ])
+            except:
+                print('Failed fit')
+        else:
+            print('Finished fitting')
+            break
+    return fit_list
+
+
+def return_pval_frame(fit_list, this_fit_type):
+    """
+    Note: Outs per fit = (res, design_mat, test_ll)
+
+    Process output of gen_enough_fits
+
+    Input:
+    - fit_list: list of fit outs
+    - this_fit_type: str, type of fit
+    """
+    assert len(fit_list) > 0, 'No fits to process'
+
+    p_val_list = [this_fit[0].pvalues for this_fit in fit_list]
+    p_val_fin = []
+    for i, p_vals in enumerate(p_val_list):
+        p_vals = pd.DataFrame(p_vals)
+        p_vals['fit_num'] = i
+        p_vals['values'] = fit_list[i][0].params.values 
+        p_vals['fit_type'] = this_fit_type
+        p_val_fin.append(p_vals)
+
+    p_val_frame = pd.concat(p_val_fin)
+    p_val_frame.reset_index(inplace=True)
+    p_val_frame.rename(columns={'index':'param', 0 : 'p_val'},inplace=True)
+    return p_val_frame
+
+def return_ll_frame(fit_list, this_fit_type):
+    """
+    Note: Outs per fit = (res, design_mat, test_ll)
+    """
+    ll_list = [x[2] for x in fit_list]
+    ll_frame = pd.DataFrame(
+            dict(
+                ll = ll_list,
+                fit_num = np.arange(len(ll_list)),
+                fit_type = this_fit_type,
+                ),
+            )
+    return ll_frame
+
+def process_ind(
+        this_ind,
+        spike_list,
+        stim_vec,
+        params_dict,
+        fin_save_path,
+        force_process = False,
+        ):
+    """
+    Process a single index
+
+    Inputs:
+        ind_num : index number for progress tracking
+        this_ind : index tuple for extracting data
+        spike_list : list of spike data
+        stim_vec : stimulus vector
+        params_dict : dictionary of parameters
+        force_process: bool, whether to process the data even if it's
+            already been processed
+
+    Outputs:
+        p_val : p value for this index
+        ll : log likelihood for this index
+    """
+
+    ############################## 
+    # Generate save paths
+    ############################## 
+    this_ind_str = '_'.join([f'{x:03}' for x in this_ind])
+    pval_save_name = f'{this_ind_str}_p_val_frame.csv'
+    pval_save_path = os.path.join(fin_save_path,pval_save_name)
+    ll_save_name = f'{this_ind_str}_ll_frame.csv'
+    ll_save_path = os.path.join(fin_save_path,ll_save_name)
+
+    if os.path.exists(pval_save_path) and os.path.exists(ll_save_path):
+        if not force_process:
+            print(f'Already processed {this_ind_str}')
+            return
+
+
+    ############################## 
+    # Extract values from params_dict
+    ############################## 
+    set_params_to_globals(params_dict)
+
+    ############################## 
+    # Get design mat 
+    ############################## 
+    actual_design_mat = return_design_mat(
+            this_ind, 
+            spike_list,
+            stim_vec,
+            params_dict,
+            )
+
     ############################## 
     # Fit model 
     ############################## 
@@ -201,41 +306,12 @@ def process_ind(
              # 'random_shuffled',
              ]
 
-    # # Plot a couple trials of the actual data and trial-shuffled data
-    # actual_frame = data_frame.copy()
-    # trial_shuffled_frame = utils.gen_trial_shuffle(data_frame)
-
-    # single_fit_kwargs = dict(
-    #         data_frame = data_frame, # Not used if design_mat is provided
-    #         hist_filter_len = hist_filter_len_bin,
-    #         stim_filter_len = stim_filter_len_bin,
-    #         coupling_filter_len = coupling_filter_len_bin,
-    #         basis_kwargs = basis_kwargs,
-    #         design_mat = actual_design_mat,
-    #         )
-
-    # all_fit_lists = [] # List of lists of fit outs
-    # for this_fit_type in fit_types:
-    #     # single_fit_kwargs = {
-    #     #         **single_fit_kwargs,
-    #     #         'fit_type' : this_fit_type,
-    #     #         }
-    #     # Get at least n_fits in n_max_tries
-    #     this_fit_list = gen_enough_fits(
-    #             actual_design_mat,
-    #             # single_fit_kwargs,
-    #             n_fits = n_fits,
-    #             n_max_tries = n_max_tries,
-    #             )
-    #     all_fit_lists.append(this_fit_list)
-
-    # outs = list of lists
+    # fit_outs = list of lists
     # outer_list = # of fits
-    # inner_list = res_list, train_dat_list, test_ll_list 
+    # inner_list = res_list, train_dat_list, test_ll_list, test_dat_list 
     # each element contains data for actual and trial-shuffled fits
     fit_outs = gen_enough_fits(
                 actual_design_mat,
-                # single_fit_kwargs,
                 n_fits = n_fits,
                 n_max_tries = n_max_tries,
                 )
@@ -244,6 +320,8 @@ def process_ind(
     actual_outs = [[x[0] for x in this_fit] for this_fit in fit_outs]
     trial_shuffled_outs = [[x[1] for x in this_fit] for this_fit in fit_outs]
     all_fit_lists = [actual_outs, trial_shuffled_outs]
+
+    test_dat_list = [x[3] for x in actual_outs]
 
     fin_pval_frame = pd.concat([
         return_pval_frame(this_fit_list, this_fit_type) \
@@ -268,9 +346,6 @@ def process_ind(
     fin_ll_frame = fin_ll_frame.reset_index(drop=True)
     fin_ll_frame.to_csv(ll_save_path)
 
-    # # Fit matched differences in ll
-    # fin_ll_frame.groupby('fit_num')['ll'].diff()
-
     ############################## 
     # Process results 
     ############################## 
@@ -286,7 +361,18 @@ def process_ind(
             #best_fit = fit_list[best_fit_ind]
             best_fit = actual_outs[best_fit_ind][0] 
         else:
-            best_fit = actual_outs[0][0]
+            best_fit_ind = 0
+            best_fit = actual_outs[best_fit_ind][0] 
+
+        ##############################
+        # Save test_dat for best fit
+        best_test_dat = test_dat_list[best_fit_ind]
+        best_test_dat.to_csv(
+                os.path.join(
+                    fin_save_path, 
+                    f'{this_ind_str}_test_dat.csv'
+                    )
+                )
 
         ##############################
         # Save original and predicted PSTHs
@@ -314,6 +400,8 @@ def process_ind(
         pred_spikes = pd.DataFrame(
                 best_fit.predict(actual_design_mat[best_fit.params.index]), 
                                    columns = ['spikes'])
+        # Max out spike counts at bin_width (i.e. not allowed
+        # to fire more than 1 spikes / ms
         pred_spikes.loc[pred_spikes.spikes > bin_width, 'spikes'] = bin_width
         pred_spikes['trial_labels'] = actual_design_mat.trial_labels
         pred_spikes['trial_time'] = actual_design_mat.trial_time
@@ -332,123 +420,29 @@ def process_ind(
     del data_frame, actual_design_mat
     del this_session_dat, this_taste_dat, this_nrn_dat, other_nrn_dat, stim_dat
     del this_nrn_flat, other_nrn_flat, stim_flat
-    print(f'Finished: {ind_num}, {this_ind}')
-
-
-def gen_enough_fits(
-        design_mat,
-        # single_fit_kwargs,
-        n_fits = 10,
-        n_max_tries = 100,
-        ):
-    """
-    Generate enough fits to get n_fits in n_max_tries
-
-    Inputs:
-        single_fit_kwargs: dict
-            kwargs for glm_fitting.gen_actual_fit
-        n_fits: int
-        n_max_tries: int
-
-    Returns:
-        fit_list: list of GLMResults
-    """
-
-    # Try to get n_fits in max_tries 
-    fit_list = []
-    for i in trange(n_max_tries):
-        if len(fit_list) < n_fits:
-            try:
-                # res, temp_design_mat, test_ll = glm_fitting.perform_fit(
-                #         **single_fit_kwargs,
-                #         )
-                res_list, train_dat_list, test_ll_list = \
-                        glm_fitting.perform_fit_actual_and_trial_shuffled_fit(
-                                design_mat,
-                                )
-                #res, temp_design_mat, test_ll = glm_fitting.gen_actual_fit(
-                        #        data_frame, # Not used if design_mat is provided
-                        #        hist_filter_len = hist_filter_len_bin,
-                        #        stim_filter_len = stim_filter_len_bin,
-                        #        coupling_filter_len = coupling_filter_len_bin,
-                        #        basis_kwargs = basis_kwargs,
-                        #        actual_design_mat = actual_design_mat,
-                        #        fit_type = wanted_fit_type,
-                        #        )
-                # Saving these is VERY expensive (~20MB per model)
-                #res.save(os.path.join(save_path,f'{this_ind_str}_fit_{i}.pkl'))
-                # fit_list.append([res, train_dat_list, test_ll])
-                fit_list.append([res_list, train_dat_list, test_ll_list])
-            except:
-                print('Failed fit')
-        else:
-            print('Finished fitting')
-            break
-    return fit_list
+    print(f'Finished: {this_ind}')
 
 
 #for this_ind in tqdm(fin_inds):
-def try_process(this_ind):
+def try_process(
+        this_ind,
+        spike_list,
+        stim_vec,
+        params_dict,
+        fin_save_path,
+        force_process = False,
+        ):
     try:
-        process_ind(*this_ind)
+        process_ind(
+            this_ind,
+            spike_list,
+            stim_vec,
+            params_dict,
+            fin_save_path,
+            force_process = False,
+        )
     except:
-        print('Failed')
+        print(f'Try Process Failed for {this_ind}')
         pass
 #parallelize(try_process,fin_inds, n_jobs = 8)
 
-def return_pval_frame(fit_list, this_fit_type):
-    """
-    Note: Outs per fit = (res, design_mat, test_ll)
-
-    Process output of gen_enough_fits
-
-    Input:
-    - fit_list: list of fit outs
-    - this_fit_type: str, type of fit
-    """
-    assert len(fit_list) > 0, 'No fits to process'
-
-    p_val_list = [this_fit[0].pvalues for this_fit in fit_list]
-    p_val_fin = []
-    for i, p_vals in enumerate(p_val_list):
-        p_vals = pd.DataFrame(p_vals)
-        p_vals['fit_num'] = i
-        p_vals['values'] = fit_list[i][0].params.values 
-        p_vals['fit_type'] = this_fit_type
-        p_val_fin.append(p_vals)
-
-    p_val_frame = pd.concat(p_val_fin)
-    p_val_frame.reset_index(inplace=True)
-    p_val_frame.rename(columns={'index':'param', 0 : 'p_val'},inplace=True)
-    # # Reformulate pval_save_path using this_fit_type
-    # pval_save_pieces = pval_save_path.split('.')
-    # pval_save_path = "_".join([
-    #         pval_save_pieces[0], 
-    #         this_fit_type, 
-    #         ])
-    # pval_save_path = pval_save_path + '.' + pval_save_pieces[1]
-    # p_val_frame.to_csv(pval_save_path)
-    return p_val_frame
-
-def return_ll_frame(fit_list, this_fit_type):
-    """
-    Note: Outs per fit = (res, design_mat, test_ll)
-    """
-    ll_list = [x[2] for x in fit_list]
-    ll_frame = pd.DataFrame(
-            dict(
-                ll = ll_list,
-                fit_num = np.arange(len(ll_list)),
-                fit_type = this_fit_type,
-                ),
-            )
-
-    # # Reformulate ll_save_path using this_fit_type
-    # ll_save_pieces = ll_save_path.split('.')
-    # ll_save_path = "_".join([
-    #         ll_save_pieces[0], 
-    #         this_fit_type, 
-    #         ])
-    # ll_save_path = ll_save_path + '.' + ll_save_pieces[1]
-    # ll_frame.to_csv(ll_save_path)
-    return ll_frame

@@ -33,6 +33,7 @@ import json
 from pprint import pprint
 sys.path.append('/media/bigdata/firing_space_plot/ephys_data')
 from ephys_data import ephys_data
+from functools import partial
 
 os.environ["OMP_NUM_THREADS"] = "1" # export OMP_NUM_THREADS=4
 os.environ["MKL_NUM_THREADS"] = "1" # export MKL_NUM_THREADS=6
@@ -43,17 +44,22 @@ save_path = os.path.join(
         'artifacts'
         )
 
+def parallelize(func, iterator, n_jobs = 16):
+    return Parallel(n_jobs = n_jobs)\
+            (delayed(func)(this_iter) for this_iter in tqdm(iterator))
+
 ############################################################
 ## Begin Process 
 ############################################################
 
 # Check if previous runs present
-run_list = sorted(glob(os.path.join(save_path, 'run*')))
-run_basenames = sorted([os.path.basename(x) for x in run_list])
-print(f'Present runs : {run_basenames}')
+# run_list = sorted(glob(os.path.join(save_path, 'run*')))
+# run_basenames = sorted([os.path.basename(x) for x in run_list])
+# print(f'Present runs : {run_basenames}')
 # input_run_ind = int(input('Please specify current run (integer) :'))
-input_run_ind = 6
+input_run_ind = 7
 fin_save_path = os.path.join(save_path, f'run_{input_run_ind:03}')
+json_path = os.path.join(fin_save_path, 'fit_params.json')
 
 if not os.path.exists(fin_save_path):
     os.makedirs(fin_save_path)
@@ -61,7 +67,6 @@ if not os.path.exists(fin_save_path):
     params_dict = utils.generate_params_dict(fin_save_path)
 else:
     run_exists_bool = True
-    json_path = os.path.join(fin_save_path, 'fit_params.json')
     params_dict = json.load(open(json_path))
     print('Run exists with following parameters :')
     pprint(params_dict)
@@ -145,31 +150,53 @@ fin_inds = ind_frame.values[:,:-1] # Drop Count
 
 stim_vec = process_utils.gen_stim_vec(spike_list, params_dict)
 
+# Some large models max out ram and make parallelize crash. 
+# These can be tracked and ignored till the end so the rest 
+# of the fits can be completed
+# For now, just run parallel first, and then run sequential 
+# to catch the ones that fail
+try_process_parallel = partial(
+        process_utils.try_process,
+        spike_list=spike_list,
+        stim_vec=stim_vec,
+        params_dict=params_dict,
+        fin_save_path=fin_save_path
+        )
+
+outs = parallelize(
+        try_process_parallel,
+        fin_inds,
+        n_jobs=8,
+        )
+
 
 pbar = tqdm(total=len(fin_inds))
-for num, this_ind in tqdm(enumerate(fin_inds)):
-    args = (
-            num, 
-            this_ind,
-            spike_list,
-            stim_vec,
-            params_dict,
-            fin_save_path
-            )
+for ind_num, this_ind in tqdm(enumerate(fin_inds)):
+    # args = (
+    #         this_ind,
+    #         spike_list,
+    #         stim_vec,
+    #         params_dict,
+    #         fin_save_path
+    #         )
     # process_utils.process_ind(*args)
-    process_utils.try_process(args)
+    # process_utils.try_process(
+    #         this_ind,
+    #         spike_list,
+    #         stim_vec,
+    #         params_dict,
+    #         fin_save_path
+    #         )
+    try_process_parallel(this_ind)
+
 
     # Manually update tqdm
-    
-
     print()
     print('############################################################')
-    print(f'Finished processing {num} of {len(fin_inds)} --- {num/len(fin_inds)*100:.2f}%')
+    print(f'Finished processing {ind_num} of {len(fin_inds)} --- {ind_num/len(fin_inds)*100:.2f}%')
     pbar.update(1)
     print('############################################################')
     print()
 
 pbar.close()
 
-# TODO: Some large models max out ram and make parallelize crash. 
-# These can be tracked and ignored till the end so the rest of the fits can be completed

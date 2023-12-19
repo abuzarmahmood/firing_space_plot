@@ -499,7 +499,9 @@ def perform_fit_actual_and_trial_shuffled_fit(
 
     # Fit model to actual data
     out_list = []
-    for this_train_dat in [actual_train_dat, trial_shuffled_train_dat]:
+    train_dat_list = [actual_train_dat, trial_shuffled_train_dat]
+    train_dat_names = ['actual', 'trial_shuffled']
+    for this_train_dat in train_dat_list:
         #res, pred, train_dat = fit_stim_history_coupled_glm(
         outs = fit_stim_history_coupled_glm(
                         glmdata = this_train_dat,
@@ -512,15 +514,19 @@ def perform_fit_actual_and_trial_shuffled_fit(
         out_list.append(outs)
 
     # Calculate log likelihood on test data
+    # Iterate over actual fit and trial shuffled fit
     res_list = [out[0] for out in out_list]
+    test_dat_list = []
     ll_list = []
-    for this_res in res_list: 
+    for this_res, res_name in zip(res_list, train_dat_names): 
         test_pred = this_res.predict(test_dat[this_res.params.index])
         test_ll = utils.poisson_ll(test_pred, test_dat['spikes'].values)
         test_ll = np.round(test_ll, 2)
         ll_list.append(test_ll)
+        test_dat['pred_spikes'] = test_pred
+        test_dat_list.append(test_dat)
 
     zipped_outs = list(zip(*out_list)) # res, pred, train_dat
 
     # Return res, train_dat, ll_list
-    return zipped_outs[0], zipped_outs[2], ll_list 
+    return zipped_outs[0], zipped_outs[2], ll_list, test_dat_list 
