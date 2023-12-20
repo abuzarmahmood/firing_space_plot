@@ -174,7 +174,13 @@ def gen_enough_fits(
     for i in trange(n_max_tries):
         if len(fit_list) < n_fits:
             try:
-                res_list, train_dat_list, test_ll_list, test_dat_list = \
+                (
+                    res_list, 
+                    train_dat_list, 
+                    test_ll_list, 
+                    test_dat_list,
+                    test_info_crit_list,
+                    )= \
                         glm_fitting.perform_fit_actual_and_trial_shuffled_fit(
                                 design_mat,
                                 )
@@ -182,7 +188,8 @@ def gen_enough_fits(
                     res_list, 
                     train_dat_list, 
                     test_ll_list,
-                    test_dat_list
+                    test_dat_list,
+                    test_info_crit_list,
                     ])
             except:
                 print('Failed fit')
@@ -322,6 +329,7 @@ def process_ind(
     all_fit_lists = [actual_outs, trial_shuffled_outs]
 
     test_dat_list = [x[3] for x in actual_outs]
+    test_info_crit_list = [x[4] for x in actual_outs]
 
     fin_pval_frame = pd.concat([
         return_pval_frame(this_fit_list, this_fit_type) \
@@ -373,6 +381,17 @@ def process_ind(
                     f'{this_ind_str}_test_dat.csv'
                     )
                 )
+
+        # Also save information criteria for best fit
+        best_test_info_crit = test_info_crit_list[best_fit_ind]
+        # Output as json
+        with open(
+                os.path.join(
+                    fin_save_path,
+                    f'{this_ind_str}_test_info_crit.json'
+                    ), 
+                'w') as f:
+            json.dump(best_test_info_crit, f)
 
         ##############################
         # Save original and predicted PSTHs
@@ -441,6 +460,7 @@ def try_process(
             fin_save_path,
             force_process = False,
         )
+        print(f'Succesfully Finished: {this_ind}')
     except:
         print(f'Try Process Failed for {this_ind}')
         pass

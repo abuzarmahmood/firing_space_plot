@@ -518,15 +518,24 @@ def perform_fit_actual_and_trial_shuffled_fit(
     res_list = [out[0] for out in out_list]
     test_dat_list = []
     ll_list = []
+    info_crit_list = []
     for this_res, res_name in zip(res_list, train_dat_names): 
         test_pred = this_res.predict(test_dat[this_res.params.index])
         test_ll = utils.poisson_ll(test_pred, test_dat['spikes'].values)
         test_ll = np.round(test_ll, 2)
         ll_list.append(test_ll)
         test_dat['pred_spikes'] = test_pred
+        # Drop test_x columns
+        test_dat = test_dat.drop(this_res.params.index, axis = 1)
+        # This leaves us with test_y and pred_test_y
         test_dat_list.append(test_dat)
+        # Calculate both aic and bic
+        aic = 2*len(this_res.params) - 2*test_ll
+        bic = np.log(len(test_dat))*len(this_res.params) - 2*test_ll  
+        info_crit_dict = {'aic': aic, 'bic': bic}
+        info_crit_list.append(info_crit_dict)
 
     zipped_outs = list(zip(*out_list)) # res, pred, train_dat
 
     # Return res, train_dat, ll_list
-    return zipped_outs[0], zipped_outs[2], ll_list, test_dat_list 
+    return zipped_outs[0], zipped_outs[2], ll_list, test_dat_list, info_crit_list 
