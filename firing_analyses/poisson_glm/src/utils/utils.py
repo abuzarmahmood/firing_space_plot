@@ -5,10 +5,12 @@ import numpy as np
 from scipy.stats import zscore
 import pandas as pd
 import sys
+from glob import glob
 sys.path.append('/media/bigdata/firing_space_plot/firing_analyses/poisson_glm')
 ##############################
 import utils.makeRaisedCosBasis as cb
 from utils.generate_tools import gen_stim_history_coupled_design
+import utils.glm_ephys_process_utils as process_utils
 ##############################
 from pandas import DataFrame as df
 from pandas import concat
@@ -48,52 +50,85 @@ def get_unit_spikes_and_regions(file_list):
         unit_region_list.append(unit_region_frame)
     return spike_list, unit_region_list
 
+def load_dat_from_path_list(file_path_list, save_path):
+    file_list = [x.strip() for x in open(file_list_path,'r').readlines()]
+    basenames = [os.path.basename(x) for x in file_list]
+
+    spike_list, unit_region_list =\
+            get_unit_spikes_and_regions(file_list)
+
+    # Save spike_list as numpy arrays
+    spike_inds_list = [np.stack(np.where(x)) for x in spike_list]
+
+    if not os.path.exists(spike_list_path):
+        os.makedirs(spike_list_path)
+    for ind,spikes in enumerate(spike_list):
+        #np.save(os.path.join(spike_list_path,f'{ind}_spikes.npy'),spikes)
+        np.save(os.path.join(spike_list_path,f'{ind:03}_spike_inds.npy'),spike_inds_list[ind])
+
+    unit_region_frame = concat(unit_region_list)
+    unit_region_frame = unit_region_frame.reset_index(drop=True)
+    unit_region_frame.to_csv(os.path.join(save_path,'unit_region_frame.csv'))
+
+    # Make sure all sessions have 4 tastes
+    assert all([x.shape[0] == 4 for x in spike_list])
+
+    # Find neurons per session
+    nrn_counts = [x.shape[2] for x in spike_list]
+
+    # Process each taste separately
+    inds = np.array(
+            list(product(range(len(spike_list)),range(spike_list[0].shape[0]))))
+    fin_inds = []
+    for ind in tqdm(inds):
+        this_count = nrn_counts[ind[0]]
+        for nrn in range(this_count):
+            fin_inds.append(np.hstack((ind,nrn)))
+    fin_inds = np.array(fin_inds)
+
+    ind_frame = df(fin_inds,columns=['session','taste','neuron'])
+    ind_frame.to_csv(os.path.join(save_path,'ind_frame.csv'))
+
+    return spike_list, unit_region_frame, ind_frame, fin_inds
+
+def load_dat_from_save(spike_list_path, save_path):
+    spike_inds_paths = sorted(
+            glob(os.path.join(spike_list_path,'*_spike_inds.npy')))
+    spike_inds_list = [np.load(x) for x in spike_inds_paths]
+    spike_list = [process_utils.gen_spike_train(x) for x in spike_inds_list]
+
+    # Load unit_region_frame
+    unit_region_frame = pd.read_csv(
+            os.path.join(save_path,'unit_region_frame.csv'),index_col=0)
+
+    # Load ind_frame
+    ind_frame = pd.read_csv(os.path.join(save_path,'ind_frame.csv'),index_col=0)
+    fin_inds = ind_frame.values
+
+    return spike_list, unit_region_frame, ind_frame, fin_inds
 
 def generate_params_dict(fin_save_path):
-    # Parameters
-    hist_filter_len = 100 # ms
-    stim_filter_len = 300 # ms
-    coupling_filter_len = 100 # ms
-    bin_width = 1 # ms
-
-    trial_start_offset = -2000 # ms # No clue what this does
-    trial_lims = np.array([1000,4500])
-    stim_t = 2000
-
-    # Define basis kwargs
-    basis_kwargs = dict(
-        n_basis = 10,
-        basis = 'cos',
-        basis_spread = 'log',
-        )
-
-    # Number of fits on actual data (expensive)
-    n_fits = 5
-    n_max_tries = 20
-    # Number of shuffles tested against each fit
-    n_shuffles_per_fit = 10
-
-    # Reprocess filter lens
-    hist_filter_len_bin = hist_filter_len // bin_width
-    stim_filter_len_bin = stim_filter_len // bin_width
-    coupling_filter_len_bin = coupling_filter_len // bin_width
-
     # Save run parameters
+    bin_width = 1 # ms
     params_dict = dict(
-            hist_filter_len = hist_filter_len,
-            stim_filter_len = stim_filter_len,
-            coupling_filter_len = coupling_filter_len,
-            bin_width = bin_width,
-            hist_filter_len_bin = hist_filter_len_bin,
-            stim_filter_len_bin = stim_filter_len_bin,
-            coupling_filter_len_bin = coupling_filter_len_bin,
-            trial_start_offset = trial_start_offset,
-            trial_lims = list(trial_lims),
-            stim_t = stim_t,
-            basis_kwargs = basis_kwargs,
-            n_fits = n_fits,
-            n_max_tries = n_max_tries,
-            n_shuffles_per_fit = n_shuffles_per_fit,
+            hist_filter_len = 100, #ms
+            stim_filter_len = 300, #ms
+            coupling_filter_len = 100, #ms
+            bin_width = bin_width, #ms
+            hist_filter_len_bin = hist_filter_len // bin_width,
+            stim_filter_len_bin = stim_filter_len // bin_width,
+            coupling_filter_len_bin = coupling_filter_len // bin_width,
+            trial_start_offset = -2000, # ms # No clue what this does
+            trial_lims = [1000,4500],
+            stim_t = 2000,
+            basis_kwargs = dict(
+                            n_basis = 10,
+                            basis = 'cos',
+                            basis_spread = 'log',
+                            ),
+            n_fits = 5,
+            n_max_tries = 20,
+            n_shuffles_per_fit = 10,
             )
 
     params_save_path = os.path.join(fin_save_path, 'fit_params.json')

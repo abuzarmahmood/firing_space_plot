@@ -48,28 +48,39 @@ def parallelize(func, iterator, n_jobs = 16):
     return Parallel(n_jobs = n_jobs)\
             (delayed(func)(this_iter) for this_iter in tqdm(iterator))
 
+file_list_path = '/media/bigdata/projects/pytau/pytau/data/fin_inter_list_3_14_22.txt'
+
 ############################################################
 ## Begin Process 
 ############################################################
+json_template_path = os.path.join(base_path, 'template_fit_params.json')
+params_dict = json.load(open(json_template_path))
+print('Run exists with following parameters :')
+pprint(params_dict)
 
-# Check if previous runs present
-# run_list = sorted(glob(os.path.join(save_path, 'run*')))
-# run_basenames = sorted([os.path.basename(x) for x in run_list])
-# print(f'Present runs : {run_basenames}')
-# input_run_ind = int(input('Please specify current run (integer) :'))
-input_run_ind = 7
+# input_run_ind = 8
+run_params_path = os.path.join(base_path, 'run_params.json')
+run_params = json.load(open(run_params_path))
+input_run_ind = run_params['run_ind']
+fraction_used = run_params['fraction_used']
+
+
 fin_save_path = os.path.join(save_path, f'run_{input_run_ind:03}')
-json_path = os.path.join(fin_save_path, 'fit_params.json')
 
-if not os.path.exists(fin_save_path):
-    os.makedirs(fin_save_path)
-    run_exists_bool = False
-    params_dict = utils.generate_params_dict(fin_save_path)
-else:
-    run_exists_bool = True
-    params_dict = json.load(open(json_path))
-    print('Run exists with following parameters :')
-    pprint(params_dict)
+# Copy template json to save path
+json_save_path = os.path.join(fin_save_path, 'fit_params.json')
+with open(json_save_path, 'w') as json_file:
+    json.dump(params_dict, json_file)
+
+# if not os.path.exists(fin_save_path):
+#     os.makedirs(fin_save_path)
+#     run_exists_bool = False
+#     params_dict = utils.generate_params_dict(fin_save_path)
+# else:
+#     run_exists_bool = True
+#     params_dict = json.load(open(json_path))
+#     print('Run exists with following parameters :')
+#     pprint(params_dict)
 
 ############################################################
 ############################################################
@@ -78,61 +89,21 @@ reprocess_data = False
 spike_list_path = os.path.join(save_path,'spike_save')
 
 if reprocess_data:
-
-    file_list_path = '/media/bigdata/projects/pytau/pytau/data/fin_inter_list_3_14_22.txt'
-    file_list = [x.strip() for x in open(file_list_path,'r').readlines()]
-    basenames = [os.path.basename(x) for x in file_list]
-
-    spike_list, unit_region_list =\
-            utils.get_unit_spikes_and_regions(file_list)
-
-    # Save spike_list as numpy arrays
-    spike_inds_list = [np.stack(np.where(x)) for x in spike_list]
-
-    if not os.path.exists(spike_list_path):
-        os.makedirs(spike_list_path)
-    for ind,spikes in enumerate(spike_list):
-        #np.save(os.path.join(spike_list_path,f'{ind}_spikes.npy'),spikes)
-        np.save(os.path.join(spike_list_path,f'{ind:03}_spike_inds.npy'),spike_inds_list[ind])
-
-    unit_region_frame = concat(unit_region_list)
-    unit_region_frame = unit_region_frame.reset_index(drop=True)
-    unit_region_frame.to_csv(os.path.join(save_path,'unit_region_frame.csv'))
-
-    # Make sure all sessions have 4 tastes
-    assert all([x.shape[0] == 4 for x in spike_list])
-
-    # Find neurons per session
-    nrn_counts = [x.shape[2] for x in spike_list]
-
-    # Process each taste separately
-    inds = np.array(
-            list(product(range(len(spike_list)),range(spike_list[0].shape[0]))))
-    fin_inds = []
-    for ind in tqdm(inds):
-        this_count = nrn_counts[ind[0]]
-        for nrn in range(this_count):
-            fin_inds.append(np.hstack((ind,nrn)))
-    fin_inds = np.array(fin_inds)
-
-    ind_frame = df(fin_inds,columns=['session','taste','neuron'])
-    ind_frame.to_csv(os.path.join(save_path,'ind_frame.csv'))
-
+    (
+        spike_list, 
+        unit_region_frame, 
+        ind_frame, 
+        fin_inds,
+        ) = utils.load_dat_from_path_list(
+                        file_list_path, save_path)
 else:
-    ############################################################
-    # Reconstitute data
-    spike_inds_paths = sorted(
-            glob(os.path.join(spike_list_path,'*_spike_inds.npy')))
-    spike_inds_list = [np.load(x) for x in spike_inds_paths]
-    spike_list = [process_utils.gen_spike_train(x) for x in spike_inds_list]
-
-    # Load unit_region_frame
-    unit_region_frame = pd.read_csv(
-            os.path.join(save_path,'unit_region_frame.csv'),index_col=0)
-
-    # Load ind_frame
-    ind_frame = pd.read_csv(os.path.join(save_path,'ind_frame.csv'),index_col=0)
-    fin_inds = ind_frame.values
+    (
+        spike_list, 
+        unit_region_frame, 
+        ind_frame, 
+        fin_inds,
+        ) = utils.load_dat_from_save(
+                        spike_list_path, save_path)
 
 # Sort inds by total number of neurons per session
 # This is needed because larger sessions take a long time to fit
@@ -140,6 +111,19 @@ count_per_session = ind_frame.groupby(by='session').count().values[:,0]
 ind_frame['count'] = count_per_session[ind_frame['session'].values]
 ind_frame = ind_frame.sort_values(by='count')
 fin_inds = ind_frame.values[:,:-1] # Drop Count
+
+# Sample fin_inds according to fraction_used to speed up fitting
+subsample_inds = np.random.choice(
+        np.arange(len(fin_inds)),
+        size=int(len(fin_inds)*fraction_used),
+        replace=False,
+        )
+fin_inds = fin_inds[subsample_inds]
+print()
+print('============================================================')
+print(f'=== Fitting only {fraction_used*100}% of data')
+print('============================================================')
+print()
 
 ############################################################
 
@@ -172,23 +156,7 @@ outs = parallelize(
 
 pbar = tqdm(total=len(fin_inds))
 for ind_num, this_ind in tqdm(enumerate(fin_inds)):
-    # args = (
-    #         this_ind,
-    #         spike_list,
-    #         stim_vec,
-    #         params_dict,
-    #         fin_save_path
-    #         )
-    # process_utils.process_ind(*args)
-    # process_utils.try_process(
-    #         this_ind,
-    #         spike_list,
-    #         stim_vec,
-    #         params_dict,
-    #         fin_save_path
-    #         )
     try_process_parallel(this_ind)
-
 
     # Manually update tqdm
     print()
