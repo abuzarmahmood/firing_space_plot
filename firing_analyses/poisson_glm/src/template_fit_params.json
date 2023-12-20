@@ -1,0 +1,23 @@
+{
+    "hist_filter_len": 200,
+    "stim_filter_len": 200,
+    "coupling_filter_len": 200,
+    "bin_width": 1,
+    "hist_filter_len_bin": 200,
+    "stim_filter_len_bin": 200,
+    "coupling_filter_len_bin": 200,
+    "trial_start_offset": -2000,
+    "trial_lims": [
+        1000,
+        4500
+    ],
+    "stim_t": 2000,
+    "basis_kwargs": {
+        "n_basis": 15,
+        "basis": "cos",
+        "basis_spread": "log"
+    },
+    "n_fits": 5,
+    "n_max_tries": 20,
+    "n_shuffles_per_fit": 10
+}
