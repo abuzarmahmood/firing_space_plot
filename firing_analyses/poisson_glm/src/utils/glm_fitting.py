@@ -524,11 +524,13 @@ def perform_fit_actual_and_trial_shuffled_fit(
         test_ll = utils.poisson_ll(test_pred, test_dat['spikes'].values)
         test_ll = np.round(test_ll, 2)
         ll_list.append(test_ll)
-        test_dat['pred_spikes'] = test_pred
+        # Save wanted parts of test_dat
+        save_test_dat = test_dat.copy()
+        save_test_dat['pred_spikes'] = test_pred
         # Drop test_x columns
-        test_dat = test_dat.drop(this_res.params.index, axis = 1)
+        save_test_dat = save_test_dat.drop(this_res.params.index, axis = 1)
         # This leaves us with test_y and pred_test_y
-        test_dat_list.append(test_dat)
+        test_dat_list.append(save_test_dat)
         # Calculate both aic and bic
         aic = 2*len(this_res.params) - 2*test_ll
         bic = np.log(len(test_dat))*len(this_res.params) - 2*test_ll  

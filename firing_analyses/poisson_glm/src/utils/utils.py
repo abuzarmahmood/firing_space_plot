@@ -304,7 +304,7 @@ def gen_trial_shuffle(data_frame, dv = 'spikes'):
     iv_dat = data_frame[[x for x in data_frame.columns if x != dv]]
     unique_trials = iv_dat['trial_labels'].unique()
     trial_map = dict(zip(unique_trials, np.random.permutation(unique_trials)))
-    iv_dat['trial_labels'] = [trial_map[x] for x in iv_dat['trial_labels']]
+    iv_dat.loc[:,'trial_labels'] = [trial_map[x] for x in iv_dat['trial_labels']]
     iv_dat = iv_dat.sort_values(by = ['trial_labels', 'trial_time'])
     iv_dat.reset_index(inplace=True, drop=True)
     out_frame = pd.concat([spike_dat.reset_index(drop=True), iv_dat], axis=1)
