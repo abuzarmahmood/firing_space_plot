@@ -112,19 +112,35 @@ dim_ranges = [
         (5, 20), # n_basis_funcs
         ]
 
-x0 = [200, 200, 200, 15]
-
-gp_minimize(
-            obj_func,            # the function to minimize
-            dim_ranges,    # the bounds on each dimension of x
-            x0= x0,          # the starting point
-            acq_func="LCB",     # the acquisition function (optional)
-            n_calls=10,         # number of evaluations of f including at x0
-            n_initial_points=3,  # the number of random initial points
-            callback=[checkpoint_saver],
-            # a list of callbacks including the checkpoint saver
-            random_state=777,
-            n_jobs = 1)
+if os.path.exists('./checkpoint.pkl'):
+    res = load('./checkpoint.pkl')
+    x0 = res.x_iters
+    y0 = res.func_vals
+    gp_minimize(
+                obj_func,            # the function to minimize
+                dim_ranges,    # the bounds on each dimension of x
+                x0= x0,          # the starting point
+                y0= y0,          # the starting point
+                acq_func="LCB",     # the acquisition function (optional)
+                n_calls=10,         # number of evaluations of f including at x0
+                n_initial_points=3,  # the number of random initial points
+                callback=[checkpoint_saver],
+                # a list of callbacks including the checkpoint saver
+                random_state=777,
+                n_jobs = 1)
+else:
+    x0 = [200, 200, 200, 15]
+    gp_minimize(
+                obj_func,            # the function to minimize
+                dim_ranges,    # the bounds on each dimension of x
+                x0= x0,          # the starting point
+                acq_func="LCB",     # the acquisition function (optional)
+                n_calls=10,         # number of evaluations of f including at x0
+                n_initial_points=3,  # the number of random initial points
+                callback=[checkpoint_saver],
+                # a list of callbacks including the checkpoint saver
+                random_state=777,
+                n_jobs = 1)
 
 # res = load('./checkpoint.pkl')
 # res.fun
