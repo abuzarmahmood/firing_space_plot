@@ -1,11 +1,11 @@
 {
-    "hist_filter_len": 200,
-    "stim_filter_len": 200,
-    "coupling_filter_len": 200,
+    "hist_filter_len": 276,
+    "stim_filter_len": 120,
+    "coupling_filter_len": 273,
     "bin_width": 1,
-    "hist_filter_len_bin": 200,
-    "stim_filter_len_bin": 200,
-    "coupling_filter_len_bin": 200,
+    "hist_filter_len_bin": 276,
+    "stim_filter_len_bin": 120,
+    "coupling_filter_len_bin": 273,
     "trial_start_offset": -2000,
     "trial_lims": [
         1000,
@@ -13,7 +13,7 @@
     ],
     "stim_t": 2000,
     "basis_kwargs": {
-        "n_basis": 15,
+        "n_basis": 9,
         "basis": "cos",
         "basis_spread": "log"
     },

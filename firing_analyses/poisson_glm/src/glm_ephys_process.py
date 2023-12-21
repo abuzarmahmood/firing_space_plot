@@ -44,7 +44,7 @@ save_path = os.path.join(
         'artifacts'
         )
 
-def parallelize(func, iterator, n_jobs = 16):
+def parallelize(func, iterator, n_jobs = 8):
     return Parallel(n_jobs = n_jobs)\
             (delayed(func)(this_iter) for this_iter in tqdm(iterator))
 
@@ -150,7 +150,7 @@ try_process_parallel = partial(
 outs = parallelize(
         try_process_parallel,
         fin_inds,
-        n_jobs=8,
+        n_jobs=4,
         )
 
 

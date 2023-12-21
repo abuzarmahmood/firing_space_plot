@@ -8,7 +8,7 @@ import json
 from glob import glob
 import numpy as np
 from skopt import gp_minimize
-from skopt import callbacks
+from skopt import callbacks, load
 from skopt.callbacks import CheckpointSaver
 from joblib import Parallel, delayed, cpu_count
 from tqdm import tqdm
@@ -22,7 +22,7 @@ save_path = os.path.join(
 sys.path.append(base_path)
 
 ############################################################
-def parallelize(func, iterator, n_jobs = 16):
+def parallelize(func, iterator, n_jobs = 8):
     return Parallel(n_jobs = n_jobs)\
             (delayed(func)(this_iter) for this_iter in tqdm(iterator))
 
@@ -78,6 +78,12 @@ def obj_func(
     run_params = json.load(open(run_params_path))
     input_run_ind = run_params['run_ind']
     fraction_used = run_params['fraction_used']
+    fin_save_path = os.path.join(save_path, f'run_{input_run_ind:03}')
+
+    # If save path exists, remove it and remake it
+    if os.path.exists(fin_save_path):
+        os.system(f'rm -r {fin_save_path}')
+    os.mkdir(fin_save_path)
 
     # Run script
     script_path = os.path.join(base_path, 'glm_ephys_process.py')
@@ -87,7 +93,6 @@ def obj_func(
 
     ############################################################
     # Get aic results
-    fin_save_path = os.path.join(save_path, f'run_{input_run_ind:03}')
     aic_file_list = glob(os.path.join(fin_save_path,'*crit.json'))
 
     # Load aic results
@@ -120,3 +125,6 @@ gp_minimize(
             # a list of callbacks including the checkpoint saver
             random_state=777,
             n_jobs = 1)
+
+# res = load('./checkpoint.pkl')
+# res.fun
