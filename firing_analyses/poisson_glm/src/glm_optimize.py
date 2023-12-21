@@ -12,6 +12,7 @@ from skopt import callbacks, load
 from skopt.callbacks import CheckpointSaver
 from joblib import Parallel, delayed, cpu_count
 from tqdm import tqdm
+from datetime import datetime
 
 
 base_path = '/media/bigdata/firing_space_plot/firing_analyses/poisson_glm/src'
@@ -103,7 +104,13 @@ def obj_func(
     return mean_aic
 
 # keyword arguments will be passed to `skopt.dump`
-checkpoint_saver = CheckpointSaver("./checkpoint.pkl", compress=9) 
+optim_out_dir = os.path.join(save_path, 'optimization_out')
+if not os.path.exists(optim_out_dir):
+    os.mkdir(optim_out_dir)
+
+checkpoint_path = os.path.join(optim_out_dir, 'checkpoint.pkl')
+checkpoint_saver = CheckpointSaver(checkpoint_path, compress=9) 
+log_path = os.path.join(optim_out_dir, 'log.txt')
 
 dim_ranges = [
         (50, 400), # hist_filter_len
@@ -112,35 +119,46 @@ dim_ranges = [
         (5, 20), # n_basis_funcs
         ]
 
-if os.path.exists('./checkpoint.pkl'):
-    res = load('./checkpoint.pkl')
-    x0 = res.x_iters
-    y0 = res.func_vals
-    gp_minimize(
-                obj_func,            # the function to minimize
-                dim_ranges,    # the bounds on each dimension of x
-                x0= x0,          # the starting point
-                y0= y0,          # the starting point
-                acq_func="LCB",     # the acquisition function (optional)
-                n_calls=10,         # number of evaluations of f including at x0
-                n_initial_points=3,  # the number of random initial points
-                callback=[checkpoint_saver],
-                # a list of callbacks including the checkpoint saver
-                random_state=777,
-                n_jobs = 1)
-else:
-    x0 = [200, 200, 200, 15]
-    gp_minimize(
-                obj_func,            # the function to minimize
-                dim_ranges,    # the bounds on each dimension of x
-                x0= x0,          # the starting point
-                acq_func="LCB",     # the acquisition function (optional)
-                n_calls=10,         # number of evaluations of f including at x0
-                n_initial_points=3,  # the number of random initial points
-                callback=[checkpoint_saver],
-                # a list of callbacks including the checkpoint saver
-                random_state=777,
-                n_jobs = 1)
+total_calls = 10
+for call in range(total_calls):
+    if os.path.exists(checkpoint_path):
+        res = load(checkpoint_path)
+        x0 = res.x_iters
+        y0 = res.func_vals
+        
+        # Write out updates to log file
+        iters = len(y0)
+        with open(log_path, 'w') as f:
+            f.write(f'Last save time: {datetime.now()}\n')
+            f.write(f'Iteration {iters} complete\n')
+            f.write(f'x: {x0}\n', indent=4)
+            f.write(f'y: {y0}\n', indent=4)
 
-# res = load('./checkpoint.pkl')
-# res.fun
+        gp_minimize(
+                    obj_func,            # the function to minimize
+                    dim_ranges,    # the bounds on each dimension of x
+                    x0= x0,          # the starting point
+                    y0= y0,          # the starting point
+                    acq_func="LCB",     # the acquisition function (optional)
+                    n_calls=1,         # number of evaluations of f including at x0
+                    n_initial_points=1,  # the number of random initial points
+                    callback=[checkpoint_saver],
+                    # a list of callbacks including the checkpoint saver
+                    random_state=777,
+                    n_jobs = 1)
+    else:
+        x0 = [200, 200, 200, 15]
+        gp_minimize(
+                    obj_func,            # the function to minimize
+                    dim_ranges,    # the bounds on each dimension of x
+                    x0= x0,          # the starting point
+                    acq_func="LCB",     # the acquisition function (optional)
+                    n_calls=1,         # number of evaluations of f including at x0
+                    n_initial_points=1,  # the number of random initial points
+                    callback=[checkpoint_saver],
+                    # a list of callbacks including the checkpoint saver
+                    random_state=777,
+                    n_jobs = 1)
+
+    # res = load('./checkpoint.pkl')
+    # res.fun
