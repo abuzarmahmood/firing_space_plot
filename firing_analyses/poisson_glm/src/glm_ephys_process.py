@@ -53,13 +53,13 @@ file_list_path = '/media/bigdata/projects/pytau/pytau/data/fin_inter_list_3_14_2
 ############################################################
 ## Begin Process 
 ############################################################
-json_template_path = os.path.join(base_path, 'template_fit_params.json')
+json_template_path = os.path.join(base_path, 'params', 'template_fit_params.json')
 params_dict = json.load(open(json_template_path))
 print('Run exists with following parameters :')
 pprint(params_dict)
 
 # input_run_ind = 8
-run_params_path = os.path.join(base_path, 'run_params.json')
+run_params_path = os.path.join(base_path, 'params', 'run_params.json')
 run_params = json.load(open(run_params_path))
 input_run_ind = run_params['run_ind']
 fraction_used = run_params['fraction_used']

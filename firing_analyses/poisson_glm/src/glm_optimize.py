@@ -46,7 +46,7 @@ def obj_func(
     # n_basis_funcs = int(n_basis_funcs)
 
     # Get fit params
-    json_template_path = os.path.join(base_path, 'template_fit_params.json')
+    json_template_path = os.path.join(base_path, 'params', 'template_fit_params.json')
     params_dict = json.load(open(json_template_path))
 
     # hist_filter_len = 50
@@ -70,12 +70,11 @@ def obj_func(
     params_dict['basis_kwargs']['n_basis'] = n_basis_funcs
 
     # Write to json
-    json_path = os.path.join(base_path, 'template_fit_params.json')
-    with open(json_path, 'w') as json_file:
-        json.dump(params_dict, json_file, indent=4)
+    with open(json_template_path, 'w') as json_file:
+        json.dump(params_dict, json_template_path, indent=4)
 
     # Get run params
-    run_params_path = os.path.join(base_path, 'run_params.json')
+    run_params_path = os.path.join(base_path, 'params', 'run_params.json')
     run_params = json.load(open(run_params_path))
     input_run_ind = run_params['run_ind']
     fraction_used = run_params['fraction_used']
@@ -131,8 +130,8 @@ for call in range(total_calls):
         with open(log_path, 'w') as f:
             f.write(f'Last save time: {datetime.now()}\n')
             f.write(f'Iteration {iters} complete\n')
-            f.write(f'x: {x0}\n', indent=4)
-            f.write(f'y: {y0}\n', indent=4)
+            f.write(f'x: {x0}\n')
+            f.write(f'y: {y0}\n')
 
         gp_minimize(
                     obj_func,            # the function to minimize
@@ -140,7 +139,7 @@ for call in range(total_calls):
                     x0= x0,          # the starting point
                     y0= y0,          # the starting point
                     acq_func="LCB",     # the acquisition function (optional)
-                    n_calls=1,         # number of evaluations of f including at x0
+                    n_calls=2,         # number of evaluations of f including at x0
                     n_initial_points=1,  # the number of random initial points
                     callback=[checkpoint_saver],
                     # a list of callbacks including the checkpoint saver
@@ -153,7 +152,7 @@ for call in range(total_calls):
                     dim_ranges,    # the bounds on each dimension of x
                     x0= x0,          # the starting point
                     acq_func="LCB",     # the acquisition function (optional)
-                    n_calls=1,         # number of evaluations of f including at x0
+                    n_calls=2,         # number of evaluations of f including at x0
                     n_initial_points=1,  # the number of random initial points
                     callback=[checkpoint_saver],
                     # a list of callbacks including the checkpoint saver
