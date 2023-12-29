@@ -21,6 +21,7 @@ import os
 from tqdm import tqdm, trange
 sys.path.append('/media/bigdata/firing_space_plot/ephys_data')
 from ephys_data import ephys_data
+import visualize as vz
 from itertools import product
 from glob import glob
 from scipy.stats import mannwhitneyu as mwu
@@ -32,6 +33,13 @@ import seaborn as sns
 import pingouin as pg
 import json
 import matplotlib_venn as venn
+from collections import Counter 
+from sklearn.metrics import r2_score
+from scipy.stats import spearmanr, pearsonr
+
+# plt.rcParams.update({'font.size': 5})
+# # Set rcParams to default
+# plt.rcParams.update(plt.rcParamsDefault)
 
 def set_params_to_globals(save_path, run_str):
     json_path = os.path.join(save_path, run_str,'fit_params.json')
@@ -59,14 +67,10 @@ def set_params_to_globals(save_path, run_str):
 ############################################################
 # Setup 
 ############################################################
-#run_str = 'run_004'
+input_run_ind = 7
 save_path = '/media/bigdata/firing_space_plot/firing_analyses/poisson_glm/artifacts'
+fin_save_path = os.path.join(save_path, f'run_{input_run_ind:03d}')
 # Check if previous runs present
-run_list = sorted(glob(os.path.join(save_path, 'run*')))
-run_basenames = sorted([os.path.basename(x) for x in run_list])
-print(f'Present runs : {run_basenames}')
-# input_run_ind = int(input('Please specify current run (integer) :'))
-input_run_ind = 6
 run_str = f'run_{input_run_ind:03d}'
 plot_dir=  f'/media/bigdata/firing_space_plot/firing_analyses/poisson_glm/plots/{run_str}'
 
@@ -84,6 +88,10 @@ sig_alpha = 0.05
 ############################################################
 # Load Data
 ############################################################
+
+# There might an issue with the new inds calculation
+# DOUBLE CHECK!!
+
 (unit_region_frame,
     fin_pval_frame, 
     fin_ll_frame, 
@@ -91,8 +99,13 @@ sig_alpha = 0.05
     design_spikes_list, 
     ind_frame,
     session_taste_inds,
-     all_taste_inds,
+    all_taste_inds,
+    test_dat_list,
+    data_inds,
     ) = aggregate_utils.return_data(save_path, run_str)
+
+data_inds_frame = pd.DataFrame(data_inds,
+                               columns = ind_frame.columns)
 
 ############################################################
 # Preprocessing
@@ -122,6 +135,502 @@ inds = np.logical_and(
         fin_ll_frame['trial_shuffled'] > low_lim, 
         )
 pretty_ll_data = fin_ll_frame.loc[inds]
+
+############################################################
+# Pred R^2
+############################################################
+# Compare pred R^2 to:
+#   1) Trial shuffled R^2
+#   2) Neural shuffled R^2 
+
+# pivot all frames to have rows=trials, cols=time
+pivot_test_spikes_list = [x.pivot(index = 'trial_labels', columns = 'trial_time')
+        for x in tqdm(test_dat_list)]
+# Fill nans with 0
+pivot_test_spikes_list = [x.fillna(0) for x in pivot_test_spikes_list]
+test_spikes_list = [x['spikes'] for x in pivot_test_spikes_list]
+test_pred_spikes_list = [x['pred_spikes'] for x in pivot_test_spikes_list]
+
+# Keep the most common shape size
+shape_list = [x.shape for x in test_spikes_list]
+shape_counter = Counter(shape_list)
+
+# First, just calculate actual R^2
+# 1) on matching data
+# 2) on trial shuffled data
+# 2) on circularly shuffled data (shuffle time bins in same session)
+kern_len = 200
+kern = np.ones(kern_len)/kern_len
+
+pred_r2_list = []
+circ_shuffle_r2_list = []
+trial_shuffled_r2_list = []
+trial_avg_r2_list = []
+circ_shuffle_avg_r2_list = []
+# Calculate r^2 compared to psth on single trials
+psth_r2_list = []
+
+pred_mae_list = []
+psth_mae_list = []
+pred_corr_list = []
+psth_corr_list = []
+
+test_psth_plot_dir = os.path.join(plot_dir, 'test_psth')
+if not os.path.exists(test_psth_plot_dir):
+    os.makedirs(test_psth_plot_dir)
+
+make_plots = False
+
+for ind in tqdm(range(len(test_spikes_list))):
+
+    # ind = 0
+    test_spikes = test_spikes_list[ind].values
+    test_pred_spikes = test_pred_spikes_list[ind].values
+
+    test_psth = np.apply_along_axis(
+            lambda m: np.convolve(m, kern, mode = 'same'), 
+            axis = -1, 
+            arr = test_spikes)
+    test_pred_psth = np.apply_along_axis(
+            lambda m: np.convolve(m, kern, mode = 'same'),
+            axis = -1,
+            arr = test_pred_spikes)
+
+    mean_test_psth = np.mean(test_psth, axis = 0)
+    mean_test_pred_psth = np.mean(test_pred_psth, axis = 0)
+    circ_sh_mean_test_pred_psth = np.mean(
+            np.random.permutation(test_pred_psth.T).T, axis = 0)
+
+    pred_r2 = r2_score(test_psth, test_pred_psth)
+    trial_avg_pred_r2 = r2_score(mean_test_psth, mean_test_pred_psth)
+    circ_sh_trial_avg_pred_r2 = r2_score(mean_test_psth,
+                                         circ_sh_mean_test_pred_psth)
+    trial_shuffled_r2 = r2_score(test_psth, 
+                                 np.random.permutation(test_pred_psth.T).T)
+    circ_shuffle_r2 = r2_score(test_psth, 
+                               np.random.permutation(test_pred_psth.T).T
+                               ) 
+    tiled_psth = np.tile(mean_test_psth,#*test_psth.shape[0], 
+                         (test_psth.shape[0], 1))
+    # For this comparison, have to svaled mean_test_psth
+    psth_r2 = r2_score(tiled_psth, test_psth)
+
+    # Calculate correlations for:
+    #   1) test_psth vs tiled_psth
+    #   2) test_psth vs test_pred_psth
+    pred_r = pearsonr(test_psth.flatten(), test_pred_psth.flatten())[0]
+    psth_r = pearsonr(tiled_psth.flatten(), test_psth.flatten())[0]
+
+    pred_corr_list.append(pred_r)
+    psth_corr_list.append(psth_r)
+
+    # Calculate mean absolute error for test_psth vs tiled_psth and 
+    # test_pred_psth
+    pred_mae = np.mean(np.abs(test_psth - test_pred_psth))
+    psth_mae = np.mean(np.abs(test_psth - tiled_psth))
+
+    pred_mae_list.append(pred_mae)
+    psth_mae_list.append(psth_mae)
+
+    pred_r2_list.append(pred_r2)
+    trial_avg_r2_list.append(trial_avg_pred_r2)
+    circ_shuffle_avg_r2_list.append(circ_sh_trial_avg_pred_r2)
+    trial_shuffled_r2_list.append(trial_shuffled_r2)
+    circ_shuffle_r2_list.append(circ_shuffle_r2)
+    psth_r2_list.append(psth_r2)
+
+    # Plot all trials for test_psth vs test_pred_psth
+    if trial_avg_pred_r2 > 0.5 and make_plots and pred_r > psth_r:
+        fig, ax = vz.gen_square_subplots(test_psth.shape[0],
+                                         sharex = True, sharey = True)
+        for i in range(test_psth.shape[0]):
+            ax.flatten()[i].plot(1000*test_psth[i,:], label = 'Actual')
+            ax.flatten()[i].plot(1000*test_pred_psth[i,:], label = 'Pred')
+            if i == 0:
+                ax.flatten()[i].legend()
+        fig.savefig(os.path.join(test_psth_plot_dir, f'test_psth_{ind}.png'))
+        plt.close(fig)
+
+        # Also plot mean psths for both test and test_pred
+        fig, ax = plt.subplots()
+        ax.plot(1000*mean_test_psth, label = 'Actual')
+        ax.plot(1000*mean_test_pred_psth, label = 'Pred')
+        ax.legend()
+        fig.savefig(os.path.join(test_psth_plot_dir, f'mean_test_psth_{ind}.png'))
+        plt.close(fig)
+
+        # Plot scatters of tiled psth vs test psth vs test pred psth
+        fig, ax = plt.subplots(2,1, sharex=True, sharey=True,
+                               figsize = (5,5))
+        ax[0].scatter(tiled_psth.flatten(), test_psth.flatten(), alpha = 0.1)
+        ax[0].set_title('Tiled psth vs test psth')
+        # ax[0].set_aspect('equal')
+        ax[0].set_xlabel('Tiled psth')
+        ax[0].set_ylabel('Test psth')
+        ax[1].scatter(test_pred_psth.flatten(), test_psth.flatten(), alpha = 0.1)
+        ax[1].set_title('Test pred psth vs test psth')
+        # ax[1].set_aspect('equal')
+        ax[1].set_xlabel('Test pred psth')
+        ax[1].set_ylabel('Test psth')
+        ax[0].set_aspect('equal')
+        ax[1].set_aspect('equal')
+        fig.suptitle(f'Pred corr: {pred_r:.3f}, Psth corr: {psth_r:.3f}') 
+        min_val = np.min([ax[0].get_xlim()[0], ax[0].get_ylim()[0]])
+        max_val = np.max([ax[0].get_xlim()[1], ax[0].get_ylim()[1]])
+        ax[0].set_xlim([min_val, max_val])
+        ax[0].set_ylim([min_val, max_val])
+        for this_ax in ax:
+            this_ax.plot([min_val, max_val], [min_val, max_val],
+                         color = 'r', linestyle = '--')
+        plt.tight_layout()
+        fig.savefig(os.path.join(test_psth_plot_dir,
+                                 f'test_psth_scatter_{ind}.png'),
+                    bbox_inches = 'tight') 
+        plt.close(fig)
+        #plt.show()
+
+        fig,ax = plt.subplots(3,1)
+        vmin = np.min([test_psth, test_pred_psth, tiled_psth])
+        vmax = np.max([test_psth, test_pred_psth, tiled_psth])
+        img_kwargs = dict(vmin = vmin, vmax = vmax, 
+                          aspect = 'auto', cmap = 'jet')
+        im = ax[0].imshow(tiled_psth, **img_kwargs) 
+        ax[0].set_title('Tiled psth')
+        # ax[0].plot(mean_test_pred_psth, label = 'Mean test pred')
+        # ax[0].plot(test_psth.T, alpha = 0.1)#label = 'Test data')
+        ax[1].imshow(test_psth, **img_kwargs) 
+        ax[1].set_title('Test psth')
+        ax[2].imshow(test_pred_psth, **img_kwargs) 
+        ax[2].set_title('Test pred psth')
+        for this_ax in ax:
+            plt.colorbar(im, ax = this_ax)
+        plt.tight_layout()
+        fig.savefig(os.path.join(test_psth_plot_dir,
+                                 f'test_psth_heatmap_{ind}.png'),
+                    bbox_inches = 'tight')
+        plt.close(fig)
+        # plt.show()
+
+# Convert lists to arrays for easier manipulation
+pred_r2_list = np.array(pred_r2_list)
+trial_avg_r2_list = np.array(trial_avg_r2_list)
+circ_shuffle_avg_r2_list = np.array(circ_shuffle_avg_r2_list)
+trial_shuffled_r2_list = np.array(trial_shuffled_r2_list)
+circ_shuffle_r2_list = np.array(circ_shuffle_r2_list)
+psth_r2_list = np.array(psth_r2_list)
+
+pred_mae_list = np.array(pred_mae_list)
+psth_mae_list = np.array(psth_mae_list)
+
+pred_corr_list = np.array(pred_corr_list)
+psth_corr_list = np.array(psth_corr_list)
+
+
+##############################
+# Sort by largest differences between pred_corr and psth_corr
+corr_diff = pred_corr_list - psth_corr_list
+pred_greater_bool = corr_diff > 0
+
+# Write out pred_greater_bool along with data_inds_frame 
+data_inds_frame['pred_corr_greater'] = pred_greater_bool
+data_inds_frame.to_csv(os.path.join(fin_save_path, 'data_inds_frame.csv'))
+
+pred_greater_inds = np.where(pred_greater_bool)[0]
+corr_sorted_inds = np.argsort(corr_diff)[::-1]
+corr_sorted_inds = [x for x in corr_sorted_inds if x in pred_greater_inds]
+
+corr_sort_plots_dir = os.path.join(plot_dir, 'corr_sorted_psth')
+if not os.path.isdir(corr_sort_plots_dir):
+    os.mkdir(corr_sort_plots_dir)
+
+# Plot single-trial activity for sorted data
+for i, ind in enumerate(corr_sorted_inds):
+    this_pred_corr = pred_corr_list[ind]
+    this_psth_corr = psth_corr_list[ind]
+
+    test_spikes = test_spikes_list[ind].values
+    test_pred_spikes = test_pred_spikes_list[ind].values
+
+    test_psth = np.apply_along_axis(
+            lambda m: np.convolve(m, kern, mode = 'same'), 
+            axis = -1, 
+            arr = test_spikes)
+    test_pred_psth = np.apply_along_axis(
+            lambda m: np.convolve(m, kern, mode = 'same'),
+            axis = -1,
+            arr = test_pred_spikes)
+    mean_test_psth = np.mean(test_psth, axis = 0)
+    tiled_psth = np.tile(mean_test_psth,#*test_psth.shape[0], 
+                         (test_psth.shape[0], 1))
+
+    fig,ax = plt.subplots(3,1)
+    vmin = np.min([test_psth, test_pred_psth, tiled_psth])
+    vmax = np.max([test_psth, test_pred_psth, tiled_psth])
+    img_kwargs = dict(
+                        #vmin = vmin, vmax = vmax, 
+                      aspect = 'auto', cmap = 'jet',
+                      #interpolation = 'none'
+                      )
+    im = ax[0].imshow(tiled_psth, **img_kwargs) 
+    ax[0].set_title('Tiled psth')
+    # ax[0].plot(mean_test_pred_psth, label = 'Mean test pred')
+    # ax[0].plot(test_psth.T, alpha = 0.1)#label = 'Test data')
+    ax[1].imshow(test_psth, **img_kwargs) 
+    ax[1].set_title('Test psth')
+    ax[2].imshow(test_pred_psth, **img_kwargs) 
+    ax[2].set_title('Test pred psth')
+    # for this_ax in ax:
+    #     plt.colorbar(im, ax = this_ax)
+    plt.tight_layout()
+    plt.subplots_adjust(top = 0.8)
+    fig.suptitle(f'Ind: {ind}, ' + '\n' +\
+                 f'Pred corr: {this_pred_corr:.3f}, '
+                 f'Psth corr: {this_psth_corr:.3f}')
+    fig.savefig(os.path.join(corr_sort_plots_dir,
+                             f'test_psth_heatmap_{i}.png'),
+                bbox_inches = 'tight')
+    plt.close(fig)
+    # plt.show()
+
+
+##############################
+# Scatter of pred_mae vs psth_mae
+fig, ax = plt.subplots(1,3, sharex=False)
+ax[0].scatter(pred_mae_list, psth_mae_list, alpha = 0.1,
+           s = 10, color = 'k')
+ax[0].set_xlabel('Pred mae')
+ax[0].set_ylabel('Psth mae')
+ax[0].set_aspect('equal')
+min_val = np.min([ax[0].get_xlim()[0], ax[0].get_ylim()[0]])
+max_val = np.max([ax[0].get_xlim()[1], ax[0].get_ylim()[1]])
+ax[0].plot([min_val, max_val], [min_val, max_val], color = 'r', linestyle = '--')
+# Project onto orthogonal axis
+joint_dat = np.vstack([pred_mae_list, psth_mae_list])
+proj_dat = np.dot(joint_dat.T, np.array([1, -1]))
+ax[1].hist(proj_dat, bins = 50)
+ax[1].axvline(x = 0, color = 'r', linestyle = '--')
+ax[1].set_xlabel('<-- PSTH Larger Error | Pred Larger Error -->')
+pred_greater_bool = pred_mae_list > psth_mae_list
+pred_greater_frac = np.round(np.mean(pred_greater_bool),2)
+# Plot firing rates depending on pred_greater_bool
+pred_greater_spikes = [test_spikes_list[i].values.mean() for i in \
+        range(len(test_spikes_list)) if pred_greater_bool[i]]
+pred_lesser_spikes = [test_spikes_list[i].values.mean() for i in \
+        range(len(test_spikes_list)) if not pred_greater_bool[i]]
+ax[2].hist(pred_greater_spikes, bins = 50, alpha = 0.5, label = 'Pred > PSTH',
+           density = True)
+ax[2].hist(pred_lesser_spikes, bins = 50, alpha = 0.5, label = 'Pred < PSTH',
+           density = True)
+ax[2].legend()
+ax[2].set_yscale('log')
+ax[2].set_xlabel('Mean firing rate')
+fig.suptitle('Pred mae vs psth mae\n' + \
+        f'Pred > PSTH : {pred_greater_frac}' + \
+        '\n' + \
+        f'Pred < PSTH : {np.round(1-pred_greater_frac,2)}')
+plt.tight_layout()
+fig.savefig(os.path.join(plot_dir, 'pred_mae_vs_psth_mae.png'),
+            bbox_inches = 'tight')
+plt.close(fig)
+
+##############################
+# Scatter of pred_corr vs psth_corr
+fig, ax = plt.subplots(1,3, sharex=False, figsize = (10,5))
+ax[0].scatter(pred_corr_list, psth_corr_list, alpha = 0.1,
+           s = 10, color = 'k')
+ax[0].set_xlabel('Pred Corr')
+ax[0].set_ylabel('Psth Corr')
+ax[0].set_aspect('equal')
+min_val = np.min([[np.nanmin(pred_corr_list), np.nanmin(psth_corr_list)]])
+max_val = np.max([[np.nanmax(pred_corr_list), np.nanmax(psth_corr_list)]])
+ax[0].plot([min_val, max_val], [min_val, max_val], color = 'r', linestyle = '--')
+# Project onto orthogonal axis
+joint_dat = np.vstack([pred_corr_list, psth_corr_list])
+proj_dat = np.dot(joint_dat.T, np.array([1, -1]))
+ax[1].hist(proj_dat, bins = 50)
+ax[1].axvline(x = 0, color = 'r', linestyle = '--')
+ax[1].set_xlabel('<-- PSTH Larger Corr | Pred Larger Corr -->')
+pred_greater_bool = pred_corr_list > psth_corr_list
+pred_greater_frac = np.round(np.mean(pred_greater_bool),2)
+# Plot firing rates depending on pred_greater_bool
+pred_greater_spikes = [test_spikes_list[i].values.mean() for i in \
+        range(len(test_spikes_list)) if pred_greater_bool[i]]
+pred_lesser_spikes = [test_spikes_list[i].values.mean() for i in \
+        range(len(test_spikes_list)) if not pred_greater_bool[i]]
+ax[2].hist(pred_greater_spikes, 
+           bins = 50, alpha = 0.5, label = 'Pred > PSTH',
+           density = True)
+ax[2].hist(pred_lesser_spikes, 
+           bins = 50, alpha = 0.5, label = 'Pred < PSTH',
+           density = True)
+ax[2].set_yscale('log')
+ax[2].legend()
+ax[2].set_xlabel('Mean firing rate')
+ax[2].set_ylabel('Count')
+fig.suptitle('Pred corr vs psth corr\n' + \
+        f'Pred > PSTH : {pred_greater_frac}' + \
+        '\n' + \
+        f'Pred < PSTH : {np.round(1-pred_greater_frac,2)}')
+plt.tight_layout()
+fig.savefig(os.path.join(plot_dir, 'pred_corr_vs_psth_corr.png'),
+            bbox_inches = 'tight')
+plt.close(fig)
+
+##############################
+# Plot histogram of trial_avg_r2_list
+plot_dat = np.array(trial_avg_r2_list)
+keep_bool = plot_dat > -1
+plot_dat = plot_dat[keep_bool]
+r2_thresh = 0.1
+low_dat = plot_dat[plot_dat < r2_thresh]
+high_dat = plot_dat[plot_dat >= r2_thresh]
+# Calculate mean firing rates for low and high r^2 dat
+mean_firing_rate = [x.values.mean(axis=None)*1000 for x in test_spikes_list]
+keep_spikes = [x for i, x in enumerate(mean_firing_rate) if keep_bool[i]]
+low_spikes = [x for i, x in enumerate(keep_spikes) \
+        if plot_dat[i] < r2_thresh]
+high_spikes = [x for i, x in enumerate(keep_spikes) \
+        if plot_dat[i] >= r2_thresh]
+
+bin_vec  = np.linspace(-1, 1, 50)
+fig, ax = plt.subplots(3,1, figsize = (5,10))
+ax[0].axvline(r2_thresh, c = 'k', linestyle = '--')
+ax[0].hist(low_dat, bins = bin_vec, alpha = 0.5, label = 'R^2 < 0.1')
+ax[0].hist(high_dat, bins = bin_vec, alpha = 0.5, label = 'R^2 >= 0.1')
+ax[0].legend()
+# Remove x-ticks
+ax[0].set_xticks([])
+ymax = ax[0].get_ylim()[1]
+# Write fraction of each side
+ax[0].text(-0.5, ymax*0.5, 
+        f'{100*len(low_dat)/len(plot_dat):0.2f}%')
+ax[0].text(0.2, ymax*0.5,
+        f'{100*len(high_dat)/len(plot_dat):0.2f}%')
+# Text for thresh line
+ax[0].text(r2_thresh, ymax*0.1, f'{r2_thresh:0.2f}', rotation = 90)
+ax[0].set_ylabel('Count')
+ax[0].set_title('Histogram of Trial-Averaged R^2')
+ax[1].hist(circ_shuffle_avg_r2_list, bins = bin_vec, alpha = 0.5,
+           color = 'k', label = 'Circ Shuffle')
+ax[1].legend()
+# Flip y-axis
+ax[1].set_ylim(ax[1].get_ylim()[::-1])
+ax[1].set_xlabel('R^2')
+ax[1].set_ylabel('Count')
+# Plot ECDF of low and high firing rates
+low_outs = np.histogram(low_spikes, bins = 50)
+high_outs = np.histogram(high_spikes, bins = 50)
+ax[2].plot(low_outs[1][1:], np.cumsum(low_outs[0])/np.sum(low_outs[0]),
+         label = 'R^2 < 0.1', linewidth = 3)
+ax[2].plot(high_outs[1][1:], np.cumsum(high_outs[0])/np.sum(high_outs[0]),
+         label = 'R^2 >= 0.1', linewidth = 3)
+ax[2].legend()
+ax[2].set_xlabel('Mean FR (Hz)')
+ax[2].set_ylabel('Count')
+ax[2].set_title('ECDF of Mean FR')
+# # Plot mean firing rates for low and high r^2 on twin axis
+# ax2 = ax.twinx()
+# ax2.plot([-0.5, 0.5], [np.mean(low_spikes), np.mean(high_spikes)],
+#          '-o', c = 'k', label = 'Mean FR')
+# ax2.errorbar([-0.5, 0.5], [np.mean(low_spikes), np.mean(high_spikes)],
+#              yerr = [np.std(low_spikes), np.std(high_spikes)],
+#              c = 'k', linestyle = '', capsize = 5)
+# ax2.set_ylabel('Mean FR (Hz)')
+# plt.tight_layout()
+plt.tight_layout()
+plt.subplots_adjust(top = 0.9)
+fig.suptitle('R^2 of Trial Avg\n' + \
+        f'Fraction of data >-1 : {np.mean(keep_bool):0.2f}')
+fig.savefig(os.path.join(plot_dir, 'r2_trial_avg_hist.png'),
+            bbox_inches = 'tight')
+plt.close(fig)
+
+##############################
+# Compare single-trial r^2 to psth r^2
+fig, ax = plt.subplots(figsize = (5,5))
+ax.scatter(psth_r2_list, pred_r2_list, alpha = 0.5)
+min_val = np.min([np.min(psth_r2_list), np.min(pred_r2_list)])
+max_val = np.max([np.max(psth_r2_list), np.max(pred_r2_list)])
+ax.plot([min_val, max_val], [min_val, max_val], c = 'k', linestyle = '--')
+ax.set_xlim([min_val, 0])
+ax.set_ylim([min_val, 0])
+# Set x and y to log scales
+ax.set_xscale('symlog')
+ax.set_yscale('symlog')
+ax.set_xlabel('PSTH R^2')
+ax.set_ylabel('Single Trial R^2')
+fig.suptitle('Comparison of R^2')
+fig.savefig(os.path.join(plot_dir, 'psth_r2_comparison.png'),
+            bbox_inches = 'tight')
+plt.close(fig)
+
+##############################
+# Plot all 3 on histogram
+high_bool = np.array(trial_avg_r2_list) >= r2_thresh
+
+fig, ax = plt.subplots(figsize = (5,5))
+ax.hist(pred_r2_list[high_bool], 
+        bins = 50, alpha = 0.5, label = 'Actual')
+ax.hist(trial_shuffled_r2_list[high_bool], 
+        bins = 50, alpha = 0.5, label = 'Trial Shuffled')
+ax.hist(circ_shuffle_r2_list[high_bool], 
+        bins = 50, alpha = 0.5, label = 'Circ Shuffled')
+ax.legend()
+# ax.set_xlim([0, 1])
+fig.suptitle('R^2 of Actual vs Shuffled')
+fig.savefig(os.path.join(plot_dir, 'r2_hist.png'))
+plt.close(fig)
+
+
+##############################
+# Plot scatter of actual vs trial shuffled R2
+fig, ax = plt.subplots(1, 2, figsize = (10,5), sharex=True)
+ax[0].scatter(
+            trial_shuffled_r2_list[high_bool], 
+            pred_r2_list[high_bool], 
+           s = 2, c = 'k', alpha = 0.3)
+# Project data onto x=-y
+joint_dat = np.vstack([trial_shuffled_r2_list[high_bool],
+                       pred_r2_list[high_bool]])
+proj_dat = np.dot(joint_dat.T, np.array([1, -1]))
+med_val = np.median(proj_dat)
+min_val = np.min([np.min(pred_r2_list), np.min(trial_shuffled_r2_list)])
+max_val = np.max([np.max(pred_r2_list), np.max(trial_shuffled_r2_list)])
+# Plot x=y
+# ax.plot([min_val, max_val],[min_val, max_val], 
+#          color = 'red', linestyle = '--', linewidth = 2)
+ax[0].plot([-1, 1],[-1, 1], 
+        color = 'red', linestyle = '--', linewidth = 2)
+ax[0].set_xlim([-1, 1])
+ax[0].set_ylim([-1, 1])
+ax[0].set_ylabel('Actual R^2')
+ax[0].set_xlabel('Trial Shuffled R^2')
+ax[0].set_aspect('equal')
+ax[1].hist(proj_dat, bins = 100, color = 'grey')
+ax[1].hist(proj_dat, bins = 100, color = 'k', histtype = 'step')
+ax[1].annotate(
+        '',
+        xy = (med_val, ax[1].get_ylim()[0]),
+        xytext = (med_val, 0.02*ax[1].get_ylim()[1]),
+        arrowprops = dict(
+            facecolor = 'white', 
+            edgecolor = 'black',
+            shrink = 0.05
+            ),
+        label = 'Median',
+        )
+#ax.legend()
+# Remove all axes except bottom
+ax[1].spines['right'].set_visible(False)
+ax[1].spines['top'].set_visible(False)
+ax[1].spines['left'].set_visible(False)
+ax[1].set_yticks([])
+ax[1].axvline(0, color = 'red', linestyle = '--', linewidth = 2)
+fig.suptitle('Single Trial R^2 of Actual vs Trial Shuffled')
+fig.savefig(os.path.join(plot_dir, 'r2_scatter.png'),
+            bbox_inches = 'tight')
+plt.close(fig)
+
 
 ############################################################
 ############################################################
@@ -284,7 +793,7 @@ for idx, dat_inds in \
     pred_psth = np.mean(this_pred_dat, axis = 1)
 
     # Smoothen PSTH
-    kern_len = 20
+    kern_len = 200
     kern = np.ones(kern_len)/kern_len
     actual_psth_smooth = np.apply_along_axis(
             lambda m: np.convolve(m, kern, mode = 'same'), 
@@ -305,257 +814,3 @@ for idx, dat_inds in \
     plt.savefig(os.path.join(psth_plot_dir, 'psth_{}.png'.format(idx)), dpi = 300, bbox_inches = 'tight')
     plt.close()
 
-########################################
-# Do filters from BLA-->GC and GC-->BLA have different shapes
-coupling_frame = fin_pval_frame.loc[fin_pval_frame.param.str.contains('coup')]
-coupling_frame = coupling_frame[['fit_num','param','p_val','values', *ind_names]]
-
-coupling_frame['lag'] = [int(x.split('_')[-1]) for x in coupling_frame.param]
-coupling_frame['other_nrn'] = [int(x.split('_')[-2]) for x in coupling_frame.param]
-
-coupling_list_frame = coupling_frame.groupby([*ind_names, 'other_nrn']).\
-        agg({'values' : lambda x : x.tolist(),
-             'p_val' : lambda x: x.tolist()}).reset_index()
-coupling_list_frame = coupling_list_frame.merge(unit_region_frame[['neuron','region','session']],
-                                how = 'left', on = ['session','neuron'])
-coupling_list_frame = coupling_list_frame.merge(unit_region_frame[['neuron','region', 'session']],
-                                how = 'left', left_on = ['session', 'other_nrn'], 
-                                right_on = ['session','neuron'])
-coupling_list_frame.drop(columns = 'neuron_y', inplace = True)
-coupling_list_frame.rename(columns = {
-    'neuron_x':'neuron', 
-    'region_x' : 'region',
-    'region_y' : 'input_region'}, 
-                   inplace = True)
-
-coupling_io_groups_list = list(coupling_list_frame.groupby(['region','input_region']))
-coupling_io_group_names = [x[0] for x in coupling_io_groups_list]
-
-coupling_io_group_filters = [np.stack(x[1]['values']) for x in coupling_io_groups_list]
-coupling_io_group_filter_recon = [x.dot(coup_cosine_basis) for x in coupling_io_group_filters]
-coupling_io_group_filter_pca = np.stack([PCA(n_components=3).fit_transform(x.T) \
-        for x in coupling_io_group_filter_recon])
-
-vmin,vmax = np.min(coupling_io_group_filter_pca), np.max(coupling_io_group_filter_pca)
-fig,ax = plt.subplots(2,2, sharex=True, sharey=True)
-for i, (this_dat, this_ax) in enumerate(zip(coupling_io_group_filter_pca, ax.flatten())):
-    #this_ax.plot(coupling_tvec, this_dat)
-    im = this_ax.pcolormesh(coupling_tvec, np.arange(len(this_dat.T)),
-                       this_dat.T, vmin = vmin, vmax = vmax)
-    this_ax.set_ylabel('PC #')
-    this_ax.set_title("<--".join(coupling_io_group_names[i]))
-cax = fig.add_axes([0.95, 0.1, 0.03, 0.8])
-fig.colorbar(im, cax=cax)
-ax[-1,-1].set_xlabel('Time (ms)')
-fig.suptitle('PCA of coupling filters')
-#plt.show()
-fig.savefig(os.path.join(plot_dir, 'coupling_by_connection.png'), dpi = 300, bbox_inches = 'tight')
-plt.close(fig)
-
-fig,ax = plt.subplots(2,2, sharex=True, sharey=True)
-for i, (this_dat, this_ax) in enumerate(zip(coupling_io_group_filter_pca, ax.flatten())):
-    for num, this_pc in enumerate(this_dat.T):
-        this_ax.plot(coupling_tvec, this_pc, label = f'PC{num}')
-    this_ax.set_title("<--".join(coupling_io_group_names[i]))
-ax[-1,-1].set_xlabel('Time (ms)')
-ax[-1,-1].legend()
-fig.suptitle('PCA of coupling filters')
-fig.savefig(os.path.join(plot_dir, 'coupling_by_connection2.png'), dpi = 300, bbox_inches = 'tight')
-plt.close(fig)
-
-# Check whether filter shapes and pvalue distributions are different
-coupling_pval_dat = coupling_list_frame.drop(columns = 'values') 
-coupling_pval_dat = coupling_pval_dat.explode('p_val')
-coupling_pval_dat['log_pval'] = np.vectorize(np.log10)(coupling_pval_dat['p_val'])
-coupling_pval_dat.reset_index(inplace=True)
-coupling_pval_dat['group_str'] = coupling_pval_dat.apply(lambda x: f'{x.region} <-- {x.input_region}', axis = 1)
-
-g = sns.displot(
-        data = coupling_pval_dat,
-        x = 'log_pval',
-        kind = 'ecdf',
-        hue = 'group_str',
-        )
-this_ax = g.axes[0][0]
-this_ax.set_yscale('log')
-# this_ax.set_ylim([0.005,1])
-this_ax.set_ylabel('Fraction of filters')
-this_ax.set_xlabel('log10(p-value)')
-this_ax.set_title('Cumulative distribution of p-values')
-fig = plt.gcf()
-fig.savefig(os.path.join(plot_dir, 'coupling_pval_dist.png'), dpi = 300, bbox_inches = 'tight')
-plt.close(fig)
-#plt.show()
-
-########################################
-
-# Total filters
-total_filters = [x.shape[0] for x in coupling_pivoted_vals]
-total_sig_filters = [len(x) for x in coupling_pivoted_sig_inds]
-
-# Fraction of significant filters
-frac_sig_coup_filters = np.round(sum(total_sig_filters) / sum(total_filters), 3)
-print(f'Fraction of significant coupling filters: {frac_sig_coup_filters}') 
-
-# Match inds to actuals neurons
-# First collate connectivity matrices
-tuple_dat = [tuple([*x,y]) for x,y in zip(coupling_grouped_inds, coupling_pivoted_sig_inds)]
-tuple_frame = pd.DataFrame(tuple_dat, columns = [*ind_names, 'sig_inds'])
-
-# Convert tuple frame to long-form
-tuple_frame = tuple_frame.explode('sig_inds')
-
-# Merge with unit_region_frame to obtain neuron region
-tuple_frame = tuple_frame.rename(columns = {'sig_inds':'input_neuron'})
-tuple_frame = tuple_frame.merge(unit_region_frame[['neuron','region','session']],
-                                how = 'left', on = ['session','neuron'])
-# Merge again to assign region to input_neuron
-tuple_frame = tuple_frame.merge(unit_region_frame[['neuron','region', 'session']],
-                                how = 'left', left_on = ['session', 'input_neuron'], 
-                                right_on = ['session','neuron'])
-tuple_frame.drop(columns = 'neuron_y', inplace = True)
-tuple_frame.rename(columns = {
-    'neuron_x':'neuron', 
-    'region_x' : 'region',
-    'region_y' : 'input_region'}, 
-                   inplace = True)
-
-# per session and neuron, what is the distribution of intra-region
-# vs inter-region connections
-count_per_input = tuple_frame.groupby([*ind_names, 'region', 'input_region']).count()
-count_per_input.reset_index(inplace = True)
-
-total_count_per_region = unit_region_frame[['region','neuron','session']]\
-        .groupby(['session','region']).count()
-total_count_per_region.reset_index(inplace = True)
-
-# Merge to get total count per region
-count_per_input = count_per_input.merge(total_count_per_region, how = 'left',
-                                        left_on = ['session','input_region'],
-                                        right_on = ['session','region'])
-count_per_input.rename(columns = {
-    'neuron_x':'neuron', 
-    'region_x':'region',
-    'neuron_y' : 'region_total'}, inplace = True)
-count_per_input.drop(columns = ['region_y'], inplace = True)
-
-count_per_input['input_fraction'] = count_per_input.input_neuron / count_per_input.region_total 
-
-# Is there an interaction between region and input region
-input_fraction_anova = pg.anova(count_per_input, dv = 'input_fraction', between = ['region','input_region'])
-sns.boxplot(data = count_per_input, x = 'region', y = 'input_fraction', hue = 'input_region',
-              dodge=True)
-plt.title(str(input_fraction_anova[['Source','p-unc']].dropna().round(2)))
-plt.suptitle('Comparison of Input Fraction')
-plt.tight_layout()
-plt.savefig(os.path.join(plot_dir, 'input_fraction_boxplot.png'), dpi = 300)
-plt.close()
-#plt.show()
-
-#sns.displot(data = count_per_input, col = 'region', x = 'input_fraction', hue = 'input_region',
-#            kind = 'ecdf')
-#plt.show()
-
-# Region preference index
-region_pref_frame = count_per_input[['session','taste','neuron','region','input_region','input_fraction']]
-region_pref_frame['region_pref'] = region_pref_frame.groupby(['session','taste','neuron'])['input_fraction'].diff().dropna()
-region_pref_frame.dropna(inplace = True)
-# region_pref = bla - gc (so positive is more bla than gc)
-region_pref_frame.drop(columns = ['input_fraction', 'input_region'], inplace = True)
-
-sns.swarmplot(data = region_pref_frame, x = 'region', y = 'region_pref')
-plt.ylabel('Region preference index, \n (BLA frac - GC frac) \n <-- More GC Input | More BLA Input -->')
-plt.tight_layout()
-plt.savefig(os.path.join(plot_dir, 'preference_index_swarm.png'), dpi = 300)
-plt.close()
-#plt.show()
-
-##############################
-# Segregation of projecting populations
-tuple_frame['neuron_idx'] = ["_".join([str(y) for y in x]) for x in tuple_frame[ind_names].values] 
-tuple_frame['input_neuron_idx'] = ["_".join([str(y) for y in x]) \
-        for x in tuple_frame[['session','taste','input_neuron']].values] 
-tuple_frame['cxn_type'] = ["<--".join([str(y) for y in x]) \
-        for x in tuple_frame[['region','input_region']].values]
-
-inter_region_frame = tuple_frame.loc[tuple_frame.cxn_type.isin(['gc<--bla','bla<--gc'])]
-
-gc_neurons_rec = inter_region_frame.loc[inter_region_frame.cxn_type == 'gc<--bla']['neuron_idx'].unique()
-gc_neurons_send = inter_region_frame.loc[inter_region_frame.cxn_type == 'bla<--gc']['input_neuron_idx'].unique()
-
-bla_neurons_rec = inter_region_frame.loc[inter_region_frame.cxn_type == 'bla<--gc']['neuron_idx'].unique()
-bla_neurons_send = inter_region_frame.loc[inter_region_frame.cxn_type == 'gc<--bla']['input_neuron_idx'].unique()
-
-fig,ax = plt.subplots(2,1)
-venn.venn2(
-        [set(gc_neurons_rec), set(gc_neurons_send)], 
-        set_labels = ('GC rec', 'GC send'),
-        ax = ax[0])
-venn.venn2(
-        [set(bla_neurons_rec), set(bla_neurons_send)],
-        set_labels = ('BLA rec', 'BLA send'),
-        ax = ax[1])
-ax[0].set_title('GC neurons')
-ax[1].set_title('BLA neurons')
-fig.suptitle('Overlap in neurons sending and receiving input')
-fig.savefig(os.path.join(plot_dir, 'projecting_neuron_venn.png'), dpi = 300)
-plt.close()
-#plt.show()
-
-# Do these groups receive more or less input than the general population
-# e.g. do the bla_to_gc projecting BLA neurons receive more or less input from 
-# GC than the rest of the BLA population
-
-##############################
-# Perform similar analysis, but for magnitude of filter
-
-# Check relationship between values and p_val
-plt.scatter(
-        np.log10(coupling_frame['p_val']), 
-        np.log(coupling_frame['values']),
-        alpha = 0.01
-        )
-plt.xlabel('log10(p_val)')
-plt.ylabel('log(values)')
-plt.title('Coupling filters pvalues vs values')
-plt.savefig(os.path.join(plot_dir, 'coupling_pval_vs_val.png'), dpi = 300)
-plt.close()
-
-# Filter energy
-# Not sure whether to take absolute or not
-# Because with absolute, flucutations about 0 will add up to something
-# HOWEVER, IF FITS ARE ACCURATE, it shouldn't really matter
-#coupling_filter_energy = [np.sum(np.abs(x.values),axis=-1) for x in coupling_pivoted_vals]
-coupling_energy_frame = coupling_frame.copy()
-coupling_energy_frame['pos_values'] = np.abs(coupling_frame['values'])
-coupling_energy_frame = coupling_energy_frame.groupby([*ind_names, 'other_nrn']).sum()['pos_values'].reset_index()
-coupling_energy_frame.rename(columns = {'pos_values' : 'energy'}, inplace=True)
-
-# Merge with unit_region_frame to obtain neuron region
-coupling_energy_frame = coupling_energy_frame.rename(columns = {'other_nrn':'input_neuron'})
-coupling_energy_frame = coupling_energy_frame.merge(unit_region_frame[['neuron','region','session']],
-                                how = 'left', on = ['session','neuron'])
-# Merge again to assign region to input_neuron
-coupling_energy_frame = coupling_energy_frame.merge(unit_region_frame[['neuron','region', 'session']],
-                                how = 'left', left_on = ['session', 'input_neuron'], 
-                                right_on = ['session','neuron'])
-coupling_energy_frame.drop(columns = 'neuron_y', inplace = True)
-coupling_energy_frame.rename(columns = {
-    'neuron_x':'neuron', 
-    'region_x' : 'region',
-    'region_y' : 'input_region'}, 
-                   inplace = True)
-
-input_energy_anova = pg.anova(
-        coupling_energy_frame, 
-        dv = 'energy', 
-        between = ['region','input_region'])
-
-sns.boxplot(data = coupling_energy_frame, x = 'region', y = 'energy', hue = 'input_region',
-              dodge=True, showfliers = False)
-plt.suptitle('Comparison of Input Filter Energy')
-plt.title(str(input_energy_anova[['Source','p-unc']].dropna().round(2)))
-plt.tight_layout()
-#plt.show()
-plt.savefig(os.path.join(plot_dir, 'input_energy_boxplot.png'), dpi = 300)
-plt.close()
