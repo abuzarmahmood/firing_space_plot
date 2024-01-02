@@ -174,6 +174,7 @@ pred_mae_list = []
 psth_mae_list = []
 pred_corr_list = []
 psth_corr_list = []
+pred_corr_time_list = []
 
 test_psth_plot_dir = os.path.join(plot_dir, 'test_psth')
 if not os.path.exists(test_psth_plot_dir):
@@ -220,6 +221,13 @@ for ind in tqdm(range(len(test_spikes_list))):
     #   2) test_psth vs test_pred_psth
     pred_r = pearsonr(test_psth.flatten(), test_pred_psth.flatten())[0]
     psth_r = pearsonr(tiled_psth.flatten(), test_psth.flatten())[0]
+
+    pred_r_time = [pearsonr(test_psth[:, x], test_pred_psth[:, x]) \
+            for x in range(test_psth.shape[1])]
+    pred_r_time = [x[0] for x in pred_r_time]
+    pred_corr_time_list.append(pred_r_time)
+
+    # plt.plot(pred_r_time);plt.show()
 
     pred_corr_list.append(pred_r)
     psth_corr_list.append(psth_r)
@@ -325,6 +333,44 @@ psth_mae_list = np.array(psth_mae_list)
 pred_corr_list = np.array(pred_corr_list)
 psth_corr_list = np.array(psth_corr_list)
 
+pred_corr_time_frame = pd.concat(
+        [pd.DataFrame(dict(
+            t = np.arange(len(x)), val = x, ind = ind)
+                    )
+                for ind, x in enumerate(pred_corr_time_list)]
+        )
+pred_corr_time_frame.dropna(inplace=True)
+
+# Bin into 50ms bins
+pred_corr_time_frame['t_bin'] = np.floor(pred_corr_time_frame['t']/50)
+pred_corr_time_frame = pred_corr_time_frame.groupby(['ind','t_bin']).mean().reset_index()
+
+mean_corr_time = pred_corr_time_frame.groupby('t_bin').mean().reset_index()
+sd_corr_time = pred_corr_time_frame.groupby('t_bin').std().reset_index()
+
+fig, ax = plt.subplots(1,2, sharey=True, figsize = (8,4))
+ax[0].plot(mean_corr_time.t, mean_corr_time.val)
+ax[0].fill_between(mean_corr_time.t,
+                   mean_corr_time.val - sd_corr_time.val,
+                   mean_corr_time.val + sd_corr_time.val,
+                   alpha = 0.5)
+ax[1].hist(pred_corr_time_frame.val, bins = 50, orientation = 'horizontal',
+           alpha = 0.5)
+ax[1].axhline(pred_corr_time_frame.val.mean(), color = 'r', linestyle = '--',
+              label = 'Mean')
+ax[1].legend()
+ax[0].set_ylabel('Mean +/- SD Correlation')
+ax[0].xlabel('Time (ms)')
+fig.suptitle('Correlation over time')
+plt.tight_layout()
+fig.savefig(os.path.join(plot_dir, 'corr_over_time.png'),
+            bbox_inches = 'tight')
+plt.close(fig)
+#plt.show()
+
+# sns.lineplot(data = pred_corr_time_frame.iloc[::100], x = 't', y = 'val',
+#              errorbar = 'sd')
+# plt.show()
 
 ##############################
 # Sort by largest differences between pred_corr and psth_corr
