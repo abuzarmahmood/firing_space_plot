@@ -962,6 +962,117 @@ plt.savefig(os.path.join(coupling_analysis_plot_dir,
             bbox_inches = 'tight')
 plt.close()
 
+# Also make scatter plots of
+# 1) firing rate vs discrimination
+# 2) firing rate vs palatability
+# Color by subgroup
+plot_cols = ['mean_discrim_stat', 'mean_pal_rho']
+
+# Perform robust regression and calculate explained variance score
+from sklearn.metrics import explained_variance_score, r2_score
+from sklearn.linear_model import HuberRegressor, LinearRegression
+
+# Cut-off at firing < 0.02
+# explained_var_scores = []
+r2_score_list = []
+fit_linear_model = []
+for this_col in plot_cols:
+    x = gc_inter_sig_agg['mean_post_stim_rates'].values
+    y = gc_inter_sig_agg[this_col].values
+    cut_bool = x < 0.02
+    x = x[cut_bool]
+    y = y[cut_bool]
+    x = x[:,None]
+    y = y[:,None]
+    # reg = HuberRegressor()
+    reg = LinearRegression()
+    reg.fit(x,y)
+    fit_linear_model.append(reg)
+    y_pred = reg.predict(x)
+    # explained_var_scores.append(explained_variance_score(y, y_pred))
+    r2_score_list.append(r2_score(y, y_pred))
+
+cmap = mpl.colors.ListedColormap(sns.color_palette("husl", 3))
+
+for use_log in [True,False]:
+    if use_log:
+        add_str = 'log_'
+    else:
+        add_str = ''
+    fig, ax = plt.subplots(1,2)
+    for i in range(len(plot_cols)):
+        for j in np.unique(gc_inter_sig_agg['cxn_cat'].values):
+            this_frame = gc_inter_sig_agg.loc[gc_inter_sig_agg.cxn_cat == j]
+            ax[i].scatter(
+                this_frame['mean_post_stim_rates'],
+                this_frame[plot_cols[i]],
+                c = cmap(this_frame['cxn_cat'].values),
+                label = cxn_type_names[j],
+                alpha = 0.5)
+        # Plot regression line
+        this_reg = fit_linear_model[i]
+        x_range = [np.min(gc_inter_sig_agg['mean_post_stim_rates'].values),
+                   np.max(gc_inter_sig_agg['mean_post_stim_rates'].values)]
+        x_vec = np.linspace(x_range[0], x_range[1], 100)
+        y_vec = this_reg.predict(x_vec[:,None])
+        ax[i].plot(x_vec, y_vec, color = 'k', linewidth = 2,
+                   alpha = 0.5, linestyle = '--')
+        ax[i].set_xlabel('mean_post_stim_rates')
+        ax[i].set_ylabel(plot_cols[i])
+        ax[i].set_title(f'GC {plot_cols[i]} vs firing rate')
+        if use_log:
+            ax[i].set_xscale('log')
+            ax[i].set_yscale('log')
+    # Legend at bottom
+    ax[i].legend(list(cxn_type_names.values()), loc='upper center',
+                 bbox_to_anchor=(0.5, -0.2))
+    fig.suptitle('r2_scores:\n'+str(dict(zip(plot_cols, np.round(r2_score_list,2)))))
+    fig.tight_layout()
+    fig.savefig(os.path.join(coupling_analysis_plot_dir,
+                             add_str + 'gc_features_vs_firing_scatter.png'),
+                bbox_inches = 'tight')
+    plt.close(fig)
+
+    # Same plots as above but zoomed in
+    fig, ax = plt.subplots(1,2)
+    plot_cols = ['mean_discrim_stat', 'mean_pal_rho']
+    for i in range(len(plot_cols)):
+        for j in np.unique(gc_inter_sig_agg['cxn_cat'].values):
+            this_frame = gc_inter_sig_agg.loc[gc_inter_sig_agg.cxn_cat == j]
+            ax[i].scatter(
+                this_frame['mean_post_stim_rates'],
+                this_frame[plot_cols[i]],
+                c = cmap(this_frame['cxn_cat'].values),
+                label = cxn_type_names[j],
+                alpha = 0.5)
+        # Plot regression line
+        this_reg = fit_linear_model[i]
+        x_range = [np.min(gc_inter_sig_agg['mean_post_stim_rates'].values),
+                   np.max(gc_inter_sig_agg['mean_post_stim_rates'].values)]
+        x_vec = np.linspace(x_range[0], x_range[1], 100)
+        y_vec = this_reg.predict(x_vec[:,None])
+        ax[i].plot(x_vec, y_vec, color = 'k', linewidth = 2,
+                   alpha = 0.5, linestyle = '--')
+        ax[i].set_xlabel('mean_post_stim_rates')
+        ax[i].set_ylabel(plot_cols[i])
+        ax[i].set_title(f'GC {plot_cols[i]} vs firing rate')
+        if use_log:
+            ax[i].set_xscale('log')
+            ax[i].set_yscale('log')
+    # Legend at bottom
+    ax[i].legend(list(cxn_type_names.values()), loc='upper center',
+                 bbox_to_anchor=(0.5, -0.2))
+    fig.suptitle('r2_scores:\n'+str(dict(zip(plot_cols, np.round(r2_score_list,2)))))
+    fig.tight_layout()
+    ax[0].set_xlim([-0.005,0.02])
+    ax[1].set_xlim([-0.005,0.02])
+    ax[0].set_ylim([-0.005,20])
+    fig.savefig(os.path.join(coupling_analysis_plot_dir,
+                             add_str + 'gc_features_vs_firing_scatter_zoomed.png'),
+                bbox_inches = 'tight')
+    plt.close(fig)
+
+
 ##############################
 
 # # Project data to 1d and plot histograms
@@ -989,8 +1100,8 @@ nca = NCA(random_state=42, n_components=2)
 nca.fit(X, y)
 X_embedded = nca.transform(X)
 
-plt.matshow(nca.components_)
-plt.show()
+# plt.matshow(nca.components_)
+# plt.show()
 
 # Plot NCA results
 fig, ax = plt.subplots(figsize = (5,5))
@@ -1045,7 +1156,7 @@ plt.close(fig)
 # Plot decision boundary
 cmap = mpl.colors.ListedColormap(sns.color_palette("husl", 3))
 
-_, ax = plt.subplots(figsize = (10,10)
+_, ax = plt.subplots(figsize = (7,7))
 DecisionBoundaryDisplay.from_estimator(
     clf,
     X_embedded,
@@ -1068,7 +1179,7 @@ ax.set_xlabel('NCA 1')
 ax.set_ylabel('NCA 2')
 ax.set_aspect('equal')
 # Add legend
-ax.legend(loc='upper center', bbox_to_anchor=(0.5, -0.2))
+ax.legend(loc='upper center', bbox_to_anchor=(0.5, -0.1))
 fig.suptitle('GC subpopulations decision boundaries')
 plt.tight_layout()
 fig.savefig(os.path.join(coupling_analysis_plot_dir,
