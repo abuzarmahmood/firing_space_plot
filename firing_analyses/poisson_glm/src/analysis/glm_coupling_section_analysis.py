@@ -27,10 +27,20 @@ from analysis.glm_coupling_analysis import *
 from sklearn.decomposition import NMF
 from scipy.stats import (
         chisquare, percentileofscore, f_oneway, zscore,
-        spearmanr
+        spearmanr, ks_2samp, mannwhitneyu, ttest_ind
         )
 from glob import glob
 import json
+from itertools import combinations, product
+import seaborn as sns
+from sklearn.neighbors import NeighborhoodComponentsAnalysis as NCA
+from sklearn.neighbors import KNeighborsClassifier
+from sklearn.preprocessing import StandardScaler, MinMaxScaler
+from sklearn.inspection import DecisionBoundaryDisplay
+from sklearn.decomposition import PCA
+from sklearn.metrics import confusion_matrix
+from sklearn.linear_model import LogisticRegression
+import matplotlib as mpl
 
 def calc_firing_rates(spike_array, kern):
     """
@@ -661,12 +671,19 @@ for x in nrn_inds.values():
 post_stim_nrn_rates = [x[...,post_stim_lims[0]:post_stim_lims[1]] \
         for x in nrn_rates]
 
-nrn_discrim = [taste_oneway_anova(x) for x in tqdm(post_stim_nrn_rates)]
+discrim_save_path = os.path.join(
+        coupling_analysis_plot_dir, 'discrimination_stats.npy')
+if not os.path.exists(discrim_save_path):
+    nrn_discrim = [taste_oneway_anova(x) for x in tqdm(post_stim_nrn_rates)]
+    np.save(discrim_save_path, nrn_discrim)
+else:
+    nrn_discrim = np.load(discrim_save_path, allow_pickle=True)
+
 nrn_discrim_stat, nrn_discrim_pval = list(zip(*nrn_discrim))
 nrn_discrim_stat = np.stack(nrn_discrim_stat)
 nrn_discrim_pval = np.stack(nrn_discrim_pval)
 
-nrn_discrim_max_stat = [np.max(x) for x in nrn_discrim_stat]
+nrn_discrim_mean_stat = [np.mean(x) for x in nrn_discrim_stat]
 
 ##############################
 # 4- Palatability (max rho post-stimulus)
@@ -686,13 +703,21 @@ for this_dir in tqdm(file_list):
 # Check that order is same for all
 assert all([x == pal_rankings[0] for x in pal_rankings])
 
-nrn_pal_corr = [taste_pal_corr(x, pal_rankings[0]) \
-        for x in tqdm(post_stim_nrn_rates)]
+pal_save_path = os.path.join(
+        coupling_analysis_plot_dir, 'palatability_stats.npy')
+if not os.path.exists(pal_save_path):
+    nrn_pal_corr = [taste_pal_corr(x, pal_rankings[0]) \
+            for x in tqdm(post_stim_nrn_rates)]
+    np.save(pal_save_path, nrn_pal_corr)
+else:
+    nrn_pal_corr = np.load(pal_save_path, allow_pickle=True)
+
 nrn_pal_rho, nrn_pal_pval = list(zip(*nrn_pal_corr))
 nrn_pal_rho = np.stack(nrn_pal_rho)
 nrn_pal_pval = np.stack(nrn_pal_pval)
 
-nrn_pal_max_rho = [np.max(x) for x in nrn_pal_rho]
+# Take mean of absolute
+nrn_pal_mean_rho = [np.mean(np.abs(x)) for x in nrn_pal_rho]
 
 ##############################
 # Merge everything into an "encoding_frame"
@@ -711,8 +736,8 @@ encoding_frame.reset_index(inplace = True)
 pal_iden_frame = pd.DataFrame(
         data = nrn_inds.keys(),
         columns = ['session','neuron'])
-pal_iden_frame['max_discrim_stat'] = nrn_discrim_max_stat
-pal_iden_frame['max_pal_rho'] = nrn_pal_max_rho
+pal_iden_frame['mean_discrim_stat'] = nrn_discrim_mean_stat
+pal_iden_frame['mean_pal_rho'] = nrn_pal_mean_rho
 
 # Merge with encoding_frame
 encoding_frame = encoding_frame.merge(pal_iden_frame,
@@ -755,7 +780,7 @@ cxn_type_frames = [x[1] for x in cxn_groups]
 # 4- max pal rho
 
 data_col_names = ['mean_post_stim_rates','responsiveness',
-                  'max_discrim_stat','max_pal_rho']
+                  'mean_discrim_stat','mean_pal_rho']
 
 # For each variable, manually calculate bins
 n_bins = 20
@@ -771,7 +796,7 @@ fig, ax = plt.subplots(len(cxn_type_names),4,figsize = (20,20),
 for i, cxn_type in enumerate(cxn_type_frames):
     for j, col_name in enumerate(data_col_names):
         ax[i,j].hist(cxn_type[col_name], bins = bin_dict[col_name],
-                     log = True, density = True)
+                     log = False, density = True)
         ax[i,j].set_title(col_name)
         ax[i,j].set_xlabel('value')
         ax[i,j].set_ylabel('count')
@@ -794,7 +819,7 @@ for wanted_region in ['gc','bla']:
     for i, cxn_type in enumerate(wanted_frames):
         for j, col_name in enumerate(data_col_names):
             ax[i,j].hist(cxn_type[col_name], bins = bin_dict[col_name],
-                         log = True, density = True)
+                         log = False, density = True)
             ax[i,j].set_title(col_name)
             ax[i,j].set_xlabel('value')
             ax[i,j].set_ylabel('count')
@@ -808,12 +833,245 @@ for wanted_region in ['gc','bla']:
                 bbox_inches = 'tight')
     plt.close(fig)
 
+##############################
+# Perform KS tests to determine if distributions are different
+# for each region, for each condition
+stats_frame_list = []
+for wanted_region in ['gc','bla']:
+    wanted_frames_inds = [i for i,x in enumerate(cxn_type_names)\
+            if wanted_region in x]
+    wanted_frames = [cxn_type_frames[i] for i in wanted_frames_inds]
+    wanted_cxn_names = [cxn_type_names[i] for i in wanted_frames_inds]
+    cxn_name_combos = list(combinations(np.arange(len(wanted_cxn_names)),2))
+    run_inds = list(product(cxn_name_combos, data_col_names) )
+    for this_ind in run_inds:
+        frame_inds = this_ind[0]
+        col_name = this_ind[1]
+        dat1 = wanted_frames[frame_inds[0]][col_name]
+        dat2 = wanted_frames[frame_inds[1]][col_name]
+        stat, p_val = ks_2samp(dat1, dat2)
+        this_stat_frame = pd.DataFrame(
+                dict(
+                    region = [wanted_region],
+                    cxn1 = [wanted_cxn_names[frame_inds[0]]],
+                    cxn2 = [wanted_cxn_names[frame_inds[1]]],
+                    col_name = [col_name],
+                    stat = [stat],
+                    p_val = [p_val]
+                    )
+                )
+        stats_frame_list.append(this_stat_frame)
+
+stats_frame = pd.concat(stats_frame_list)
+stats_frame['joint_comparison'] = [list(set([x.cxn1, x.cxn2])) for i,x in stats_frame.iterrows()]
+alpha = 0.05
+stats_frame['sig'] = stats_frame['p_val'] < alpha
+# sig_frame = stats_frame[stats_frame['sig'] == True]
+# sig_frame.drop(columns = ['cxn1','cxn2'], inplace = True)
+# Output stats frame to csv in plot_dir
+stats_frame.to_csv(os.path.join(
+    coupling_analysis_plot_dir, 'encoding_metrics_by_cxn_type_stats.csv'),
+                   index = False)
 
 ##############################
-# Group by session, neuron, and region
-sig_cxn_neurons_group = list(sig_cxn_neurons.groupby(
-    ['session','neuron','region']))
-sig_cxn_neuron_inds = [x[0] for x in sig_cxn_neurons_group]
-sig_cxn_neuron_frames = [x[1] for x in sig_cxn_neurons_group]
+# For each region and variable, plot p-val matrices across comparisons
+alpha = 0.05
 
-unique_cxn_types = [x['fin_cxn_type'].unique() for x in sig_cxn_neuron_frames]
+stats_groups_list = list(stats_frame.groupby(['region','col_name']))
+stats_groups_names = [x[0] for x in stats_groups_list]
+stats_groups_frames = [x[1] for x in stats_groups_list]
+
+
+stats_pivot_plot_dir = os.path.join(coupling_analysis_plot_dir,
+                                    'encoding_metrics_by_cxn_type_stats_pivot')
+if not os.path.isdir(stats_pivot_plot_dir):
+    os.mkdir(stats_pivot_plot_dir)
+
+for i in range(len(stats_groups_names)):
+    this_name = stats_groups_names[i]
+    this_frame = stats_groups_frames[i]
+
+    pivot_frame = this_frame.pivot(index = 'cxn1', columns = 'cxn2', 
+                                   values = 'p_val')
+
+    fig, ax = plt.subplots(figsize = (5,5))
+    # Plot heamtap with binary colormap using alpha as cutoff
+    ax.imshow(pivot_frame.values, cmap = 'binary', vmin = 0, vmax = 1)
+    ax.set_xticks(np.arange(len(pivot_frame.columns)))
+    ax.set_yticks(np.arange(len(pivot_frame.index)))
+    ax.set_xticklabels(pivot_frame.columns, rotation = 90)
+    ax.set_yticklabels(pivot_frame.index)
+    ax.set_title(f'{this_name[0].upper()}' + '\n' + f'{this_name[1]}')
+    for i in range(len(pivot_frame.index)):
+        for j in range(len(pivot_frame.columns)):
+            pval = pivot_frame.values[i,j]
+            if pval < alpha:
+                pre_str = '*\n'
+            else:
+                pre_str = ''
+            ax.text(j, i, pre_str + str(np.round(pval,3)), 
+                    ha="center", va="center", color="r",
+                    fontweight = 'bold')
+    fig.tight_layout()
+    fig.savefig(os.path.join(stats_pivot_plot_dir,
+                             f'{this_name[0]}_{this_name[1]}_pval_matrix.png'),
+                bbox_inches = 'tight')
+    plt.close(fig)
+
+##############################
+# It seems like rec and rec+send are jointly different populations
+# than send for GC across:
+# mean_post_stim_rates, mean_discrim_stat, mean_pal_rho
+
+# Are these variables correlated on a single neuron basis?
+
+
+# Perform NCA to see if these population collectively 
+gc_inter_sig_agg = inter_sig_cxn_neurons_agg.loc[\
+        inter_sig_cxn_neurons_agg.region == 'gc']
+gc_inter_sig_agg.dropna(inplace=True)
+gc_inter_sig_agg['cxn_cat'] = gc_inter_sig_agg['fin_cxn_type'].astype('category').cat.codes
+
+# Generate code to name map
+cxn_type_names = {x:y for x,y in zip(
+    gc_inter_sig_agg['cxn_cat'], gc_inter_sig_agg['fin_cxn_type'])}
+
+X_raw = gc_inter_sig_agg[data_col_names].values 
+# X = StandardScaler().fit_transform(X_raw)
+X = MinMaxScaler().fit_transform(X_raw)
+y = gc_inter_sig_agg['cxn_cat'].values
+
+##############################
+# Generate correlation matrix
+corr_mat = np.corrcoef(X.T)
+
+im = plt.matshow(corr_mat, cmap = 'binary')
+plt.xticks(range(len(data_col_names)), data_col_names, rotation = 90)
+plt.yticks(range(len(data_col_names)), data_col_names)
+# Annotate with values
+for i in range(len(data_col_names)):
+    for j in range(len(data_col_names)):
+        plt.text(j, i, str(np.round(corr_mat[i,j],2)), 
+                 ha="center", va="center", color="r",
+                 fontweight = 'bold')
+plt.colorbar(im, label = 'Correlation')
+plt.title('GC features correlation matrix')
+plt.tight_layout()
+plt.savefig(os.path.join(coupling_analysis_plot_dir,
+                         'gc_features_corr_mat.png'),
+            bbox_inches = 'tight')
+plt.close()
+
+##############################
+
+# # Project data to 1d and plot histograms
+# pca = PCA(n_components=1)
+# pca.fit(X)
+# X_pca = pca.transform(X)
+# 
+# fig, ax = plt.subplots(figsize = (5,5))
+# for i in range(len(np.unique(y))):
+#     ax.hist(X_pca[y == i], label = cxn_type_names[i], alpha = 0.5)
+# # legend on bottom
+# ax.legend(loc='upper center', bbox_to_anchor=(0.5, -0.2))
+# ax.set_xlabel('PCA 1')
+# ax.set_ylabel('Count')
+# ax.set_title('PCA results')
+# fig.tight_layout()
+# fig.savefig(os.path.join(coupling_analysis_plot_dir,
+#                          'gc_features_pca.png'),
+#             bbox_inches = 'tight')
+# plt.close(fig)
+
+##############################
+# Perform NCA
+nca = NCA(random_state=42, n_components=2)
+nca.fit(X, y)
+X_embedded = nca.transform(X)
+
+plt.matshow(nca.components_)
+plt.show()
+
+# Plot NCA results
+fig, ax = plt.subplots(figsize = (5,5))
+for i in range(len(np.unique(y))):
+    ax.scatter(X_embedded[y == i, 0], X_embedded[y == i, 1], 
+               label = cxn_type_names[i], s = 50, alpha = 0.5)
+# legend on bottom
+ax.legend(loc='upper center', bbox_to_anchor=(0.5, -0.2))
+ax.set_xlabel('NCA 1')
+ax.set_ylabel('NCA 2')
+ax.set_title('NCA results')
+ax.set_xscale('log')
+ax.set_yscale('log')
+fig.tight_layout()
+fig.savefig(os.path.join(coupling_analysis_plot_dir,
+                         'gc_nca_results.png'),
+            bbox_inches = 'tight')
+plt.close(fig)
+
+# Test against KNeighborsClassifier
+# clf = KNeighborsClassifier(n_neighbors=3)
+clf = LogisticRegression(random_state=0, max_iter = 1000)
+clf.fit(X_embedded, y)
+print(clf.score(X_embedded, y))
+y_pred = clf.predict(X_embedded)
+
+pred_confusion = confusion_matrix(y, y_pred,
+                                  normalize = 'true')
+# Plot confusion matrix
+fig, ax = plt.subplots(figsize = (5,5))
+im = ax.imshow(pred_confusion, cmap = 'binary')
+ax.set_xticks(range(len(np.unique(y))))
+ax.set_yticks(range(len(np.unique(y))))
+ax.set_xticklabels([cxn_type_names[i] for i in np.unique(y)], rotation = 90)
+ax.set_yticklabels([cxn_type_names[i] for i in np.unique(y)])
+ax.set_xlabel('Predicted')
+ax.set_ylabel('True')
+ax.set_title('Confusion matrix')
+# Annotate with values
+for i in range(len(np.unique(y))):
+    for j in range(len(np.unique(y))):
+        ax.text(j, i, str(np.round(pred_confusion[i,j],2)), 
+                 ha="center", va="center", color="r",
+                 fontweight = 'bold')
+fig.tight_layout()
+fig.savefig(os.path.join(coupling_analysis_plot_dir,
+                         'gc_nca_confusion.png'),
+            bbox_inches = 'tight')
+plt.close(fig)
+
+##############################
+# Plot decision boundary
+cmap = mpl.colors.ListedColormap(sns.color_palette("husl", 3))
+
+_, ax = plt.subplots(figsize = (10,10)
+DecisionBoundaryDisplay.from_estimator(
+    clf,
+    X_embedded,
+    alpha=0.3,
+    ax=ax,
+    response_method="predict",
+    plot_method="pcolormesh",
+    shading="auto",
+    cmap=cmap,
+)
+for i in range(len(np.unique(y))):
+    ax.scatter(X_embedded[y == i, 0], X_embedded[y == i, 1], 
+               label = cxn_type_names[i], s = 50,
+               edgecolors = 'k', c = cmap(i))
+fig = plt.gcf()
+# Legend on bottom
+ax.set_xscale('log')
+ax.set_yscale('log')
+ax.set_xlabel('NCA 1')
+ax.set_ylabel('NCA 2')
+ax.set_aspect('equal')
+# Add legend
+ax.legend(loc='upper center', bbox_to_anchor=(0.5, -0.2))
+fig.suptitle('GC subpopulations decision boundaries')
+plt.tight_layout()
+fig.savefig(os.path.join(coupling_analysis_plot_dir,
+                         'gc_nca_decision_boundary.png'),
+            bbox_inches = 'tight')
+plt.close(fig)
