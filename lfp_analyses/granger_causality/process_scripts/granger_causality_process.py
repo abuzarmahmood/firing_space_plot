@@ -56,6 +56,11 @@ for dir_name in dir_list:
 
         dat = ephys_data(dir_name)
         dat.get_info_dict()
+        
+        # # Pull out longer trial-durations for LFP
+        # dat.default_lfp_params['trial_durations'] = [10000,10000]
+        # dat.extract_lfps()
+
         taste_names = dat.info_dict['taste_params']['tastes']
         # Region lfps shape : (n_tastes, n_channels, n_trials, n_timepoints)
         lfp_channel_inds, region_lfps, region_names = \
@@ -110,12 +115,21 @@ for dir_name in dir_list:
                                recursive=True)
             h5.create_group(os.path.dirname(save_path), 'granger_causality')
 
+
+        # Only process 'all' trials together
+        lfp_set_names = [lfp_set_names[-1]]
+        preprocessed_lfp_data = [preprocessed_lfp_data[-1]]
+
+        # We don't preprocess data again here because we provide
+        # preprocessed data from above
         for num, this_dat in enumerate(preprocessed_lfp_data):
             print(f'Processing {lfp_set_names[num]}')
             this_granger = gu.granger_handler(
                                       this_dat,
                                       multitaper_time_halfbandwidth_product=1,
-                                      preprocess=False)
+                                      preprocess=False,
+                                      wanted_window = [8000, 12500],
+                                      )
             this_granger.get_granger_sig_mask()
 
             ############################################################
@@ -143,7 +157,9 @@ for dir_name in dir_list:
                 for val, name in zip(vals, names):
                     h5.create_array(fin_save_path, name, val)
             del this_granger
-        del dat
+        del dat, taste_lfps, region_lfps, flat_region_lfps
+        del this_dat, preprocessed_data, preprocessed_lfp_data
+        del good_lfp_trials, good_lfp_trials_bool, good_taste_nums
     except Exception as e:
         print(e)
         print(f'Failed to process {basename}')

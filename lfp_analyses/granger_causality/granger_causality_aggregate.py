@@ -14,7 +14,7 @@ from sklearn.decomposition import PCA
 
 import sys
 sys.path.append('/media/bigdata/projects/pytau')
-import pytau.changepoint_model as models
+# import pytau.changepoint_model as models
 
 ############################################################
 # Load Data
@@ -43,6 +43,9 @@ loaded_dat_list = []
 for this_dir in dir_list:
     h5_path = glob(os.path.join(this_dir, '*.h5'))[0]
     with tables.open_file(h5_path, 'r') as h5:
+        if save_path not in h5:
+            print(f'No {save_path} in {h5_path}')
+            continue
         loaded_dat = [h5.get_node(save_path, this_name)[:]
                       for this_name in names]
         loaded_dat_list.append(loaded_dat)
@@ -58,12 +61,12 @@ zipped_dat = [np.stack(this_dat) for this_dat in zipped_dat]
     time_vec,
     freq_vec) = zipped_dat
 
-wanted_window = np.array(wanted_window[0])/1000
-stim_t = 2
-corrected_window = wanted_window-stim_t
+# wanted_window = np.array(wanted_window[0])/1000
+# stim_t = 10
+# corrected_window = wanted_window-stim_t
 freq_vec = freq_vec[0]
 time_vec = time_vec[0]
-time_vec += corrected_window[0]
+time_vec += -1 # corrected_window[0]
 
 wanted_freq_range = [1, 100]
 wanted_freq_inds = np.where(np.logical_and(freq_vec >= wanted_freq_range[0],
@@ -210,51 +213,51 @@ plt.pcolormesh(time_vec, np.arange(len(pca_dat)),
                zscore(pca_dat,axis=-1), **mesh_kwargs)
 plt.show()
 
-# Fit changepoint model to full dataset
-n_fit = 40000
-n_samples = 20000
-n_states = 5
-model = models.gaussian_changepoint_2d(zscore_mask_stack, n_states)
-model, approx, mu_stack, sigma_stack, tau_samples, fit_data = \
-        models.advi_fit(model = model, fit = n_fit, samples = n_samples)
-
-mean_mu = np.mean(mu_stack, axis=1)
-
-# Extract changepoint values
-int_tau = np.vectorize(np.int)(tau_samples)
-mode_tau = np.squeeze(mode(int_tau, axis=0)[0])
-scaled_tau = time_vec[int_tau]
-
-# Plot changepoints
-fig, ax = plt.subplots(2, 1, figsize=(5, 7), sharex=True, sharey=False)
-ax[0].pcolormesh(time_vec, np.concatenate([freq_vec]*2), 
-               zscore_mask_stack, **mesh_kwargs)
-for this_tau in mode_tau:
-                    ax[0].axvline(time_vec[this_tau], color='red', linestyle='--')
-for this_tau in scaled_tau.T:
-                    ax[1].hist(this_tau, 
-                               bins=np.linspace(time_vec.min(), time_vec.max()), alpha=0.5)
-fig = plt.figure()
-plt.matshow(mean_mu)
-plt.show()
-
-# Plot changepoint for each direction
-fig, ax = plt.subplots(2, 1, figsize=(5, 7), sharex=True, sharey=True)
-fig.suptitle('Inferred Changepoints' + '\n' + n_string)
-ax[0].pcolormesh(time_vec, freq_vec,
-                 1-mean_mask_cp[:, :, 0], **mesh_kwargs)
-ax[1].pcolormesh(time_vec, freq_vec,
-                 1-mean_mask_cp[:, :, 1], **mesh_kwargs)
-for this_ax in ax:
-                    this_ax.set_ylabel('Freq. (Hz)')
-ax[-1].set_xlabel('Time post-stimulus (s)')
-for this_ax in ax.flatten():
-                    for this_tau in mode_tau:
-                                        this_ax.axvline(time_vec[this_tau], color='red', linestyle='--', linewidth=2)
-titles = ['GC-->BLA','BLA-->GC']
-for this_name, this_ax in zip(direction_names, ax):
-                    this_ax.set_title(this_name)
-plt.show()
+# # Fit changepoint model to full dataset
+# n_fit = 40000
+# n_samples = 20000
+# n_states = 5
+# model = models.gaussian_changepoint_2d(zscore_mask_stack, n_states)
+# model, approx, mu_stack, sigma_stack, tau_samples, fit_data = \
+#         models.advi_fit(model = model, fit = n_fit, samples = n_samples)
+# 
+# mean_mu = np.mean(mu_stack, axis=1)
+# 
+# # Extract changepoint values
+# int_tau = np.vectorize(np.int)(tau_samples)
+# mode_tau = np.squeeze(mode(int_tau, axis=0)[0])
+# scaled_tau = time_vec[int_tau]
+# 
+# # Plot changepoints
+# fig, ax = plt.subplots(2, 1, figsize=(5, 7), sharex=True, sharey=False)
+# ax[0].pcolormesh(time_vec, np.concatenate([freq_vec]*2), 
+#                zscore_mask_stack, **mesh_kwargs)
+# for this_tau in mode_tau:
+#                     ax[0].axvline(time_vec[this_tau], color='red', linestyle='--')
+# for this_tau in scaled_tau.T:
+#                     ax[1].hist(this_tau, 
+#                                bins=np.linspace(time_vec.min(), time_vec.max()), alpha=0.5)
+# fig = plt.figure()
+# plt.matshow(mean_mu)
+# plt.show()
+# 
+# # Plot changepoint for each direction
+# fig, ax = plt.subplots(2, 1, figsize=(5, 7), sharex=True, sharey=True)
+# fig.suptitle('Inferred Changepoints' + '\n' + n_string)
+# ax[0].pcolormesh(time_vec, freq_vec,
+#                  1-mean_mask_cp[:, :, 0], **mesh_kwargs)
+# ax[1].pcolormesh(time_vec, freq_vec,
+#                  1-mean_mask_cp[:, :, 1], **mesh_kwargs)
+# for this_ax in ax:
+#                     this_ax.set_ylabel('Freq. (Hz)')
+# ax[-1].set_xlabel('Time post-stimulus (s)')
+# for this_ax in ax.flatten():
+#                     for this_tau in mode_tau:
+#                                         this_ax.axvline(time_vec[this_tau], color='red', linestyle='--', linewidth=2)
+# titles = ['GC-->BLA','BLA-->GC']
+# for this_name, this_ax in zip(direction_names, ax):
+#                     this_ax.set_title(this_name)
+# plt.show()
 
 ############################################################
 

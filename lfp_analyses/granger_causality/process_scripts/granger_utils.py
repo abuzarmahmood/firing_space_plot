@@ -103,23 +103,30 @@ class lfp_preprocessing():
         return self.std_across_trials_divided_data
 
 
-def run_adfuller_test(preprocessed_data, alpha=0.05, wanted_fraction=0.95):
+def run_adfuller_test(
+        preprocessed_data, 
+        alpha=0.05, 
+        wanted_fraction=0.95,
+        warning_only=False
+        ):
     """
     alpha = threshold for single test (will be Bonferroni corrected internally)
     wanted_fraction = minimum fraction of tests that should be significant (stationary)
+    warning_only = if True, will only print a warning if data is not stationary
     """
     inds = list(np.ndindex(preprocessed_data.shape[:-1]))
 
     def return_adfuller_pval(this_ind): return adfuller(
         preprocessed_data[this_ind])[1]
     pval_list = np.array(parallelize(return_adfuller_pval, inds, n_jobs=30))
-    alpha = 0.05
     threshold = alpha/len(pval_list)
-    wanted_fraction = 0.95
     if np.sum(pval_list < threshold) > wanted_fraction * len(pval_list):
         print('Data is stationary')
     else:
-        raise ValueError('Data is not stationary')
+        if not warning_only:
+            raise ValueError('Data is not stationary')
+        else:
+            print('Warning: Data is NOT stationary')
 
 
 def calc_granger(time_series,
@@ -162,6 +169,7 @@ class granger_handler():
                  multitaper_time_window_duration=0.3,
                  multitaper_time_window_step=0.05,
                  preprocess=True,
+                 warning_only=False
                  ):
         """
         preprocessed_data = (n_channels, n_trials, n_timepoints)
@@ -184,6 +192,7 @@ class granger_handler():
                 multitaper_time_halfbandwidth_product
         self.multitaper_time_window_duration = multitaper_time_window_duration
         self.multitaper_time_window_step = multitaper_time_window_step
+        self.warning_only = warning_only
 
     def calc_granger(self, x):
         granger, c = calc_granger(
@@ -205,7 +214,7 @@ class granger_handler():
     def check_stationarity(self):
         if not hasattr(self, 'preprocessed_data'):
             self.preprocess_data()
-        run_adfuller_test(self.preprocessed_data)
+        run_adfuller_test(self.preprocessed_data, warning_only = self.warning_only)
 
     def preprocess_and_check_stationarity(self):
         self.preprocess_data()
