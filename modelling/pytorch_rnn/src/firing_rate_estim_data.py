@@ -28,7 +28,9 @@ import time
 import numpy as np
 import pylab as plt
 from tqdm import tqdm, trange
-from sklearn.decomposition import PCA
+from sklearn.decomposition import PCA, NMF
+from sklearn.preprocessing import StandardScaler, MinMaxScaler
+from sklearn.metrics import explained_variance_score, r2_score
 # import pandas as pd
 # import seaborn as sns
 
@@ -89,8 +91,9 @@ class autoencoderRNN(nn.Module):
                 nn.Sigmoid(),
                 nn.Linear(sum((hidden_size, output_size))//2, output_size),
                 # nn.Sigmoid(),
+                # nn.Tanh(),
                 )
-        self.relu = nn.ReLU()
+        # self.relu = nn.ReLU()
         self.en_dropout = nn.Dropout(p = dropout)
         # self.de_dropout = nn.Dropout(p = dropout)
 
@@ -100,20 +103,8 @@ class autoencoderRNN(nn.Module):
         latent_out, _ = self.rnn(out)
         out = self.decoder(latent_out)
         # out = self.de_dropout(out)
-        out = self.relu(out)
+        # out = self.relu(out)
         return out, latent_out
-
-def normalizedMSELoss(output, target):
-    """
-    Normalize each output by its mean before computing MSE
-    """
-    temp_output = output.clone() 
-    temp_target = target.clone()
-    temp_output += 1e-10
-    temp_target += 1e-10
-    norm_output = temp_output / temp_output.mean(dim = 0)
-    norm_target = temp_target / temp_target.mean(dim = 0)
-    return F.mse_loss(norm_output, norm_target)
 
 
 def train_model(
@@ -241,6 +232,65 @@ binned_spikes = np.reshape(cat_spikes,
 inputs = binned_spikes.copy()
 inputs = np.moveaxis(inputs, -1, 0)
 
+##############################
+# Perform PCA on data
+# If PCA is performed on raw data, higher firing neurons will dominate
+# the latent space
+# Therefore, perform PCA on zscored data
+
+inputs_long = inputs.reshape(-1, inputs.shape[-1])
+
+# Perform standard scaling
+scaler = StandardScaler()
+# scaler = MinMaxScaler()
+inputs_long = scaler.fit_transform(inputs_long)
+
+# Perform PCA and get 95% explained variance
+pca_obj = PCA()
+inputs_pca = pca_obj.fit_transform(inputs_long)
+explained_var = pca_obj.explained_variance_ratio_
+cumulative_explained_var = np.cumsum(explained_var)
+n_components = np.argmax(cumulative_explained_var > 0.95) + 1
+
+pca_obj = PCA(n_components=n_components)
+inputs_pca = pca_obj.fit_transform(inputs_long)
+
+# Scale the PCA outputs
+pca_scaler = StandardScaler()
+inputs_pca = pca_scaler.fit_transform(inputs_pca)
+
+# explained_var = []
+# comp_vec = np.arange(1, inputs_long.shape[-1], 2)
+# for i in tqdm(comp_vec): 
+#     nmf_obj = NMF(n_components=i)
+#     inputs_nmf = nmf_obj.fit_transform(inputs_long)
+#     recreated = nmf_obj.inverse_transform(inputs_nmf)
+#     score = explained_variance_score(inputs_long, recreated)
+#     explained_var.append(score)
+# 
+# plt.plot(comp_vec, explained_var, '-x')
+# plt.show()
+
+# n_components = 20
+# nmf_obj = NMF(n_components=n_components)
+# inputs_nmf = nmf_obj.fit_transform(inputs_long)
+# 
+# nmf_scaler = StandardScaler()
+# inputs_nmf = nmf_scaler.fit_transform(inputs_nmf)
+
+# Shape (seq_len, trials, n_components)
+# inputs_trial_nmf = inputs_nmf.reshape(inputs.shape[0], -1, n_components)
+# inputs = inputs_trial_nmf.copy()
+
+inputs_trial_pca = inputs_pca.reshape(inputs.shape[0], -1, n_components)
+inputs = inputs_trial_pca.copy()
+
+# plt.imshow(inputs.mean(axis = 1).T, aspect = 'auto', interpolation = 'none')
+# plt.colorbar()
+# plt.show()
+
+##############################
+
 # Add taste number as external input
 taste_number = np.repeat(np.arange(4), inputs.shape[1]//4)
 taste_number = np.broadcast_to(taste_number, (inputs.shape[0], inputs.shape[1]))
@@ -290,14 +340,15 @@ train_labels = labels[:,train_inds]
 test_inputs = inputs[:,test_inds]
 test_labels = labels[:,test_inds]
 
+
 train_inputs = train_inputs.to(device)
 train_labels = train_labels.to(device)
 test_inputs = test_inputs.to(device)
 test_labels = test_labels.to(device)
 
-hidden_size_vec = [4, 6, 8]
+hidden_size_vec = [6, 8]
 loss_funcs_vec = ['mse']
-repeats = 6
+repeats = 3
 
 param_product = [[[x,y]]*repeats for x in hidden_size_vec for y in loss_funcs_vec]
 param_product = [item for sublist in param_product for item in sublist]
@@ -313,6 +364,7 @@ for i, this_params in enumerate(tqdm(param_product)):
             hidden_size= this_params[0], 
             output_size=output_size,
             dropout = 0.2,
+            # rnn_layers = 3,
             )
     net.to(device)
     net, loss, cross_val_loss = train_model(
@@ -329,7 +381,7 @@ for i, this_params in enumerate(tqdm(param_product)):
     loss_list.append(loss)
     cross_val_loss_list.append(cross_val_loss)
 
-    model_name = f'hidden_{this_params[0]}_loss_{this_params[1]}'
+    model_name = f'hidden_{this_params[0]}_loss_{this_params[1]}_{i}'
     torch.save(net, os.path.join(artifacts_dir, f'{model_name}.pt'))
 
     fig, ax = plt.subplots()
@@ -358,24 +410,43 @@ for i, this_params in enumerate(tqdm(param_product)):
                 bbox_inches = 'tight')
     plt.close(fig)
 
-# Calculate log-likehood for each model
-def mean_poisson_nll(output, target):
-    temp = output - target * torch.log(output + 1e-10) + \
-            torch.lgamma(target + 1)
-    return temp.mean()
+# ##############################
+# # Load models and calculate cross_val_loss
+# cross_val_loss_list = []
+# model_list = []
+# for i, this_params in enumerate(tqdm(param_product)):
+#     model_name = f'hidden_{this_params[0]}_loss_{this_params[1]}_{i}'
+#     net = torch.load(os.path.join(artifacts_dir, f'{model_name}.pt'))
+#     test_out, _ = net(test_inputs)
+#     test_out = test_out.reshape(-1, output_size)
+#     test_labels = test_labels.reshape(-1, output_size)
+#     test_loss = F.mse_loss(test_out, test_labels)
+#     cross_val_loss_list.append(test_loss.item())
+#     model_list.append(net)
 
-mean_nll_list = []
-for net in model_list:
-    outs, _ = net(test_inputs.to(device))
-            # torch.from_numpy(test_inputs).type(torch.float).to(device))
-    outs = outs.cpu()
-    outs = np.stack([out.detach().numpy() for out in outs])
-    temp_labels = test_labels.reshape(outs.shape).cpu()
-    mean_nll = mean_poisson_nll(
-            torch.from_numpy(outs), 
-            temp_labels).item()
-    mean_nll_list.append(mean_nll)
+##############################
 
+# # Calculate log-likehood for each model
+# def mean_poisson_nll(output, target):
+#     temp = output - target * torch.log(output + 1e-10) + \
+#             torch.lgamma(target + 1)
+#     return temp.mean()
+# 
+# mean_nll_list = []
+# for net in model_list:
+#     outs, _ = net(test_inputs.to(device))
+#             # torch.from_numpy(test_inputs).type(torch.float).to(device))
+#     outs = outs.cpu()
+#     outs = np.stack([out.detach().numpy() for out in outs])
+#     temp_labels = test_labels.reshape(outs.shape).cpu()
+#     mean_nll = mean_poisson_nll(
+#             torch.from_numpy(outs), 
+#             temp_labels).item()
+#     mean_nll_list.append(mean_nll)
+
+# mean_nll_list = cross_val_loss_list.copy()
+steps = max([len(x) for x in loss_list])
+mean_nll_list = [x[steps-1] for x in cross_val_loss_list] 
 fig, ax = plt.subplots()
 model_names = np.array([f'hidden_{x[0]}_loss_{x[1]}_{i}' for \
         i, x in enumerate(param_product)])
@@ -403,6 +474,70 @@ outs = np.stack([out.detach().numpy() for out in outs])
 latent_outs = np.stack([out.detach().numpy() for out in latent_outs])
 
 pred_firing = np.moveaxis(outs, 0, -1)
+
+##############################
+# Compare outs to inputs_trial_pca
+
+fig, ax = plt.subplots()
+ax.scatter(outs.flatten()[::10], inputs_plus_context[...,:-1].flatten()[::10], alpha = 0.1)
+fig.savefig(os.path.join(plot_dir, 'actual_vs_pred_scatter_pca.png'))
+plt.close(fig)
+
+vmin = min(outs.min(), inputs_plus_context[...,:-1].min())
+vmax = max(outs.max(), inputs_plus_context[...,:-1].max())
+img_kwargs = {'aspect':'auto', 'interpolation':'none', 'cmap':'viridis',
+              'vmin':-2, 'vmax':3}
+fig, ax = plt.subplots(1,2, sharex = True, sharey = True)
+ax[0].imshow(inputs_plus_context.mean(axis = 1).T, **img_kwargs)
+ax[0].set_title('Mean Inputs')
+im = ax[1].imshow(pred_firing.mean(axis = 0), **img_kwargs) 
+ax[1].set_title('Mean Predicted Firing')
+cax = fig.add_axes([0.95, 0.1, 0.03, 0.8])
+fig.colorbar(im, cax=cax, label = 'Firing Rate (Hz)')
+plt.savefig(os.path.join(plot_dir, 'mean_pred_firing_inputs.png'),
+            bbox_inches = 'tight')
+plt.close()
+
+train_inputs_np = train_inputs.cpu().detach().numpy()
+train_labels_np = train_labels.cpu().detach().numpy()
+vmin = min(train_inputs_np.min(), train_labels_np.min())
+vmax = max(train_inputs_np.max(), train_labels_np.max())
+
+img_kwargs = {'aspect':'auto', 'interpolation':'none', 'cmap':'viridis',
+              'vmin':-2, 'vmax':3}
+fig, ax = plt.subplots(1,2)
+ax[0].imshow(train_inputs_np.mean(axis = 1).T, **img_kwargs) 
+ax[0].set_title('Mean Inputs')
+im = ax[1].imshow(train_labels_np.mean(axis = 1).T, **img_kwargs) 
+ax[1].set_title('Mean Labels')
+cax = fig.add_axes([0.95, 0.1, 0.03, 0.8])
+fig.colorbar(im, cax=cax, label = 'Firing Rate (Hz)')
+fig.savefig(os.path.join(plot_dir, 'mean_inputs_labels.png'),
+            bbox_inches = 'tight')
+plt.close(fig)
+
+##############################
+
+##############################
+# Convert back into neuron space
+pred_firing = np.moveaxis(pred_firing, 0, -1).T
+pred_firing_long = pred_firing.reshape(-1, pred_firing.shape[-1])
+
+# # Reverse NMF scaling
+# pred_firing_long = nmf_scaler.inverse_transform(pred_firing_long)
+pred_firing_long = pca_scaler.inverse_transform(pred_firing_long)
+
+# Reverse NMF transform
+# pred_firing_long = nmf_obj.inverse_transform(pred_firing_long)
+pred_firing_long = pca_obj.inverse_transform(pred_firing_long)
+
+# Reverse standard scaling
+pred_firing_long = scaler.inverse_transform(pred_firing_long)
+
+pred_firing = pred_firing_long.reshape((*pred_firing.shape[:2], -1))
+pred_firing = np.moveaxis(pred_firing, 1,2)
+
+##############################
 
 vz.firing_overview(pred_firing.swapaxes(0,1))
 fig = plt.gcf()
@@ -462,12 +597,16 @@ plt.close(fig)
 
 # For every neuron, plot 1) spike raster, 2) convolved firing rate , 
 # 3) RNN predicted firing rate
+ind_plot_dir = os.path.join(plot_dir, 'individual_neurons')
+if not os.path.exists(ind_plot_dir):
+    os.makedirs(ind_plot_dir)
+
 binned_x = np.arange(0, binned_spikes.shape[-1]*bin_size, bin_size)
 
 conv_kern = np.ones(250) / 250
 conv_rate = np.apply_along_axis(
         lambda m: np.convolve(m, conv_kern, mode = 'valid'),
-                            axis = -1, arr = cat_spikes)
+                            axis = -1, arr = cat_spikes)*bin_size
 conv_x = np.convolve(
         np.arange(cat_spikes.shape[-1]), conv_kern, mode = 'valid')
 
@@ -479,6 +618,7 @@ for i in range(binned_spikes.shape[1]):
     # ax[2].plot(binned_x, binned_spikes[:,i].T, label = 'True')
     ax[2].plot(binned_x[1:], pred_firing[:,i].T, 
                c = 'k', alpha = 0.1)
+    # ax[2].sharey(ax[1])
     for this_ax in ax:
         this_ax.set_xlim([1500, 4000])
         this_ax.axvline(2000, c = 'r', linestyle = '--')
@@ -522,6 +662,7 @@ for i in range(binned_spikes.shape[1]):
                 mean_pred_firing[j] - sd_pred_firing[j],
                 mean_pred_firing[j] + sd_pred_firing[j],
                 color = cmap(j), alpha = 0.1)
+        # ax[2].sharey(ax[1])
     for this_ax in ax:
         this_ax.set_xlim([1500, 4000])
         this_ax.axvline(2000, c = 'r', linestyle = '--')
@@ -547,9 +688,6 @@ for i in range(latent_outs.shape[1]):
     plt.close(fig)
 
 # Plot predicted activity vs true activity for every neuron
-ind_plot_dir = os.path.join(plot_dir, 'individual_neurons')
-if not os.path.exists(ind_plot_dir):
-    os.makedirs(ind_plot_dir)
 
 for i in range(pred_firing.shape[1]):
     fig, ax = plt.subplots(1,2, sharex = True, sharey = True)
@@ -573,10 +711,10 @@ for i in range(pred_firing.shape[1]):
 ##############################
 
 # Reduce latent outs to 3D and plot
-pca_obj = PCA(n_components=3)
+latent_pca_obj = PCA(n_components=3)
 latent_outs_long = latent_outs.reshape(-1, latent_outs.shape[-1])
 latent_outs_long = zscore(latent_outs_long, axis = 0)
-latent_outs_3d = pca_obj.fit_transform(latent_outs_long)
+latent_outs_3d = latent_pca_obj.fit_transform(latent_outs_long)
 latent_outs_trials_3d = latent_outs_3d.reshape(latent_outs.shape[0],-1,3)
 mean_latent_outs_3d = latent_outs_trials_3d.mean(axis = 1)
 
@@ -710,5 +848,73 @@ fig.savefig(os.path.join(plot_dir, 'conv_latent_2d_trials.png'))
 plt.close(fig)
 
 
+############################################################
+# Compare RNN predicted firing to convolved firing rate
+# in prediction of binned spikes
 
+fin_bin_inds = np.logical_and(
+        binned_x > min(conv_x),
+        binned_x < max(conv_x))
+
+fin_binned_x = binned_x[fin_bin_inds]
+fin_binned_spikes = binned_spikes[...,fin_bin_inds]
+# Move by 1 to align with pred_firing
+fin_binned_x = fin_binned_x[1:]
+fin_binned_spikes = fin_binned_spikes[...,1:]
+
+# Do same for pred_firing
+fin_pred_firing = pred_firing[...,fin_bin_inds[1:]]
+fin_pred_firing = fin_pred_firing[...,1:]
+
+# Get convolved firing rate for times closes to binned spikes
+wanted_conv_inds = np.array([np.argmin(np.abs(conv_x - x)) for x in fin_binned_x])
+
+fin_conv_x = conv_x[wanted_conv_inds]
+fin_conv_rate = conv_rate[...,wanted_conv_inds]
+
+# Plot averages of all 3 to compare
+fig, ax = plt.subplots(1,3, figsize = (15,5))
+ax[0].imshow(fin_binned_spikes.mean(axis = 1), aspect = 'auto', interpolation = 'none')
+ax[0].set_title('Binned Spikes')
+ax[1].imshow(fin_conv_rate.mean(axis = 1), aspect = 'auto', interpolation = 'none')
+ax[1].set_title('Convolved Firing Rate')
+ax[2].imshow(fin_pred_firing.mean(axis = 1), aspect = 'auto', interpolation = 'none')
+ax[2].set_title('RNN Predicted Firing Rate')
+fig.suptitle('Comparison of Binned Spikes, Convolved Firing Rate, RNN Predicted Firing Rate')
+fig.savefig(os.path.join(plot_dir, 'binned_conv_rnn_comparison.png'))
+plt.close(fig)
+
+# Also make line plots of each neuron
+fig, ax = vz.gen_square_subplots(fin_binned_spikes.shape[1], figsize = (10,10))
+for i, this_ax in enumerate(ax.flatten()):
+    this_ax.plot(fin_binned_x, fin_binned_spikes[:,i].mean(axis=0), 
+                 label = 'True', alpha = 0.5)
+    this_ax.plot(fin_conv_x, fin_conv_rate[:,i].mean(axis=0), 
+                 label = 'Conv', alpha = 0.8, c = 'r')
+    this_ax.plot(fin_binned_x, fin_pred_firing[:,i].mean(axis=0), 
+                 label = 'RNN', alpha = 0.8, c = 'k')
+    this_ax.set_title(f'Neuron {i}')
+ax[0,-1].legend(bbox_to_anchor=(1.05, 1), loc='upper left', borderaxespad=0)
+fig.suptitle('Comparison of Binned Spikes, Convolved Firing Rate, RNN Predicted Firing Rate')
+fig.savefig(os.path.join(plot_dir, 'binned_conv_rnn_comparison_line.png'))
+plt.close(fig)
+
+# For each neuron, calculate r2 between
+# 1) convolved firing rate and binned spikes
+# 2) RNN predicted firing rate and binned spikes
+
+conv_r2 = []
+rnn_r2 = []
+for i in range(fin_binned_spikes.shape[1]):
+    conv_r2.append(r2_score(fin_binned_spikes[:,i], fin_conv_rate[:,i]))
+    rnn_r2.append(r2_score(fin_binned_spikes[:,i], fin_pred_firing[:,i]))
+
+fig, ax = plt.subplots()
+ax.scatter(conv_r2, rnn_r2)
+ax.set_xlabel('Conv R2')
+ax.set_ylabel('RNN R2')
+ax.plot([-1,1],[-1,1], c = 'k', linestyle = '--')
+fig.suptitle('R2 between conv, rnn and binned spikes')
+fig.savefig(os.path.join(plot_dir, 'conv_rnn_r2.png'))
+plt.close(fig)
 
