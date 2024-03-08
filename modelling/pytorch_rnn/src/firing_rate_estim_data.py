@@ -33,6 +33,10 @@ from sklearn.preprocessing import StandardScaler, MinMaxScaler
 from sklearn.metrics import explained_variance_score, r2_score
 # import pandas as pd
 # import seaborn as sns
+import sys
+src_dir = '/media/bigdata/firing_space_plot/modelling/pytorch_rnn/src'
+sys.path.append(src_dir)
+from model import autoencoderRNN
 
 ############################################################
 # Define Model 
@@ -46,65 +50,6 @@ from torch.nn import functional as F
 # from model import CTRNN
 import math
 from scipy.stats import poisson, zscore
-
-class autoencoderRNN(nn.Module):
-    """
-    Input and output transformations are encoder and decoder architectures
-    RNN will learn dynamics of latent space
-
-    Output has to be rectified
-    Can add dropout to RNN and autoencoder layers
-    """
-    def __init__(
-            self, 
-            input_size, 
-            hidden_size,  
-            output_size, 
-            rnn_layers = 1,
-            dropout = 0.2,
-            ):
-        """
-        3 sigmoid layers for input and output each, to project between:
-            encoder : input -> latent
-            rnn : latent -> latent
-            decoder : latent -> output
-        """
-        super(autoencoderRNN, self).__init__()
-        self.encoder = nn.Sequential(
-                nn.Linear(input_size, sum((input_size, hidden_size))//2),
-                nn.Sigmoid(),
-                nn.Linear(sum((input_size, hidden_size))//2, hidden_size),
-                nn.Sigmoid(),
-                )
-        # self.rnn = nn.RNN(hidden_size, hidden_size, rnn_layers, batch_first=False, bidirectional=True)
-        self.rnn = nn.RNN(
-                hidden_size, 
-                hidden_size, 
-                rnn_layers, 
-                batch_first=False, 
-                bidirectional=False,
-                dropout = dropout,
-                )
-        self.decoder = nn.Sequential(
-                # nn.Linear(hidden_size*2, sum((hidden_size, output_size))//2),
-                nn.Linear(hidden_size, sum((hidden_size, output_size))//2),
-                nn.Sigmoid(),
-                nn.Linear(sum((hidden_size, output_size))//2, output_size),
-                # nn.Sigmoid(),
-                # nn.Tanh(),
-                )
-        # self.relu = nn.ReLU()
-        self.en_dropout = nn.Dropout(p = dropout)
-        # self.de_dropout = nn.Dropout(p = dropout)
-
-    def forward(self, x):
-        out = self.encoder(x)
-        out = self.en_dropout(out)
-        latent_out, _ = self.rnn(out)
-        out = self.decoder(latent_out)
-        # out = self.de_dropout(out)
-        # out = self.relu(out)
-        return out, latent_out
 
 
 def train_model(
