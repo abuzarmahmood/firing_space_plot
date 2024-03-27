@@ -31,8 +31,6 @@ from tqdm import tqdm, trange
 from sklearn.decomposition import PCA, NMF
 from sklearn.preprocessing import StandardScaler, MinMaxScaler
 from sklearn.metrics import explained_variance_score, r2_score
-# import pandas as pd
-# import seaborn as sns
 import sys
 src_dir = '/media/bigdata/firing_space_plot/modelling/pytorch_rnn/src'
 sys.path.append(src_dir)
@@ -47,7 +45,6 @@ import torch.nn as nn
 import torch.optim as optim
 from torch.nn import init
 from torch.nn import functional as F
-# from model import CTRNN
 import math
 from scipy.stats import poisson, zscore
 
@@ -77,13 +74,7 @@ def train_model(
     """
     # Use Adam optimizer
     optimizer = optim.Adam(net.parameters(), lr=lr)
-    # if loss == 'poisson':
-    #     criterion = nn.PoissonNLLLoss(
-    #             log_input=False, full=True, reduction='mean')
-    # elif loss == 'mse':
-    #     criterion = nn.MSELoss()
     criterion = nn.MSELoss()
-    # criterion = normalizedMSELoss
 
     cross_val_bool = np.logical_and(
             test_inputs is not None, 
@@ -104,7 +95,6 @@ def train_model(
         # boiler plate pytorch training:
         optimizer.zero_grad()   # zero the gradient buffers
         output, _ = net(inputs)
-        # output = net(inputs)
         # Reshape to (SeqLen x Batch, OutputSize)
         output = output.reshape(-1, output_size)
         loss = criterion(output, labels)
@@ -118,7 +108,6 @@ def train_model(
             test_out = test_out.reshape(-1, output_size)
             test_labels = test_labels.reshape(-1, output_size)
             test_loss = criterion(test_out, test_labels)
-            # cross_val_loss.append(test_loss.item())
             cross_val_loss[i] = test_loss.item()
             cross_str = f'Cross Val Loss: {test_loss.item():0.4f}'
         else:
@@ -191,48 +180,15 @@ scaler = StandardScaler()
 inputs_long = scaler.fit_transform(inputs_long)
 
 # Perform PCA and get 95% explained variance
-pca_obj = PCA()
-inputs_pca = pca_obj.fit_transform(inputs_long)
-explained_var = pca_obj.explained_variance_ratio_
-cumulative_explained_var = np.cumsum(explained_var)
-n_components = np.argmax(cumulative_explained_var > 0.95) + 1
-
-pca_obj = PCA(n_components=n_components)
+pca_obj = PCA(n_components=0.95)
 inputs_pca = pca_obj.fit_transform(inputs_long)
 
 # Scale the PCA outputs
 pca_scaler = StandardScaler()
 inputs_pca = pca_scaler.fit_transform(inputs_pca)
 
-# explained_var = []
-# comp_vec = np.arange(1, inputs_long.shape[-1], 2)
-# for i in tqdm(comp_vec): 
-#     nmf_obj = NMF(n_components=i)
-#     inputs_nmf = nmf_obj.fit_transform(inputs_long)
-#     recreated = nmf_obj.inverse_transform(inputs_nmf)
-#     score = explained_variance_score(inputs_long, recreated)
-#     explained_var.append(score)
-# 
-# plt.plot(comp_vec, explained_var, '-x')
-# plt.show()
-
-# n_components = 20
-# nmf_obj = NMF(n_components=n_components)
-# inputs_nmf = nmf_obj.fit_transform(inputs_long)
-# 
-# nmf_scaler = StandardScaler()
-# inputs_nmf = nmf_scaler.fit_transform(inputs_nmf)
-
-# Shape (seq_len, trials, n_components)
-# inputs_trial_nmf = inputs_nmf.reshape(inputs.shape[0], -1, n_components)
-# inputs = inputs_trial_nmf.copy()
-
 inputs_trial_pca = inputs_pca.reshape(inputs.shape[0], -1, n_components)
 inputs = inputs_trial_pca.copy()
-
-# plt.imshow(inputs.mean(axis = 1).T, aspect = 'auto', interpolation = 'none')
-# plt.colorbar()
-# plt.show()
 
 ##############################
 
@@ -247,7 +203,6 @@ stim_time[:, 2000//bin_size] = 1
 inputs_plus_context = np.concatenate(
         [
             inputs, 
-            # taste_number[:,:,None],
             stim_time[:,:,None]
             ], 
         axis = -1)
