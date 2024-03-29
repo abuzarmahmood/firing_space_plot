@@ -6,14 +6,13 @@ import numpy as np
 import tables
 import pylab as plt
 import pandas as pd
-import glob
 
 # Have to be in blech_clust/emg/gape_QDA_classifier dir
-os.chdir(os.path.expanduser('~/Desktop/blech_clust/emg/gape_QDA_classifier/_experimental/mouth_movement_clustering'))
-sys.path.append(os.path.expanduser('~/Desktop/blech_clust'))
-sys.path.append(os.path.expanduser('~/Desktop/blech_clust/emg/gape_QDA_classifier'))
-from utils.blech_utils import imp_metadata
-from gape_clust_funcs import (extract_movements,
+# os.chdir(os.path.expanduser('~/Desktop/blech_clust/emg/gape_QDA_classifier/_experimental/mouth_movement_clustering'))
+sys.path.append(os.path.expanduser('~/Desktop/'))
+# sys.path.append(os.path.expanduser('~/Desktop/blech_clust/emg/gape_QDA_classifier'))
+from blech_clust.utils.blech_utils import imp_metadata
+from utils.gape_clust_funcs import (extract_movements,
                                             normalize_segments,
                                             extract_features,
                                             find_segment,
@@ -58,6 +57,16 @@ if not all(order_bool):
 # Extract dig-ins
 
 def return_taste_orders(h5_files):
+    """
+    Returns the order of tastes for each session
+
+    Inputs:
+        h5_files: list of paths to hdf5 files
+    
+    Outputs:
+        all_taste_orders: array of shape (days, tastes)
+    """
+
     dig_in_list = []
     for i, h5_file in enumerate(h5_files):
         session_dig_in_list = []
@@ -97,6 +106,16 @@ def return_taste_orders(h5_files):
 ############################################################
 
 def process_scored_data(data_subdirs, all_taste_orders):
+    """
+    Processes scored data from each day of experiment
+
+    Inputs:
+        data_subdirs: list of paths to scored data
+        all_taste_orders: array of shape (days, tastes)
+
+    Outputs:
+        score_tables: list of pandas dataframes of scored data
+    """
 
     table_files = [glob.glob(os.path.join(subdir,'*table.npy'))[0] for subdir in data_subdirs]
     # Process score tables

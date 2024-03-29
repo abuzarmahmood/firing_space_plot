@@ -12,13 +12,12 @@ from matplotlib.patches import Patch
 import seaborn as sns
 
 # Have to be in blech_clust/emg/gape_QDA_classifier dir
-code_dir = os.path.expanduser('~/Desktop/blech_clust/emg/gape_QDA_classifier/_experimental/mouth_movement_clustering')
+# code_dir = os.path.expanduser('~/Desktop/blech_clust/emg/gape_QDA_classifier/_experimental/mouth_movement_clustering')
+code_dir = '/media/bigdata/firing_space_plot/emg_analysis/mouth_movement_clustering'
 os.chdir(code_dir)
-sys.path.append(os.path.expanduser('~/Desktop/blech_clust'))
-sys.path.append(os.path.expanduser('~/Desktop/blech_clust/emg/gape_QDA_classifier'))
-from utils.blech_utils import imp_metadata
-from extract_scored_data import return_taste_orders, process_scored_data
-from gape_clust_funcs import (extract_movements,
+# sys.path.append(os.path.expanduser('~/Desktop/blech_clust/emg/gape_QDA_classifier'))
+from utils.extract_scored_data import return_taste_orders, process_scored_data
+from utils.gape_clust_funcs import (extract_movements,
                                             normalize_segments,
                                             extract_features,
                                             find_segment,
@@ -417,6 +416,8 @@ for i, this_event_type in enumerate(wanted_event_types):
     ax.hist(this_accuracy, 
             bins = np.linspace(0,1), histtype = 'step',
             color = cmap(i))
+ax.axvline(JL_accuracy, color = 'k', linewidth = 5, alpha = 0.7,
+           linestyle = '--', label = 'JL Classifier Gapes')
 ax.legend()
 ax.set_xlabel('Cross-validated Accuracy')
 ax.set_ylabel('Count')

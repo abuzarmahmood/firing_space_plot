@@ -1,12 +1,14 @@
-import numpy as np
+# os.chdir(os.path.expanduser('~/Desktop/blech_clust/emg/gape_QDA_classifier'))
+import sys
 import os
+sys.path.append(os.path.expanduser('~/Desktop/blech_clust/emg/gape_QDA_classifier'))
+import numpy as np
 from scipy.signal import welch
 from scipy.ndimage import white_tophat
 from sklearn.decomposition import PCA
 from detect_peaks import detect_peaks
 import pandas as pd
 from sklearn.preprocessing import StandardScaler
-os.chdir(os.path.expanduser('~/Desktop/blech_clust/emg/gape_QDA_classifier'))
 from QDA_classifier import QDA
 
 
