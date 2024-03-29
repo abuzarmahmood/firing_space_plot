@@ -1,19 +1,49 @@
-############################################################
-# Classifier comparison on gapes 
-############################################################
+import os
+import sys
+from glob import glob
+
+import numpy as np
+import tables
+import pylab as plt
+import pandas as pd
+from tqdm import tqdm
+from matplotlib.patches import Patch
+import seaborn as sns
+
+from sklearn.preprocessing import StandardScaler
 from sklearn.metrics import accuracy_score, confusion_matrix
 from xgboost import XGBClassifier
 from sklearn.model_selection import train_test_split
+import shap
+from umap import UMAP
+from sklearn.neighbors import NeighborhoodComponentsAnalysis as NCA
+
+############################################################
+# Load data
+############################################################
+base_dir = '/media/bigdata/firing_space_plot/emg_analysis/mouth_movement_clustering'
+artifact_dir = os.path.join(base_dir, 'artifacts')
+plot_dir = os.path.join(base_dir, 'plots')
+all_data_pkl_path = os.path.join(artifact_dir, 'all_data_frame.pkl')
+all_data_frame = pd.read_pickle(all_data_pkl_path)
+
+scored_gape_frame = all_data_frame.loc[0,'gape_frame']
+scored_gape_frame.dropna(inplace=True)
+
+############################################################
+# Classifier comparison on gapes 
+############################################################
 
 #wanted_event_types = ['gape','tongue protrusion','lateral tongue protrusion',]
-wanted_event_types = ['gape','tongue protrusion',]
+# wanted_event_types = ['gape','tongue protrusion',]
+wanted_event_types = scored_gape_frame.event_type.unique()
 
 # Plot examples of all wanted events
 plot_gape_frame = scored_gape_frame.loc[scored_gape_frame.event_type.isin(wanted_event_types)]
 
 fig,ax = plt.subplots(len(wanted_event_types), 1, 
                       sharex=True, sharey=True,
-                      figsize = (5,10))
+                      figsize = (5,15))
 for this_event, this_ax in zip(wanted_event_types, ax):
     this_dat = plot_gape_frame.loc[plot_gape_frame.event_type == this_event]
     this_plot_dat = this_dat.segment_raw.values.T
@@ -24,11 +54,80 @@ fig.savefig(os.path.join(plot_dir, 'wanted_event_examples'), dpi = 150,
             bbox_inches='tight')
 plt.close(fig)
 
+# Also plot dimensionally reduced data
+raw_X = np.stack(scored_gape_frame['features'].values)
+X = StandardScaler().fit_transform(raw_X)
+
+# UMAP
+umap_model = UMAP(n_components=2)
+umap_out = umap_model.fit_transform(X)
+
+cmap = plt.get_cmap('tab10')
+plot_c_list = [cmap(i) for i in range(len(wanted_event_types))]
+cmap_dict = {x:cmap(i) for i,x in enumerate(wanted_event_types)}
+
+fig,ax = plt.subplots()
+for i, this_event_type in enumerate(wanted_event_types):
+    this_umap_out = umap_out[scored_gape_frame.event_type == this_event_type]
+    ax.scatter(this_umap_out[:,0], this_umap_out[:,1], 
+               label = this_event_type.title(), alpha = 0.7,
+               c = plot_c_list[i])
+ax.legend()
+ax.set_xlabel('UMAP 1')
+ax.set_ylabel('UMAP 2')
+ax.set_aspect('equal')
+fig.savefig(os.path.join(plot_dir, 'umap_features.png'),
+            bbox_inches='tight')
+plt.close(fig)
+
+# Same with NCA plot
+nca_model = NCA(n_components=2)
+nca_out = nca_model.fit_transform(X, scored_gape_frame['event_type'].values)
+
+fig,ax = plt.subplots()
+for i, this_event_type in enumerate(wanted_event_types):
+    this_nca_out = nca_out[scored_gape_frame.event_type == this_event_type]
+    ax.scatter(this_nca_out[:,0], this_nca_out[:,1], 
+               label = this_event_type.title(), alpha = 0.7,
+               c = plot_c_list[i])
+ax.legend()
+ax.set_xlabel('NCA 1')
+ax.set_ylabel('NCA 2')
+ax.set_aspect('equal')
+fig.savefig(os.path.join(plot_dir, 'nca_features.png'),
+            bbox_inches='tight')
+plt.close(fig)
+
+# Plot heatmap of scaled features using seaborn
+feature_df = pd.DataFrame(data = X, columns = np.arange(X.shape[1])) 
+row_colors = scored_gape_frame['event_type'].map(cmap_dict)
+row_colors.reset_index(drop = True, inplace = True)
+
+sns.clustermap(feature_df, cmap = 'viridis', 
+               row_colors = row_colors,
+               figsize = (10,10))
+plt.savefig(os.path.join(plot_dir, 'feature_clustermap.png'),
+            bbox_inches='tight')
+plt.close()
+# plt.show()
+
+
 # Get count of each type of event
 event_counts = scored_gape_frame.event_type.value_counts()
 event_counts = event_counts.loc[wanted_event_types]
 
 #classes = scored_gape_frame['event_type'].astype('category').cat.codes
+############################################################
+# Check accuracy of JL classifier
+JL_accuracy = accuracy_score(scored_gape_frame['event_type'].values == 'gape',
+                             scored_gape_frame['classifier'].values)
+
+from sklearn.metrics import classification_report
+
+print(classification_report(scored_gape_frame['event_type'].values == 'gape',
+                            scored_gape_frame['classifier'].values))
+
+############################################################
 
 n_cv = 500
 
