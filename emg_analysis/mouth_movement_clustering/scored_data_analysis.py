@@ -31,6 +31,10 @@ import itertools
 from sklearn.cluster import KMeans, AgglomerativeClustering
 from sklearn.decomposition import PCA
 
+artifact_dir = os.path.join(code_dir, 'artifacts')
+if not os.path.isdir(artifact_dir):
+    os.mkdir(artifact_dir)
+
 ############################################################
 ############################################################
 # Make sure we have 1) scored data, 2) emg env file, and 3) h5 files for each session
@@ -164,20 +168,112 @@ for ind, row in merge_df.iterrows():
 
 
 ############################################################
-fin_table_list = []
+fin_score_table_list = []
 for ind, row in tqdm(merge_df.iterrows()):
     scored_data = merge_df.loc[ind, 'scored_data'].copy()
     taste_orders = merge_df.loc[ind, 'taste_orders'][0].copy()
     fin_scored_table = process_scored_data(scored_data, taste_orders)
-    fin_table_list.append(fin_scored_table)
+    fin_score_table_list.append(fin_scored_table)
 
+merge_df['scored_data'] = fin_score_table_list
 
 ############################################################
 # Extract mouth movements 
 ############################################################
 pre_stim = 2000
 post_stim = 5000
-gapes_Li = np.zeros(envs.shape)
+# gapes_Li = np.zeros(envs.shape)
+
+###############
+# Run everything through JL Process
+gapes_Li_list = []
+for ind, row in tqdm(merge_df.iterrows()):
+    envs = row.env
+    gapes_Li = np.zeros(envs.shape)
+    inds = list(np.ndindex(envs.shape[:-1]))
+    this_day_prestim_dat = envs[..., :pre_stim]
+
+    for this_ind in inds:
+        this_trial_dat = envs[this_ind]
+
+        ### Jenn Li Process ###
+        # Get peak indices
+        gape_peak_inds = JL_process(
+                            this_trial_dat, 
+                            this_day_prestim_dat,
+                            pre_stim,
+                            post_stim,
+                            )
+
+        if gape_peak_inds is not None:
+            gapes_Li[this_ind][gape_peak_inds] = 1
+
+    gapes_Li_list.append(gapes_Li)
+
+merge_df['gapes_Li'] = gapes_Li_list
+
+###############
+# Run everything through AM Process 
+segment_dat_list_list = []
+for ind, row in tqdm(merge_df.iterrows()):
+    segment_dat_list = []
+    envs = row.env
+    inds = list(np.ndindex(envs.shape[:-1]))
+
+    for this_ind in inds:
+        this_trial_dat = envs[this_ind]
+        segment_starts, segment_ends, segment_dat = extract_movements(
+            this_trial_dat, size=200)
+
+        # Threshold movement lengths
+        segment_starts, segment_ends, segment_dat = threshold_movement_lengths(
+            segment_starts, segment_ends, segment_dat, 
+            min_len = 50, max_len= 500)
+
+        #plt.plot(this_trial_dat)
+        #for i in range(len(segment_starts)):
+        #    plt.plot(np.arange(segment_starts[i], segment_ends[i]),
+        #             segment_dat[i], linewidth = 5, alpha = 0.5)
+        #plt.show()
+
+        (feature_array,
+         feature_names,
+         segment_dat,
+         segment_starts,
+         segment_ends) = extract_features(
+            segment_dat, segment_starts, segment_ends)
+
+        segment_bounds = list(zip(segment_starts, segment_ends))
+        merged_dat = [feature_array, segment_dat, segment_bounds] 
+        segment_dat_list.append(merged_dat)
+
+    segment_dat_list_list.append(segment_dat_list)
+
+merge_df['segment_dat_list'] = segment_dat_list_list
+
+##############################
+# Generate gape frame
+gape_frame_list = [gen_gape_frame(row.segment_dat_list, row.gapes_Li) \
+        for ind, row in tqdm(merge_df.iterrows())]
+
+# gape_frame_list = [x[0] for x in outs]
+# scaled_features_list = [x[1] for x in outs]
+
+# Bounds for gape_frame are in 0-7000 time
+# Adjust to make -2000 -> 5000
+# Adjust segment_bounds by removing pre_stim
+for gape_frame in gape_frame_list:
+    all_segment_bounds = gape_frame.segment_bounds.values
+    adjusted_segment_bounds = [np.array(x)-pre_stim for x in all_segment_bounds]
+    gape_frame['segment_bounds'] = adjusted_segment_bounds
+
+    # Calculate segment centers
+    gape_frame['segment_center'] = [np.mean(x)/1000 for x in gape_frame.segment_bounds]
+
+merge_df['gape_frame'] = gape_frame_list
+
+
+##############################
 
 # segment_dat_list = []
 # inds = list(np.ndindex(envs.shape[:3]))
@@ -221,7 +317,7 @@ gapes_Li = np.zeros(envs.shape)
 #     segment_bounds = list(zip(segment_starts, segment_ends))
 #     merged_dat = [feature_array, segment_dat, segment_bounds] 
 #     segment_dat_list.append(merged_dat)
-# 
+
 # gape_frame, scaled_features = gen_gape_frame(segment_dat_list, gapes_Li, inds)
 # # Bounds for gape_frame are in 0-7000 time
 # # Adjust to make -2000 -> 5000
@@ -229,68 +325,72 @@ gapes_Li = np.zeros(envs.shape)
 # all_segment_bounds = gape_frame.segment_bounds.values
 # adjusted_segment_bounds = [np.array(x)-pre_stim for x in all_segment_bounds]
 # gape_frame['segment_bounds'] = adjusted_segment_bounds
-# 
-# ###############################
-# ## Plot segments using gape_frame
-# #gape_frame_trials = list(gape_frame.groupby(['channel','taste','trial']))
-# #gape_trials_inds = [x[0] for x in gape_frame_trials]
-# #gape_trials_dat = [x[1] for x in gape_frame_trials]
-# #
-# #plot_n = 15
-# #fig,ax = plt.subplots(plot_n, 1, sharex=True, sharey=True,
-# #                      figsize = (10, plot_n*2))
-# #for i in range(plot_n):
-# #    this_ind = gape_trials_inds[i]
-# #    this_env = envs[this_ind]
-# #    this_gape_dat = gape_trials_dat[i]
-# #    ax[i].plot(this_env, c = 'k', zorder = 10)
-# #    for this_segment in this_gape_dat.segment_bounds:
-# #        ax[i].plot(np.arange(this_segment[0], this_segment[1]),
-# #                   this_env[this_segment[0]:this_segment[1]],
-# #                   linewidth = 5, alpha = 0.7)
-# #plt.show()
-# 
-# ##############################
-# 
-# gape_frame.rename(columns={'channel': 'day_ind'}, inplace=True)
-# 
-# # Calculate segment centers
-# gape_frame['segment_center'] = [np.mean(x) for x in gape_frame.segment_bounds]
-# 
-# # Create segment bounds for fin_scored_table
-# fin_scored_table['segment_bounds'] = list(zip(fin_scored_table['rel_time_start'], fin_scored_table['rel_time_stop']))
-# 
-# # Make sure that each segment in gape_frame is in fin_score_table
-# score_match_cols = ['day_ind','taste','taste_trial']
-# gape_match_cols = ['day_ind','taste,','trial']
-# 
-# score_bounds_list = []
-# for ind, row in tqdm(gape_frame.iterrows()):
-#     day_ind = row.day_ind
-#     taste = row.taste
-#     taste_trial = row.trial
-#     segment_center = row.segment_center
-#     wanted_score_table = fin_scored_table.loc[
-#         (fin_scored_table.day_ind == day_ind) &
-#         (fin_scored_table.taste == taste) &
-#         (fin_scored_table.taste_trial == taste_trial)]
-#     if len(wanted_score_table):
-#         # Check if segment center is in any of the scored segments
-#         for _, score_row in wanted_score_table.iterrows():
-#             if (score_row.segment_bounds[0] <= segment_center) & (segment_center <= score_row.segment_bounds[1]):
-#                 gape_frame.loc[ind, 'scored'] = True
-#                 gape_frame.loc[ind, 'event_type'] = score_row.event  
-#                 score_bounds_list.append(score_row.segment_bounds)
-#                 break
-#             else:
-#                 gape_frame.loc[ind, 'scored'] = False
-# 
-# scored_gape_frame = gape_frame.loc[gape_frame.scored == True]
-# scored_gape_frame['score_bounds'] = score_bounds_list
-# 
-# scored_gape_frame.to_pickle(os.path.join(code_dir, 'data', 'scored_gape_frame.pkl'))
 
-scored_gape_frame = pd.read_pickle(os.path.join(code_dir, 'data', 'scored_gape_frame.pkl'))
+# ##############################
+# # Plot segments using gape_frame
+# # gape_frame_trials = list(gape_frame.groupby(['channel','taste','trial']))
+# gape_frame_trials = list(gape_frame.groupby(['taste','trial']))
+# gape_trials_inds = [x[0] for x in gape_frame_trials]
+# gape_trials_dat = [x[1] for x in gape_frame_trials]
+# 
+# plot_n = 15
+# fig,ax = plt.subplots(plot_n, 1, sharex=True, sharey=True,
+#                       figsize = (10, plot_n*2))
+# for i in range(plot_n):
+#     this_ind = gape_trials_inds[i]
+#     this_env = envs[this_ind]
+#     this_gape_dat = gape_trials_dat[i]
+#     ax[i].plot(np.arange(-pre_stim, post_stim), this_env, c = 'k', zorder = 10)
+#     for this_segment in this_gape_dat.segment_bounds:
+#         ax[i].plot(np.arange(this_segment[0], this_segment[1]),
+#                    this_env[this_segment[0]+pre_stim:this_segment[1]+pre_stim],
+#                    linewidth = 5, alpha = 0.7)
+# plt.show()
+
+##############################
+
+# gape_frame.rename(columns={'channel': 'day_ind'}, inplace=True)
+
+
+# Create segment bounds for fin_scored_table
+# fin_scored_table['segment_bounds'] = list(zip(fin_scored_table['rel_time_start'], fin_scored_table['rel_time_stop']))
+
+# Make sure that each segment in gape_frame is in fin_score_table
+score_match_cols = ['day_ind','taste','taste_trial']
+gape_match_cols = ['day_ind','taste,','trial']
+
+for ind, row in tqdm(merge_df.iterrows()):
+    gape_frame = row.gape_frame
+    scored_data = row.scored_data
+    scored_data.rename(columns = {'rel_time' : 'segment_bounds'}, inplace = True)
+
+    score_bounds_list = []
+    for event_ind, event_row in tqdm(gape_frame.iterrows()):
+        taste = event_row.taste
+        taste_trial = event_row.trial
+        segment_center = event_row.segment_center
+        wanted_score_table = scored_data.loc[
+            (scored_data.taste_num == taste) &
+            (scored_data.taste_trial == taste_trial)]
+        if len(wanted_score_table):
+            # Check if segment center is in any of the scored segments
+            for _, score_row in wanted_score_table.iterrows():
+                if (score_row.segment_bounds[0] <= segment_center) & (segment_center <= score_row.segment_bounds[1]):
+                    gape_frame.loc[event_ind, 'scored'] = True
+                    # gape_frame.loc[event_ind, 'event_type'] = score_row.event  
+                    gape_frame.loc[event_ind, 'event_type'] = score_row.Behavior  
+                    score_bounds_list.append(score_row.segment_bounds)
+                    break
+                else:
+                    gape_frame.loc[event_ind, 'scored'] = False
+
+    gape_frame = gape_frame.loc[gape_frame.scored == True]
+    gape_frame['score_bounds'] = score_bounds_list
+
+# scored_gape_frame.to_pickle(os.path.join(code_dir, 'data', 'scored_gape_frame.pkl'))
+merge_df.to_pickle(os.path.join(artifact_dir, 'all_data_frame.pkl'))
+
+# scored_gape_frame = pd.read_pickle(os.path.join(code_dir, 'data', 'scored_gape_frame.pkl'))
 
 ############################################################
 # Test plots 
@@ -301,17 +401,15 @@ if not os.path.isdir(plot_dir):
 
 # Plot gapes LI
 ##############################
-mean_gapes_Li = np.mean(gapes_Li, axis=2)
+mean_gapes_Li = np.mean(gapes_Li, axis=1)
 # Smooth with gaussian filter
 from scipy.ndimage import gaussian_filter1d
-mean_gapes_Li = gaussian_filter1d(mean_gapes_Li, 75, axis=2)
+mean_gapes_Li = gaussian_filter1d(mean_gapes_Li, 75, axis=-1)
 
-fig, ax = plt.subplots(*mean_gapes_Li.shape[:2], sharex=True, sharey=True)
+fig, ax = plt.subplots(mean_gapes_Li.shape[0], sharex=True, sharey=True)
 fig.suptitle('Smoothed Gapes Li (75ms SD Gaussian)')
 for i in range(mean_gapes_Li.shape[0]):
-    for j in range(mean_gapes_Li.shape[1]):
-        ax[i,j].plot(mean_gapes_Li[i,j,:])
-        ax[i,j].set_title('Day {}, Taste {}'.format(i,j))
+        ax[i].plot(mean_gapes_Li[i,:])
 plt.show()
 
 # Plot scored, segmented data
@@ -319,6 +417,7 @@ plt.show()
 
 t = np.arange(-2000, 5000)
 
+scored_gape_frame = gape_frame.copy()
 event_types = scored_gape_frame.event_type.unique()
 
 #event_types = ['mouth movements','unknown mouth movement','gape','tongue protrusion','lateral tongue protrusion']
@@ -327,7 +426,7 @@ event_types = scored_gape_frame.event_type.unique()
 cmap = plt.get_cmap('tab10')# len(event_types))
 event_colors = {event_types[i]:cmap(i) for i in range(len(event_types))}
 
-plot_group = list(scored_gape_frame.groupby(['day_ind','taste','trial']))
+plot_group = list(scored_gape_frame.groupby(['taste','trial']))
 plot_inds = [x[0] for x in plot_group]
 plot_dat = [x[1] for x in plot_group]
 
@@ -337,8 +436,9 @@ legend_elements = [Patch(facecolor=event_colors[event], edgecolor='k',
 
 
 # Plot with multicolored highlights over detected movements
-plot_n = 15
-fig,ax = plt.subplots(plot_n, 1, sharex=True, sharey=False,
+t = np.arange(-pre_stim, post_stim)
+plot_n = 30
+fig,ax = plt.subplots(plot_n, 1, sharex=True, sharey=True,
                       figsize = (10, plot_n*2))
 for i in range(plot_n):
     this_scores = plot_dat[i]
@@ -347,8 +447,8 @@ for i in range(plot_n):
     ax[i].plot(t, this_env, color = 'k')
     for _, this_event in this_scores.iterrows():
         event_type = this_event.event_type
-        score_start = this_event.score_bounds[0]
-        score_stop = this_event.score_bounds[1]
+        score_start = this_event.score_bounds[0]*1000
+        score_stop = this_event.score_bounds[1]*1000
         segment_start = this_event.segment_bounds[0]
         segment_stop = this_event.segment_bounds[1]
         segment_inds = np.logical_and(t >= segment_start, t <= segment_stop) 
@@ -361,7 +461,7 @@ for i in range(plot_n):
                       color=this_event_c, alpha=0.5, label=event_type)
 ax[0].legend(handles=legend_elements, loc='upper right',
              bbox_to_anchor=(1.5, 1.1))
-ax[0].set_xlim([0, 5000])
+ax[0].set_xlim([-2000, 5000])
 fig.subplots_adjust(right=0.75)
 fig.savefig(os.path.join(plot_dir, 'scored_segmented_overlay'), dpi = 150,
                          bbox_inches='tight')
@@ -369,7 +469,7 @@ plt.close(fig)
 #plt.show()
 
 # Plot with black highlights over detected movements
-plot_n = 15
+plot_n = 30
 fig,ax = plt.subplots(plot_n, 1, sharex=True, sharey=False,
                       figsize = (10, plot_n*2))
 for i in range(plot_n):
@@ -379,8 +479,8 @@ for i in range(plot_n):
     ax[i].plot(t, this_env, color = 'k')
     for _, this_event in this_scores.iterrows():
         event_type = this_event.event_type
-        score_start = this_event.score_bounds[0]
-        score_stop = this_event.score_bounds[1]
+        score_start = this_event.score_bounds[0]*1000
+        score_stop = this_event.score_bounds[1]*1000
         segment_start = this_event.segment_bounds[0]
         segment_stop = this_event.segment_bounds[1]
         segment_inds = np.logical_and(t >= segment_start, t <= segment_stop) 
@@ -393,7 +493,7 @@ for i in range(plot_n):
                       color=this_event_c, alpha=0.5, label=event_type)
 ax[0].legend(handles=legend_elements, loc='upper right',
              bbox_to_anchor=(1.5, 1.1))
-ax[0].set_xlim([0, 5000])
+ax[0].set_xlim([-2000, 5000])
 fig.subplots_adjust(right=0.75)
 fig.savefig(os.path.join(plot_dir, 'scored_segmented_overlay_black_trace'), dpi = 150,
                          bbox_inches='tight')
@@ -401,18 +501,19 @@ plt.close(fig)
 #plt.show()
 
 # Plot with black horizontal lines over detected movements
-plot_n = 15
-fig,ax = plt.subplots(plot_n, 1, sharex=True, sharey=False,
+plot_n = 30
+fig,ax = plt.subplots(plot_n, 1, sharex=True, sharey=True,
                       figsize = (10, plot_n*2))
 for i in range(plot_n):
     this_scores = plot_dat[i]
     this_inds = plot_inds[i]
     this_env = envs[this_inds]
     ax[i].plot(t, this_env, color = 'k')
+    score_bounds_list = []
     for _, this_event in this_scores.iterrows():
         event_type = this_event.event_type
-        score_start = this_event.score_bounds[0]
-        score_stop = this_event.score_bounds[1]
+        score_start = this_event.score_bounds[0]*1000
+        score_stop = this_event.score_bounds[1]*1000
         segment_start = this_event.segment_bounds[0]
         segment_stop = this_event.segment_bounds[1]
         segment_inds = np.logical_and(t >= segment_start, t <= segment_stop) 
@@ -424,11 +525,13 @@ for i in range(plot_n):
         ax[i].hlines(h_line_y, segment_t[0], segment_t[-1], 
                      color = 'k', linewidth = 5, alpha = 0.7)
         this_event_c = event_colors[event_type]
-        ax[i].axvspan(score_start, score_stop, 
-                      color=this_event_c, alpha=0.5, label=event_type)
+        if this_event.score_bounds not in score_bounds_list:
+            ax[i].axvspan(score_start, score_stop, 
+                          color=this_event_c, alpha=0.5, label=event_type)
+            score_bounds_list.append(this_event.score_bounds)
 ax[0].legend(handles=legend_elements, loc='upper right',
              bbox_to_anchor=(1.5, 1.1))
-ax[0].set_xlim([0, 5000])
+ax[0].set_xlim([-2000, 5000])
 fig.subplots_adjust(right=0.75)
 fig.savefig(os.path.join(plot_dir, 'scored_segmented_overlay_black_lines'), dpi = 150,
                          bbox_inches='tight')

@@ -198,7 +198,7 @@ def JL_process(
         this_laser_prestim_dat, 
         pre_stim,
         post_stim,
-        this_ind):
+        ):
     """
     This function takes in a trial of data and returns the gapes
     according to Jenn Li's pipeline
@@ -283,7 +283,7 @@ def JL_process(
     return gape_peak_ind
 
 # Convert segment_dat and gapes_Li to pandas dataframe for easuer handling
-def gen_gape_frame(segment_dat_list, gapes_Li, inds):
+def gen_gape_frame(segment_dat_list, gapes_Li):
     """
     Generate a dataframe with the following columns:
     channel, taste, trial, segment_num, features, segment_raw, segment_bounds
@@ -295,26 +295,30 @@ def gen_gape_frame(segment_dat_list, gapes_Li, inds):
     gape_frame : pandas dataframe
     """
 
+    inds = list(np.ndindex(gapes_Li.shape[:-1]))
+
     gape_frame = pd.DataFrame(data = inds, 
-                              columns = ['channel', 'taste', 'trial'])
+                              columns = ['taste', 'trial'])
+                              # columns = ['channel', 'taste', 'trial'])
     # Standardize features
     gape_frame['features'] = [x[0] for x in segment_dat_list]
     gape_frame['segment_raw'] = [x[1] for x in segment_dat_list]
     gape_frame['segment_bounds'] = [x[2] for x in segment_dat_list]
     gape_frame = gape_frame.explode(['features','segment_raw','segment_bounds'])
 
-    # Standardize features
-    raw_features = np.stack(gape_frame['features'].values)
-    scaled_features = StandardScaler().fit_transform(raw_features)
-    gape_frame['features'] = [x for x in scaled_features]
+    # # Standardize features
+    # raw_features = np.stack(gape_frame['features'].values)
+    # scaled_features = StandardScaler().fit_transform(raw_features)
+    # gape_frame['features'] = [x for x in scaled_features]
 
     # Add index for each segment
-    gape_frame['segment_num'] = gape_frame.groupby(['channel', 'taste', 'trial']).cumcount()
+    # gape_frame['segment_num'] = gape_frame.groupby(['channel', 'taste', 'trial']).cumcount()
+    gape_frame['segment_num'] = gape_frame.groupby(['taste', 'trial']).cumcount()
     gape_frame = gape_frame.reset_index(drop=True)
 
     # Add classifier boolean
     for row_ind, this_row in gape_frame.iterrows():
-        this_ind = (this_row['channel'], this_row['taste'], this_row['trial'])
+        this_ind = (this_row['taste'], this_row['trial'])
         bounds = this_row['segment_bounds']
         if gapes_Li[this_ind][bounds[0]:bounds[1]].any():
             gape_frame.loc[row_ind, 'classifier'] = 1
@@ -323,4 +327,4 @@ def gen_gape_frame(segment_dat_list, gapes_Li, inds):
     # Convert to int
     gape_frame['classifier'] = gape_frame['classifier'].astype(int)
 
-    return gape_frame, scaled_features
+    return gape_frame# , scaled_features
