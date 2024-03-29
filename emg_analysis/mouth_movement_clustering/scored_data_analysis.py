@@ -6,7 +6,6 @@ import numpy as np
 import tables
 import pylab as plt
 import pandas as pd
-import glob
 from tqdm import tqdm
 from matplotlib.patches import Patch
 import seaborn as sns
@@ -14,7 +13,8 @@ import seaborn as sns
 # Have to be in blech_clust/emg/gape_QDA_classifier dir
 # code_dir = os.path.expanduser('~/Desktop/blech_clust/emg/gape_QDA_classifier/_experimental/mouth_movement_clustering')
 code_dir = '/media/bigdata/firing_space_plot/emg_analysis/mouth_movement_clustering'
-os.chdir(code_dir)
+# os.chdir(code_dir)
+sys.path.append(code_dir)
 # sys.path.append(os.path.expanduser('~/Desktop/blech_clust/emg/gape_QDA_classifier'))
 from utils.extract_scored_data import return_taste_orders, process_scored_data
 from utils.gape_clust_funcs import (extract_movements,
@@ -33,37 +33,144 @@ from sklearn.decomposition import PCA
 
 ############################################################
 ############################################################
-data_dir = '/home/abuzarmahmood/Desktop/blech_clust/emg/gape_QDA_classifier/_experimental/mouth_movement_clustering/data/NB27'
+# Make sure we have 1) scored data, 2) emg env file, and 3) h5 files for each session
+
+data_dir = '/media/fastdata/Natasha_classifier_data' 
+scored_data_paths = glob(os.path.join(data_dir, '**', '*scores.csv'), recursive = True)
+scored_data_basenames = [os.path.basename(x).lower().split('.')[0] for x in scored_data_paths]
+scored_data_basenames = ["_".join(x.split('_')[:-1]) for x in scored_data_basenames]
+
+scores_path_df = pd.DataFrame({'path': scored_data_paths,
+                               'basename': scored_data_basenames,
+                               'scores': True})
+
+# data_dir = '/home/abuzarmahmood/Desktop/blech_clust/emg/gape_QDA_classifier/_experimental/mouth_movement_clustering/data/NB27'
+
+##############################
+
+emg_output_dirs = sorted(glob(os.path.join(data_dir,'*','*','*', 'emg_output')))
 
 # For each day of experiment, load env and table files
-data_subdirs = sorted(glob.glob(os.path.join(data_dir,'*')))
+data_subdirs = [glob(os.path.join(x,'*')) for x in emg_output_dirs]
+data_subdirs = [item for sublist in data_subdirs for item in sublist]
 # Make sure that path is a directory
 data_subdirs = [subdir for subdir in data_subdirs if os.path.isdir(subdir)]
+data_subdirs = [x for x in data_subdirs if 'emg' in os.path.basename(x)]
 # Make sure that subdirs are in order
-subdir_basenames = [os.path.basename(subdir).lower() for subdir in data_subdirs]
+subdir_basenames = [subdir.split('/')[-3].lower() for subdir in data_subdirs]
 
-env_files = [glob.glob(os.path.join(subdir,'*env.npy'))[0] for subdir in data_subdirs]
+emg_path_df = pd.DataFrame({'path': data_subdirs,
+                            'basename': subdir_basenames,
+                            'emg' : True})
+
+##############################
+
+h5_files = glob(os.path.join(data_dir,'**','*','*', '*.h5'))
+h5_files = sorted(h5_files)
+h5_basenames = [os.path.basename(x).split('.')[0].lower() for x in h5_files]
+
+h5_path_df = pd.DataFrame({'path': h5_files,
+                           'basename': h5_basenames,
+                           'h5': True})
+
+##############################
+merge_df = pd.merge(scores_path_df, emg_path_df, on = 'basename',
+                    suffixes = ('_scores', '_emg'),
+                    how = 'outer')
+merge_df = pd.merge(merge_df, h5_path_df, on = 'basename',
+                    how = 'outer')
+merge_df = merge_df.rename(columns = {'path':'path_h5'})
+merge_df.drop_duplicates(inplace = True)
+
+merge_df.dropna(inplace = True)
+merge_df.reset_index(inplace = True, drop = True)
+
+############################################################
+cols_to_delete = [	
+					'Observation id', 'Observation date', 'Description', 
+					'Observation duration', 'Observation type',
+                    'Source', 'Media duration (s)', 'FPS', 'Subject',
+                    'Behavioral category', 'Media file name', 'Image index', 
+					'Image file path', 'Comment',
+]
+ 
+
+scored_data_list = []
+envs_list = []
+for ind, row in tqdm(merge_df.iterrows()): 
+
+    ###############
+    # scored_data_path = scored_data_paths[ind]
+    scored_data_path = row.path_scores
+    scored_data = pd.read_csv(scored_data_path)
+    scored_data.drop(columns = cols_to_delete, inplace = True)	
+    scored_data_list.append(scored_data)
+
+    ###############
+    # tastes x trials x time
+    env_path = glob(os.path.join(row.path_emg, '*env.npy'))[0]
+    env = np.load(env_path)
+    envs_list.append(env)
+
+h5_files = merge_df.path_h5.tolist()
+taste_order_list = []
+for h5_file in tqdm(h5_files):
+    try:
+        taste_orders = return_taste_orders([h5_file])
+    except:
+        taste_orders = None
+    taste_order_list.append(taste_orders)
+
+############################################################
+# Append to merge_df and drop any rows with None
+merge_df['scored_data'] = scored_data_list
+merge_df['env'] = envs_list
+merge_df['taste_orders'] = taste_order_list
+
+merge_df.dropna(inplace = True)
+merge_df.reset_index(inplace = True, drop = True)
+
+# Confirm that there are as many 'trial start's as trials in the ephys data
+for ind, row in merge_df.iterrows():
+    scored_data = row.scored_data
+    taste_orders = row.taste_orders[0]
+    n_trial_starts = len(scored_data.loc[scored_data.Behavior == 'trial start'])
+    n_trials = len(taste_orders)
+    if n_trials != n_trial_starts:
+        print('Mismatch in trials for {}'.format(row.basename))
+
+############################################################
+# env_files = [glob(os.path.join(subdir,'*env.npy'))[0] for subdir in data_subdirs]
 # Load env and table files
 # days x tastes x trials x time
-envs = np.stack([np.load(env_file) for env_file in env_files])
+# envs = np.stack([np.load(env_file) for env_file in env_files])
+# envs = [np.load(env_file) for env_file in env_files]
 
 ############################################################
 # Get scored data 
 ############################################################
 # Extract dig-in from datasets
-raw_data_dir = '/media/fastdata/NB_data/NB27'
+# raw_data_dir = '/media/fastdata/NB_data/NB27'
 # Find HDF5 files
-h5_files = glob.glob(os.path.join(raw_data_dir,'**','*','*.h5'))
-h5_files = sorted(h5_files)
-h5_basenames = [os.path.basename(x) for x in h5_files]
+
 # Make sure order of h5 files is same as order of envs
-order_bool = [x in y for x,y in zip(subdir_basenames, h5_basenames)]
-if not all(order_bool):
-    raise Exception('Bubble bubble, toil and trouble')
+# order_bool = [x.lower() in y for x,y in zip(subdir_basenames, h5_basenames)]
+# if not all(order_bool):
+#     raise Exception('Bubble bubble, toil and trouble')
 
 # Run pipeline
-all_taste_orders = return_taste_orders(h5_files)
-fin_scored_table = process_scored_data(data_subdirs, all_taste_orders)
+# all_taste_orders = return_taste_orders(h5_files)
+# fin_scored_table = process_scored_data(data_subdirs, all_taste_orders)
+
+
+############################################################
+fin_table_list = []
+for ind, row in tqdm(merge_df.iterrows()):
+    scored_data = merge_df.loc[ind, 'scored_data'].copy()
+    taste_orders = merge_df.loc[ind, 'taste_orders'][0].copy()
+    fin_scored_table = process_scored_data(scored_data, taste_orders)
+    fin_table_list.append(fin_scored_table)
+
 
 ############################################################
 # Extract mouth movements 

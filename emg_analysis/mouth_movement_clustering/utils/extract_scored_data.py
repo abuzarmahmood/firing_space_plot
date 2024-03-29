@@ -26,33 +26,6 @@ from sklearn.cluster import KMeans, AgglomerativeClustering
 
 ############################################################
 ############################################################
-data_dir = '/home/abuzarmahmood/Desktop/blech_clust/emg/gape_QDA_classifier/_experimental/mouth_movement_clustering/data/NB27'
-
-# For each day of experiment, load env and table files
-data_subdirs = sorted(glob.glob(os.path.join(data_dir,'*')))
-# Make sure that path is a directory
-data_subdirs = [subdir for subdir in data_subdirs if os.path.isdir(subdir)]
-# Make sure that subdirs are in order
-subdir_basenames = [os.path.basename(subdir).lower() for subdir in data_subdirs]
-
-env_files = [glob.glob(os.path.join(subdir,'*env.npy'))[0] for subdir in data_subdirs]
-# Load env and table files
-# days x tastes x trials x time
-envs = np.stack([np.load(env_file) for env_file in env_files])
-
-############################################################
-# Get dig-in info
-############################################################
-# Extract dig-in from datasets
-raw_data_dir = '/media/fastdata/NB_data/NB27'
-# Find HDF5 files
-h5_files = glob.glob(os.path.join(raw_data_dir,'**','*','*.h5'))
-h5_files = sorted(h5_files)
-h5_basenames = [os.path.basename(x) for x in h5_files]
-# Make sure order of h5 files is same as order of envs
-order_bool = [x in y for x,y in zip(subdir_basenames, h5_basenames)]
-if not all(order_bool):
-    raise Exception('Bubble bubble, toil and trouble')
 
 # Extract dig-ins
 
@@ -105,116 +78,209 @@ def return_taste_orders(h5_files):
 # Process scoring 
 ############################################################
 
-def process_scored_data(data_subdirs, all_taste_orders):
+
+def process_scored_data(scored_data, taste_orders):
     """
-    Processes scored data from each day of experiment
+    Processes scored data for a single session
 
     Inputs:
-        data_subdirs: list of paths to scored data
-        all_taste_orders: array of shape (days, tastes)
+        scored_data: pandas dataframe of scored data
+        taste_orders: array of shape (trials,) with taste order
 
     Outputs:
-        score_tables: list of pandas dataframes of scored data
+        fin_table : pandas dataframe with processed data
     """
+    n_trials = scored_data.loc[scored_data.Behavior == 'trial start'].shape[0]
 
-    table_files = [glob.glob(os.path.join(subdir,'*table.npy'))[0] for subdir in data_subdirs]
-    # Process score tables
-    score_tables = [np.load(table_file, allow_pickle=True) for table_file in table_files]
-    # Only first and last columns are relevant
-    score_tables = [x[:,[0,-2,-1]] for x in score_tables]
+    # Mark absolute trial number
+    scored_data.loc[scored_data.Behavior == 'trial start', 'abs_trial'] = np.arange(n_trials)
+    # Forward fill 'abs_trial_num' column
+    scored_data['abs_trial'] = scored_data['abs_trial'].ffill()
+    scored_data.abs_trial = scored_data.abs_trial.astype(int)
 
-    # Convert to pandas dataframes
-    score_tables = [pd.DataFrame(x, columns=['event','mark_type','time']) for x in score_tables]
-    updated_tables = []
-    for i, table in enumerate(score_tables):
-        table['day'] = subdir_basenames[i] 
-        table.sort_values(by=['day','time'], inplace=True)
-        table.reset_index(inplace=True, drop=True)
+    # Add taste_num column
+    scored_data['taste_num'] = taste_orders[scored_data.abs_trial.values]
 
-        # Mark trials in fin_table
-        table['trial'] = None
-        trial_count = -1
-        for j in range(len(table)):
-            if table.loc[j]['event'] == 'trial start':
-                trial_count += 1
-            table.loc[j]['trial'] = trial_count
-        updated_tables.append(table)
+    # Get taste_trial
+    taste_order_df = pd.DataFrame(taste_orders, columns = ['taste_num'])
+    taste_order_df['taste_trial']  = taste_order_df.groupby('taste_num').cumcount()
+    taste_order_df['abs_trial'] = np.arange(len(taste_order_df))
 
-    # Note, day 3 only has 117 trials
-    fin_table = pd.concat(updated_tables)
+    # Merge taste_trial and abs_trial
+    scored_data = scored_data.merge(taste_order_df, 
+                                    on = ['taste_num', 'abs_trial'], 
+                                    how = 'left')
 
-    # Keep only trials with more than one event (that is more than trial start)
-    #fin_table = fin_table.groupby('trial').filter(lambda x: len(x) > 1)
-    fin_table['day_ind'] = [int(str(x)[-1])-1 for x in fin_table.day]
-    fin_table.reset_index(inplace=True, drop=True)
+    # Calculate time from 'trial start'
+    scored_data['trial_start'] = scored_data.loc[scored_data.Behavior == 'trial start', 'Time']
+    scored_data.trial_start = scored_data.trial_start.ffill()
+    scored_data['rel_time'] = scored_data.Time - scored_data.trial_start
+    scored_data.drop(columns = ['trial_start'], inplace = True)
 
-    # Mark taste for each trial
-    taste_list = []
-    for i in range(len(fin_table)):
-        day_ind = fin_table.loc[i]['day_ind']
-        trial_ind = fin_table.loc[i]['trial']
-        this_taste = all_taste_orders[day_ind, trial_ind]
-        taste_list.append(this_taste)
+    # Round rel_time to 3 decimal places
+    scored_data['rel_time'] = scored_data['rel_time'].round(3)
 
-    fin_table['taste'] = taste_list
+    # Convert events to start and stop
+    scored_data = scored_data.loc[scored_data.Behavior != 'trial start']
 
-    # Also find what delivery of the given taste this is
-    group_list=  [x[1] for x in list(fin_table.groupby(['day','taste']))]
-    updated_tables = []
-    for this_table in group_list:
-        unique_trials = this_table.trial.unique()
-        trial_map = {x:i for i,x in enumerate(unique_trials)}
-        this_table['taste_trial'] = [trial_map[x] for x in this_table.trial]
-        updated_tables.append(this_table)
-
-    fin_table = pd.concat(updated_tables)
-
-    # Calculate relative time from start of each trial
-    group_list = list(fin_table.groupby(['day','trial']))
-    group_list = [x[1] for x in group_list]
-    updated_tables = []
-    for i, table in enumerate(group_list):
-        table['rel_time'] = table['time'] - table['time'].iloc[0]
-        updated_tables.append(table)
-    fin_table = pd.concat(updated_tables)
-    fin_table['rel_time'] *= 1000
-    # Convert rel_time to int
-    fin_table['rel_time'] = fin_table['rel_time'].astype(int)
-
-    # Only point type mark is trial start
-    # Now that we have rel_time, drop all trial starts and make starts and end columns
-    # That is, convert long to wide
-    fin_table = fin_table.loc[fin_table.event != 'trial start']
-    fin_table.reset_index(inplace=True, drop=True)
-
-    index_cols = ['event','trial','taste','day']
-    # Group by day and sort by time
-    group_list = list(fin_table.groupby(['day']))
-    group_list = [x[1] for x in group_list]
-    updated_tables = []
-    for i, table in enumerate(group_list):
-        table.sort_values(by=['time'], inplace=True)
-        table.reset_index(inplace=True, drop=True)
-        updated_tables.append(table)
-    fin_table = pd.concat(updated_tables)
-
-    start_table = fin_table.loc[fin_table.mark_type == 'START']
-    stop_table = fin_table.loc[fin_table.mark_type == 'STOP']
+    start_table = scored_data.loc[scored_data['Behavior type'] == 'START']
+    stop_table = scored_data.loc[scored_data['Behavior type'] == 'STOP']
+    start_table.reset_index(inplace=True, drop=True)
+    stop_table.reset_index(inplace=True, drop=True)
     start_table['event_num'] = np.arange(len(start_table))
     stop_table['event_num'] = np.arange(len(stop_table))
 
-    fin_table = start_table.merge(stop_table, how = 'outer', 
-                      on = ['event','event_num','trial','taste','day','taste_trial', 'day_ind'], 
-                      suffixes = ('_start','_stop'))
-    fin_table.drop(['mark_type_start','mark_type_stop'], axis=1, inplace=True)
+    merge_cols = start_table.columns.to_numpy()
+    diff_cols = ['Time','rel_time', 'Behavior type']
+    merge_cols = np.setdiff1d(merge_cols, diff_cols)
+    # make sure that the merge columns are the same for start and stop
+    assert all(start_table[merge_cols] == stop_table[merge_cols]), 'Mismatch in merge columns'
+    fin_table = start_table.copy().drop(columns = diff_cols)
+
+    for this_col in diff_cols:
+        fin_table[this_col] = list(zip(start_table[this_col], stop_table[this_col])) 
 
     return fin_table
+
+
+# def process_scored_data(data_subdirs, all_taste_orders):
+#     """
+#     Processes scored data from each day of experiment
+# 
+#     Inputs:
+#         data_subdirs: list of paths to scored data
+#         all_taste_orders: array of shape (days, tastes)
+# 
+#     Outputs:
+#         score_tables: list of pandas dataframes of scored data
+#     """
+# 
+#     table_files = [glob.glob(os.path.join(subdir,'*table.npy'))[0] for subdir in data_subdirs]
+#     # Process score tables
+#     score_tables = [np.load(table_file, allow_pickle=True) for table_file in table_files]
+#     # Only first and last columns are relevant
+#     score_tables = [x[:,[0,-2,-1]] for x in score_tables]
+# 
+#     # Convert to pandas dataframes
+#     score_tables = [pd.DataFrame(x, columns=['event','mark_type','time']) for x in score_tables]
+#     updated_tables = []
+#     for i, table in enumerate(score_tables):
+#         table['day'] = subdir_basenames[i] 
+#         table.sort_values(by=['day','time'], inplace=True)
+#         table.reset_index(inplace=True, drop=True)
+# 
+#         # Mark trials in fin_table
+#         table['trial'] = None
+#         trial_count = -1
+#         for j in range(len(table)):
+#             if table.loc[j]['event'] == 'trial start':
+#                 trial_count += 1
+#             table.loc[j]['trial'] = trial_count
+#         updated_tables.append(table)
+# 
+#     # Note, day 3 only has 117 trials
+#     fin_table = pd.concat(updated_tables)
+# 
+#     # Keep only trials with more than one event (that is more than trial start)
+#     #fin_table = fin_table.groupby('trial').filter(lambda x: len(x) > 1)
+#     fin_table['day_ind'] = [int(str(x)[-1])-1 for x in fin_table.day]
+#     fin_table.reset_index(inplace=True, drop=True)
+# 
+#     # Mark taste for each trial
+#     taste_list = []
+#     for i in range(len(fin_table)):
+#         day_ind = fin_table.loc[i]['day_ind']
+#         trial_ind = fin_table.loc[i]['trial']
+#         this_taste = all_taste_orders[day_ind, trial_ind]
+#         taste_list.append(this_taste)
+# 
+#     fin_table['taste'] = taste_list
+# 
+#     # Also find what delivery of the given taste this is
+#     group_list=  [x[1] for x in list(fin_table.groupby(['day','taste']))]
+#     updated_tables = []
+#     for this_table in group_list:
+#         unique_trials = this_table.trial.unique()
+#         trial_map = {x:i for i,x in enumerate(unique_trials)}
+#         this_table['taste_trial'] = [trial_map[x] for x in this_table.trial]
+#         updated_tables.append(this_table)
+# 
+#     fin_table = pd.concat(updated_tables)
+# 
+#     # Calculate relative time from start of each trial
+#     group_list = list(fin_table.groupby(['day','trial']))
+#     group_list = [x[1] for x in group_list]
+#     updated_tables = []
+#     for i, table in enumerate(group_list):
+#         table['rel_time'] = table['time'] - table['time'].iloc[0]
+#         updated_tables.append(table)
+#     fin_table = pd.concat(updated_tables)
+#     fin_table['rel_time'] *= 1000
+#     # Convert rel_time to int
+#     fin_table['rel_time'] = fin_table['rel_time'].astype(int)
+# 
+#     # Only point type mark is trial start
+#     # Now that we have rel_time, drop all trial starts and make starts and end columns
+#     # That is, convert long to wide
+#     fin_table = fin_table.loc[fin_table.event != 'trial start']
+#     fin_table.reset_index(inplace=True, drop=True)
+# 
+#     index_cols = ['event','trial','taste','day']
+#     # Group by day and sort by time
+#     group_list = list(fin_table.groupby(['day']))
+#     group_list = [x[1] for x in group_list]
+#     updated_tables = []
+#     for i, table in enumerate(group_list):
+#         table.sort_values(by=['time'], inplace=True)
+#         table.reset_index(inplace=True, drop=True)
+#         updated_tables.append(table)
+#     fin_table = pd.concat(updated_tables)
+# 
+#     start_table = fin_table.loc[fin_table.mark_type == 'START']
+#     stop_table = fin_table.loc[fin_table.mark_type == 'STOP']
+#     start_table['event_num'] = np.arange(len(start_table))
+#     stop_table['event_num'] = np.arange(len(stop_table))
+# 
+#     fin_table = start_table.merge(stop_table, how = 'outer', 
+#                       on = ['event','event_num','trial','taste','day','taste_trial', 'day_ind'], 
+#                       suffixes = ('_start','_stop'))
+#     fin_table.drop(['mark_type_start','mark_type_stop'], axis=1, inplace=True)
+# 
+#     return fin_table
 
 
 ############################################################
 # Test plots
 ############################################################
 if __name__ == '__main__':
+    data_dir = '/home/abuzarmahmood/Desktop/blech_clust/emg/gape_QDA_classifier/_experimental/mouth_movement_clustering/data/NB27'
+
+    # For each day of experiment, load env and table files
+    data_subdirs = sorted(glob.glob(os.path.join(data_dir,'*')))
+    # Make sure that path is a directory
+    data_subdirs = [subdir for subdir in data_subdirs if os.path.isdir(subdir)]
+    # Make sure that subdirs are in order
+    subdir_basenames = [os.path.basename(subdir).lower() for subdir in data_subdirs]
+
+    env_files = [glob.glob(os.path.join(subdir,'*env.npy'))[0] for subdir in data_subdirs]
+    # Load env and table files
+    # days x tastes x trials x time
+    envs = np.stack([np.load(env_file) for env_file in env_files])
+
+    ############################################################
+    # Get dig-in info
+    ############################################################
+    # Extract dig-in from datasets
+    raw_data_dir = '/media/fastdata/NB_data/NB27'
+    # Find HDF5 files
+    h5_files = glob.glob(os.path.join(raw_data_dir,'**','*','*.h5'))
+    h5_files = sorted(h5_files)
+    h5_basenames = [os.path.basename(x) for x in h5_files]
+    # Make sure order of h5 files is same as order of envs
+    order_bool = [x in y for x,y in zip(subdir_basenames, h5_basenames)]
+    if not all(order_bool):
+        raise Exception('Bubble bubble, toil and trouble')
+
     all_taste_orders = return_taste_orders(h5_files)
     fin_table = process_scored_data(data_subdirs, all_taste_orders)
 
