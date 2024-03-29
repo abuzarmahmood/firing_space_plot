@@ -10,12 +10,9 @@ from tqdm import tqdm
 from matplotlib.patches import Patch
 import seaborn as sns
 
-# Have to be in blech_clust/emg/gape_QDA_classifier dir
-# code_dir = os.path.expanduser('~/Desktop/blech_clust/emg/gape_QDA_classifier/_experimental/mouth_movement_clustering')
-code_dir = '/media/bigdata/firing_space_plot/emg_analysis/mouth_movement_clustering'
-# os.chdir(code_dir)
+base_dir = '/media/bigdata/firing_space_plot/emg_analysis/mouth_movement_clustering'
+code_dir = os.path.join(base_dir, 'src')
 sys.path.append(code_dir)
-# sys.path.append(os.path.expanduser('~/Desktop/blech_clust/emg/gape_QDA_classifier'))
 from utils.extract_scored_data import return_taste_orders, process_scored_data
 from utils.gape_clust_funcs import (extract_movements,
                                             normalize_segments,
@@ -27,17 +24,13 @@ from utils.gape_clust_funcs import (extract_movements,
                                             threshold_movement_lengths,
                                             )
 
-import itertools
-from sklearn.cluster import KMeans, AgglomerativeClustering
-from sklearn.decomposition import PCA
-
-artifact_dir = os.path.join(code_dir, 'artifacts')
+artifact_dir = os.path.join(base_dir, 'artifacts')
 if not os.path.isdir(artifact_dir):
     os.mkdir(artifact_dir)
 
 ############################################################
-############################################################
 # Make sure we have 1) scored data, 2) emg env file, and 3) h5 files for each session
+############################################################
 
 data_dir = '/media/fastdata/Natasha_classifier_data' 
 scored_data_paths = glob(os.path.join(data_dir, '**', '*scores.csv'), recursive = True)
@@ -47,8 +40,6 @@ scored_data_basenames = ["_".join(x.split('_')[:-1]) for x in scored_data_basena
 scores_path_df = pd.DataFrame({'path': scored_data_paths,
                                'basename': scored_data_basenames,
                                'scores': True})
-
-# data_dir = '/home/abuzarmahmood/Desktop/blech_clust/emg/gape_QDA_classifier/_experimental/mouth_movement_clustering/data/NB27'
 
 ##############################
 
@@ -62,10 +53,16 @@ data_subdirs = [subdir for subdir in data_subdirs if os.path.isdir(subdir)]
 data_subdirs = [x for x in data_subdirs if 'emg' in os.path.basename(x)]
 # Make sure that subdirs are in order
 subdir_basenames = [subdir.split('/')[-3].lower() for subdir in data_subdirs]
+emg_name = [os.path.basename(x) for x in data_subdirs]
 
 emg_path_df = pd.DataFrame({'path': data_subdirs,
                             'basename': subdir_basenames,
+                            'emg_name': emg_name,
                             'emg' : True})
+
+# Only keep row if emg_name == 'emgad'
+emg_path_df['emg_name'] = emg_path_df['emg_name'].str.lower()
+emg_path_df = emg_path_df.loc[emg_path_df.emg_name == 'emgad']
 
 ##############################
 
@@ -84,18 +81,17 @@ merge_df = pd.merge(scores_path_df, emg_path_df, on = 'basename',
 merge_df = pd.merge(merge_df, h5_path_df, on = 'basename',
                     how = 'outer')
 merge_df = merge_df.rename(columns = {'path':'path_h5'})
-merge_df.drop_duplicates(inplace = True)
 
 merge_df.dropna(inplace = True)
 merge_df.reset_index(inplace = True, drop = True)
 
 ############################################################
 cols_to_delete = [	
-					'Observation id', 'Observation date', 'Description', 
-					'Observation duration', 'Observation type',
+                    'Observation id', 'Observation date', 'Description', 
+                    'Observation duration', 'Observation type',
                     'Source', 'Media duration (s)', 'FPS', 'Subject',
                     'Behavioral category', 'Media file name', 'Image index', 
-					'Image file path', 'Comment',
+                    'Image file path', 'Comment',
 ]
  
 
@@ -144,30 +140,6 @@ for ind, row in merge_df.iterrows():
         print('Mismatch in trials for {}'.format(row.basename))
 
 ############################################################
-# env_files = [glob(os.path.join(subdir,'*env.npy'))[0] for subdir in data_subdirs]
-# Load env and table files
-# days x tastes x trials x time
-# envs = np.stack([np.load(env_file) for env_file in env_files])
-# envs = [np.load(env_file) for env_file in env_files]
-
-############################################################
-# Get scored data 
-############################################################
-# Extract dig-in from datasets
-# raw_data_dir = '/media/fastdata/NB_data/NB27'
-# Find HDF5 files
-
-# Make sure order of h5 files is same as order of envs
-# order_bool = [x.lower() in y for x,y in zip(subdir_basenames, h5_basenames)]
-# if not all(order_bool):
-#     raise Exception('Bubble bubble, toil and trouble')
-
-# Run pipeline
-# all_taste_orders = return_taste_orders(h5_files)
-# fin_scored_table = process_scored_data(data_subdirs, all_taste_orders)
-
-
-############################################################
 fin_score_table_list = []
 for ind, row in tqdm(merge_df.iterrows()):
     scored_data = merge_df.loc[ind, 'scored_data'].copy()
@@ -182,7 +154,6 @@ merge_df['scored_data'] = fin_score_table_list
 ############################################################
 pre_stim = 2000
 post_stim = 5000
-# gapes_Li = np.zeros(envs.shape)
 
 ###############
 # Run everything through JL Process
@@ -230,12 +201,6 @@ for ind, row in tqdm(merge_df.iterrows()):
             segment_starts, segment_ends, segment_dat, 
             min_len = 50, max_len= 500)
 
-        #plt.plot(this_trial_dat)
-        #for i in range(len(segment_starts)):
-        #    plt.plot(np.arange(segment_starts[i], segment_ends[i]),
-        #             segment_dat[i], linewidth = 5, alpha = 0.5)
-        #plt.show()
-
         (feature_array,
          feature_names,
          segment_dat,
@@ -255,9 +220,6 @@ merge_df['segment_dat_list'] = segment_dat_list_list
 # Generate gape frame
 gape_frame_list = [gen_gape_frame(row.segment_dat_list, row.gapes_Li) \
         for ind, row in tqdm(merge_df.iterrows())]
-
-# gape_frame_list = [x[0] for x in outs]
-# scaled_features_list = [x[1] for x in outs]
 
 # Bounds for gape_frame are in 0-7000 time
 # Adjust to make -2000 -> 5000
@@ -310,22 +272,9 @@ merge_df.to_pickle(os.path.join(artifact_dir, 'all_data_frame.pkl'))
 ############################################################
 # Test plots 
 ############################################################
-plot_dir = os.path.join(code_dir, 'plots')
+plot_dir = os.path.join(base_dir, 'plots')
 if not os.path.isdir(plot_dir):
     os.mkdir(plot_dir)
-
-# Plot gapes LI
-##############################
-mean_gapes_Li = np.mean(gapes_Li, axis=1)
-# Smooth with gaussian filter
-from scipy.ndimage import gaussian_filter1d
-mean_gapes_Li = gaussian_filter1d(mean_gapes_Li, 75, axis=-1)
-
-fig, ax = plt.subplots(mean_gapes_Li.shape[0], sharex=True, sharey=True)
-fig.suptitle('Smoothed Gapes Li (75ms SD Gaussian)')
-for i in range(mean_gapes_Li.shape[0]):
-        ax[i].plot(mean_gapes_Li[i,:])
-plt.show()
 
 # Plot scored, segmented data
 #############################
