@@ -82,6 +82,8 @@ merge_df = pd.merge(merge_df, h5_path_df, on = 'basename',
                     how = 'outer')
 merge_df = merge_df.rename(columns = {'path':'path_h5'})
 
+merge_df[['basename','scores','emg','h5']]
+
 merge_df.dropna(inplace = True)
 merge_df.reset_index(inplace = True, drop = True)
 
@@ -238,6 +240,7 @@ merge_df['gape_frame'] = gape_frame_list
 ##############################
 
 # Make sure that each segment in gape_frame is in fin_score_table
+gape_frame_list = []
 for ind, row in tqdm(merge_df.iterrows()):
     gape_frame = row.gape_frame
     scored_data = row.scored_data
@@ -265,6 +268,9 @@ for ind, row in tqdm(merge_df.iterrows()):
 
     gape_frame = gape_frame.loc[gape_frame.scored == True]
     gape_frame['score_bounds'] = score_bounds_list
+    gape_frame_list.append(gape_frame)
+
+merge_df['gape_frame'] = gape_frame_list
 
 # scored_gape_frame.to_pickle(os.path.join(code_dir, 'data', 'scored_gape_frame.pkl'))
 merge_df.to_pickle(os.path.join(artifact_dir, 'all_data_frame.pkl'))
@@ -279,59 +285,76 @@ if not os.path.isdir(plot_dir):
 # Plot scored, segmented data
 #############################
 
-t = np.arange(-2000, 5000)
+segment_plot_dir = os.path.join(plot_dir, 'segment_plots')
+if not os.path.isdir(segment_plot_dir):
+    os.mkdir(segment_plot_dir)
 
-scored_gape_frame = gape_frame.copy()
-event_types = scored_gape_frame.event_type.unique()
-
-#event_types = ['mouth movements','unknown mouth movement','gape','tongue protrusion','lateral tongue protrusion']
-#scored_gape_frame = scored_gape_frame.loc[scored_gape_frame.event_type.isin(event_types)]
+# Get all event-types across all gape_frames
+all_event_types = []
+for this_gape_frame in gape_frame_list:
+    all_event_types.extend(this_gape_frame.event_type.unique())
+all_event_types = list(set(all_event_types))
 
 cmap = plt.get_cmap('tab10')# len(event_types))
-event_colors = {event_types[i]:cmap(i) for i in range(len(event_types))}
+event_colors = {all_event_types[i]:cmap(i) for i in range(len(all_event_types))}
 
-plot_group = list(scored_gape_frame.groupby(['taste','trial']))
-plot_inds = [x[0] for x in plot_group]
-plot_dat = [x[1] for x in plot_group]
+t = np.arange(-2000, 5000)
+for i, this_basename in enumerate(tqdm(merge_df.basename.unique())):
 
-# Generate custom legend
-legend_elements = [Patch(facecolor=event_colors[event], edgecolor='k',
-                         label=event.title()) for event in event_types]
+    gape_frame = merge_df.loc[merge_df.basename == this_basename, 'gape_frame'].values[0]
+    gape_frame.dropna(inplace = True)
 
-# Plot with black horizontal lines over detected movements
-plot_n = 30
-fig,ax = plt.subplots(plot_n, 1, sharex=True, sharey=True,
-                      figsize = (10, plot_n*2))
-for i in range(plot_n):
-    this_scores = plot_dat[i]
-    this_inds = plot_inds[i]
-    this_env = envs[this_inds]
-    ax[i].plot(t, this_env, color = 'k')
-    score_bounds_list = []
-    for _, this_event in this_scores.iterrows():
-        event_type = this_event.event_type
-        score_start = this_event.score_bounds[0]
-        score_stop = this_event.score_bounds[1]
-        segment_start = this_event.segment_bounds[0]
-        segment_stop = this_event.segment_bounds[1]
-        segment_inds = np.logical_and(t >= segment_start, t <= segment_stop) 
-        segment_t = t[segment_inds]
-        segment_env = this_env[segment_inds]
-        env_max = np.max(segment_env)
-        h_line_y = env_max*1.3
-        ax[i].plot(segment_t, segment_env, color='k')
-        ax[i].hlines(h_line_y, segment_t[0], segment_t[-1], 
-                     color = 'k', linewidth = 5, alpha = 0.7)
-        this_event_c = event_colors[event_type]
-        if tuple(this_event.score_bounds) not in score_bounds_list:
-            ax[i].axvspan(score_start, score_stop, 
-                          color=this_event_c, alpha=0.5, label=event_type)
-            score_bounds_list.append(tuple(this_event.score_bounds))
-ax[0].legend(handles=legend_elements, loc='upper right',
-             bbox_to_anchor=(1.5, 1.1))
-ax[0].set_xlim([-2000, 5000])
-fig.subplots_adjust(right=0.75)
-fig.savefig(os.path.join(plot_dir, 'scored_segmented_overlay_black_lines'), dpi = 150,
-                         bbox_inches='tight')
-plt.close(fig)
-#plt.show()
+    scored_gape_frame = gape_frame.copy()
+    event_types = scored_gape_frame.event_type.unique()
+
+    #event_types = ['mouth movements','unknown mouth movement','gape','tongue protrusion','lateral tongue protrusion']
+    #scored_gape_frame = scored_gape_frame.loc[scored_gape_frame.event_type.isin(event_types)]
+
+
+    plot_group = list(scored_gape_frame.groupby(['taste','trial']))
+    plot_inds = [x[0] for x in plot_group]
+    plot_dat = [x[1] for x in plot_group]
+
+    # Generate custom legend
+    legend_elements = [Patch(facecolor=event_colors[event], edgecolor='k',
+                             label=event.title()) for event in event_types]
+
+    # Plot with black horizontal lines over detected movements
+    plot_n = np.min([30, len(plot_dat)])
+    fig,ax = plt.subplots(plot_n, 1, sharex=True, sharey=True,
+                          figsize = (10, plot_n*2))
+    for i in range(plot_n):
+        this_scores = plot_dat[i]
+        this_inds = plot_inds[i]
+        this_env = envs[this_inds]
+        ax[i].plot(t, this_env, color = 'k')
+        score_bounds_list = []
+        for _, this_event in this_scores.iterrows():
+            event_type = this_event.event_type
+            score_start = this_event.score_bounds[0]
+            score_stop = this_event.score_bounds[1]
+            segment_start = this_event.segment_bounds[0]
+            segment_stop = this_event.segment_bounds[1]
+            segment_inds = np.logical_and(t >= segment_start, t <= segment_stop) 
+            segment_t = t[segment_inds]
+            segment_env = this_env[segment_inds]
+            env_max = np.max(segment_env)
+            h_line_y = env_max*1.3
+            ax[i].plot(segment_t, segment_env, color='k')
+            ax[i].hlines(h_line_y, segment_t[0], segment_t[-1], 
+                         color = 'k', linewidth = 5, alpha = 0.7)
+            this_event_c = event_colors[event_type]
+            if tuple(this_event.score_bounds) not in score_bounds_list:
+                ax[i].axvspan(score_start, score_stop, 
+                              color=this_event_c, alpha=0.5, label=event_type)
+                score_bounds_list.append(tuple(this_event.score_bounds))
+    ax[0].legend(handles=legend_elements, loc='upper right',
+                 bbox_to_anchor=(1.5, 1.1))
+    ax[0].set_xlim([-2000, 5000])
+    fig.subplots_adjust(right=0.75)
+    fig.savefig(os.path.join(
+        segment_plot_dir, 
+        f'{this_basename}_scored_segmented_overlay_black_lines'), 
+                dpi = 150, bbox_inches='tight')
+    plt.close(fig)
+    #plt.show()
