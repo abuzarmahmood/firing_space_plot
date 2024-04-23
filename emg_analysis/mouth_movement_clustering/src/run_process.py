@@ -650,7 +650,115 @@ plt.savefig(os.path.join(plot_dir, 'feature_event_np2_heatmap.png'),
             bbox_inches='tight')
 plt.close()
 
+##############################
+# Normalization of amplitude using baseline
+##############################
+merged_frame = fin_gape_frame.merge(
+        baseline_frame,
+        how = 'left',
+        on = ['session_name','taste','trial']
+        )
 
+# Only keep amplitude related features
+merged_frame = merged_frame.loc[merged_frame.feature_name.str.contains('amplitude_abs')]
+merged_frame['norm_feature'] = merged_frame['features'] / merged_frame['mean']
+
+# Melt 'feature' and 'norm_feature'
+value_vars = ['features','norm_feature']
+id_vars = [x for x in merged_frame.columns if x not in value_vars]
+melt_merge = merged_frame.melt(id_vars = id_vars, value_vars = value_vars)
+
+# Plot normalized features
+sns.catplot(
+        data = melt_merge, 
+        x = 'session_name',
+        y = 'value',
+        hue = 'taste',
+        row = 'event_type',
+        col = 'variable',
+        kind = 'box',
+        sharey = False,
+        )
+plt.savefig(os.path.join(plot_dir, 'norm_feature_boxplot.png'),
+            bbox_inches='tight')
+plt.close()
+
+##############################
+# p-values and effect sizes for corrected vs uncorrected values
+grouped_merge_list = list(melt_merge.groupby(['variable','event_type']))
+grouped_merge_inds = [x[0] for x in grouped_merge_list]
+grouped_merge_data = [x[1] for x in grouped_merge_list]
+
+norm_anova_results = []
+for this_grouped_merge in tqdm(grouped_merge_data):
+    this_grouped_merge = this_grouped_merge.astype({'value':'float'})
+    this_anova = pg.anova(data = this_grouped_merge, dv = 'value', between = 'session_name')
+    norm_anova_results.append(this_anova)
+
+norm_diff_frame = pd.DataFrame(
+        data = grouped_merge_inds,
+        columns = ['variable','event_type']
+        )
+norm_punc_list = []
+norm_np2_list = []
+for this_anova in norm_anova_results:
+    try:
+        norm_punc_list.append(this_anova['p-unc'].values[0])
+        norm_np2_list.append(this_anova['np2'].values[0])
+    except:
+        norm_punc_list.append(np.nan)
+        norm_np2_list.append(np.nan)
+norm_diff_frame['punc'] = norm_punc_list
+norm_diff_frame['np2'] = norm_np2_list
+
+# Plot both punc and np2 as heatmaps
+norm_punc_pivot = norm_diff_frame.pivot(
+            columns = 'variable',
+            index = 'event_type',
+            values = 'punc')
+norm_punc_pivot = np.round(norm_punc_pivot, 3)
+
+norm_np2_pivot = norm_diff_frame.pivot(
+        columns = 'variable',
+        index = 'event_type',
+        values = 'np2')
+norm_np2_pivot = np.round(norm_np2_pivot, 3)
+
+fig, ax = plt.subplots(1,2, figsize = (10,5))
+sns.heatmap(
+        data = norm_punc_pivot,
+        ax = ax[0],
+        annot = True,
+        cmap = 'viridis',
+        )
+sns.heatmap(
+        data = norm_np2_pivot,
+        ax = ax[1],
+        annot = True,
+        cmap = 'viridis',
+        )
+ax[0].set_title('p-unc')
+ax[1].set_title('np2')
+plt.tight_layout()
+plt.savefig(os.path.join(plot_dir, 'norm_feature_event_heatmaps.png'),
+            bbox_inches='tight')
+plt.close()
+
+# Plot np2 between uncorrected and corrected values
+fig, ax = plt.subplots(figsize = (3,5))
+for this_event_type in norm_np2_pivot.index:
+    ax.plot(list(norm_np2_pivot.columns.values), 
+            norm_np2_pivot.loc[this_event_type].values,
+            c = 'k', marker = 'o')
+ax.set_xlabel('Feature')
+ax.set_ylabel('np2')
+ax.set_title('Effect Size after Normalization')
+plt.savefig(os.path.join(plot_dir, 'norm_feature_event_np2_lineplot.png'),
+            bbox_inches='tight')
+plt.close()
+
+############################################################
+############################################################
 
 # Comparison of inter-session (but intra-animal) prediction
 # and inter-animal comparisons (using leave-one-animal-out)
