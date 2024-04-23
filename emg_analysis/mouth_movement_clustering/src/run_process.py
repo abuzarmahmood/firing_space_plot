@@ -10,6 +10,7 @@ import pandas as pd
 from tqdm import tqdm
 from matplotlib.patches import Patch
 import seaborn as sns
+import pingouin as pg
 
 from sklearn.preprocessing import StandardScaler
 from sklearn.metrics import accuracy_score, confusion_matrix
@@ -73,6 +74,8 @@ def plot_UMAP(scored_gape_frame, plot_dir, basename):
     plt.close(fig)
 
 def plot_NCA(scored_gape_frame, plot_dir, basename):
+    raw_X = np.stack(scored_gape_frame['features'].values)
+    X = StandardScaler().fit_transform(raw_X)
     wanted_event_types = scored_gape_frame.event_type.unique()
     cmap = plt.get_cmap('tab10')
     plot_c_list = [cmap(i) for i in range(len(wanted_event_types))]
@@ -97,7 +100,13 @@ def plot_NCA(scored_gape_frame, plot_dir, basename):
 
 
 def plot_clustermap(scored_gape_frame, plot_dir, basename):
+    raw_X = np.stack(scored_gape_frame['features'].values)
+    X = StandardScaler().fit_transform(raw_X)
     # Plot heatmap of scaled features using seaborn
+    wanted_event_types = scored_gape_frame.event_type.unique()
+    cmap = plt.get_cmap('tab10')
+    plot_c_list = [cmap(i) for i in range(len(wanted_event_types))]
+    cmap_dict = {x:cmap(i) for i,x in enumerate(wanted_event_types)}
     feature_df = pd.DataFrame(data = X, columns = np.arange(X.shape[1])) 
     row_colors = scored_gape_frame['event_type'].map(cmap_dict)
     row_colors.reset_index(drop = True, inplace = True)
@@ -346,11 +355,15 @@ plot_dir = os.path.join(base_dir, 'plots')
 all_data_pkl_path = os.path.join(artifact_dir, 'all_data_frame.pkl')
 all_data_frame = pd.read_pickle(all_data_pkl_path)
 
+############################################################
+# Intra-session analysis 
+############################################################
 for ind in range(len(all_data_frame)):
     # ind = 0
     basename = all_data_frame.loc[ind,'basename']
     scored_gape_frame = all_data_frame.loc[ind,'gape_frame']
     scored_gape_frame.dropna(inplace=True)
+    wanted_event_types = scored_gape_frame.event_type.unique()
 
     ############################################################
     # Classifier comparison on gapes 
@@ -453,3 +466,191 @@ for ind in range(len(all_data_frame)):
             open(os.path.join(artifact_dir, f'{basename}_wanted_artifacts.pkl'), 'wb')
             )
 
+############################################################
+# Inter-session analysis 
+############################################################
+# Description of variation in data
+# 1) Variation in baseline mean+/-std
+# 2) Variation in features of labelled events
+# 3) Ability to normalize new data (if large variation exists)
+
+##############################
+# Get baseline data and statistics
+##############################
+all_envs = np.stack(all_data_frame.env)
+all_basenames = all_data_frame.basename.values
+animal_nums = [x.split('_')[0] for x in all_basenames]
+session_nums = [x.split('_')[1] for x in all_basenames]
+
+baseline_lims = [0, 2000]
+baseline_envs = all_envs[:,baseline_lims[0]:baseline_lims[1]]
+
+mean_baseline = np.mean(baseline_envs, axis = -1)
+std_baseline = np.std(baseline_envs, axis = -1)
+inds = np.array(list(np.ndindex(mean_baseline.shape)))
+
+baseline_frame = pd.DataFrame(
+        data = np.concatenate(
+            [
+                inds, 
+                mean_baseline.flatten()[:,None],
+                std_baseline.flatten()[:,None]
+                ], 
+            axis = -1
+            ),
+        columns = ['session','taste','trial', 'mean','std']
+        )
+# Convert ['session','taste','trial'] to int
+baseline_frame = baseline_frame.astype({'session':'int','taste':'int','trial':'int'})
+baseline_frame['animal'] = [animal_nums[i] for i in baseline_frame['session']]
+baseline_frame['session_day'] = [session_nums[i] for i in baseline_frame['session']]
+baseline_frame['session_name'] = [animal + '\n' + day for \
+        animal,day in zip(baseline_frame['animal'],baseline_frame['session_day'])]
+
+sns.boxplot(
+        data = baseline_frame, 
+        x = 'session_name', 
+        y = 'mean',
+        hue = 'taste'
+        )
+plt.savefig(os.path.join(plot_dir, 'baseline_mean_boxplot.png'),
+            bbox_inches='tight')
+plt.close()
+
+sns.boxplot(
+        data = baseline_frame, 
+        x = 'session_name', 
+        y = 'std',
+        hue = 'taste'
+        )
+plt.savefig(os.path.join(plot_dir, 'baseline_std_boxplot.png'),
+            bbox_inches='tight')
+plt.close()
+
+# Correlation between mean and std
+sns.scatterplot(
+        data = baseline_frame,
+        x = 'mean',
+        y = 'std',
+        hue = 'taste'
+        )
+plt.savefig(os.path.join(plot_dir, 'baseline_mean_std_scatter.png'),
+            bbox_inches='tight')
+plt.close()
+
+##############################
+# Similar analysis for labelled events 
+##############################
+all_gape_frames = all_data_frame.gape_frame
+
+# Update gape frames to include animal_num and session_nums
+for ind in range(len(all_gape_frames)):
+    all_gape_frames[ind]['animal_num'] = animal_nums[ind]
+    all_gape_frames[ind]['session_num'] = session_nums[ind]
+
+fin_gape_frame = pd.concat(all_gape_frames.values, axis = 0)
+fin_gape_frame['session_name'] = [animal + '\n' + day for \
+        animal,day in zip(fin_gape_frame['animal_num'],fin_gape_frame['session_num'])]
+
+wanted_cols = ['taste','trial','features','event_type','session_name']
+fin_gape_frame = fin_gape_frame[wanted_cols]
+fin_gape_frame['feature_ind'] = [np.arange(len(fin_gape_frame.features.iloc[0])) \
+        for i in range(len(fin_gape_frame))]
+
+# Explode features
+fin_gape_frame = fin_gape_frame.explode(['features','feature_ind'])
+fin_gape_frame.reset_index(drop = True, inplace = True)
+
+feature_names = [
+    'duration',
+    'amplitude_rel',
+    'amplitude_abs',
+    'left_interval',
+    'right_interval',
+    'pca_1',
+    'pca_2',
+    'pca_3',
+    'max_freq',
+]
+
+fin_gape_frame['feature_name'] = [feature_names[i] for i in fin_gape_frame['feature_ind']]
+
+sns.catplot(
+        data = fin_gape_frame, 
+        x = 'session_name',
+        y = 'features',
+        hue = 'taste',
+        row = 'feature_name',
+        col = 'event_type',
+        kind = 'box',
+        sharey = False,
+        )
+plt.savefig(os.path.join(plot_dir, 'feature_boxplot.png'),
+            bbox_inches='tight')
+plt.close()
+
+# Run ANOVA across features for every mouth movement type
+# to see where there are significant differences between sessions
+feature_event_groups = list(fin_gape_frame.groupby(['feature_name','event_type']))
+feature_event_inds = [x[0] for x in feature_event_groups]
+feature_event_data = [x[1] for x in feature_event_groups]
+
+anova_results = []
+for this_feature_event in tqdm(feature_event_data):
+    this_feature_event = this_feature_event.astype({'features':'float'})
+    this_anova = pg.anova(data = this_feature_event, dv = 'features', between = 'session_name')
+    anova_results.append(this_anova)
+
+feature_event_diff_frame = pd.DataFrame(
+        data = feature_event_inds,
+        columns = ['feature_name','event_type']
+        )
+punc_list = []
+np2_list = []
+for this_anova in anova_results:
+    try:
+        punc_list.append(this_anova['p-unc'].values[0])
+        np2_list.append(this_anova['np2'].values[0])
+    except:
+        punc_list.append(np.nan)
+        np2_list.append(np.nan)
+feature_event_diff_frame['punc'] = punc_list
+feature_event_diff_frame['np2'] = np2_list
+
+# Plot both punc and np2 as heatmaps
+punc_pivot = feature_event_diff_frame.pivot(
+            columns = 'feature_name',
+            index = 'event_type',
+            values = 'punc')
+punc_pivot = np.round(punc_pivot, 3)
+fig, ax = plt.subplots(1,1)
+sns.heatmap(
+        data = punc_pivot,
+        ax = ax,
+        annot = True,
+        cmap = 'viridis',
+        )
+plt.savefig(os.path.join(plot_dir, 'feature_event_punc_heatmap.png'),
+            bbox_inches='tight')
+plt.close()
+
+np2_pivot = feature_event_diff_frame.pivot(
+        columns = 'feature_name',
+        index = 'event_type',
+        values = 'np2')
+np2_pivot = np.round(np2_pivot, 3)
+fig, ax = plt.subplots(1,1)
+sns.heatmap(
+        data = np2_pivot,
+        ax = ax,
+        annot = True,
+        cmap = 'viridis',
+        )
+plt.savefig(os.path.join(plot_dir, 'feature_event_np2_heatmap.png'),
+            bbox_inches='tight')
+plt.close()
+
+
+
+# Comparison of inter-session (but intra-animal) prediction
+# and inter-animal comparisons (using leave-one-animal-out)
