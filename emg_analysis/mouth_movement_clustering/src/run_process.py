@@ -11,9 +11,10 @@ from tqdm import tqdm
 from matplotlib.patches import Patch
 import seaborn as sns
 import pingouin as pg
+from scipy import stats
 
-from sklearn.preprocessing import StandardScaler
-from sklearn.metrics import accuracy_score, confusion_matrix
+from sklearn.preprocessing import StandardScaler, MinMaxScaler
+from sklearn.metrics import accuracy_score, confusion_matrix, f1_score
 from xgboost import XGBClassifier
 from sklearn.model_selection import train_test_split
 import shap
@@ -352,6 +353,7 @@ def xgb_multiclass_accuracy(
 base_dir = '/media/bigdata/firing_space_plot/emg_analysis/mouth_movement_clustering'
 artifact_dir = os.path.join(base_dir, 'artifacts')
 plot_dir = os.path.join(base_dir, 'plots')
+session_specific_plot_dir = os.path.join(plot_dir, 'session_specific_plots')
 all_data_pkl_path = os.path.join(artifact_dir, 'all_data_frame.pkl')
 all_data_frame = pd.read_pickle(all_data_pkl_path)
 
@@ -374,20 +376,20 @@ for ind in range(len(all_data_frame)):
 
     plot_event_examples(
             scored_gape_frame,
-            plot_dir,
+            session_specific_plot_dir,
             basename
             )
 
     # Also plot dimensionally reduced data
-    plot_UMAP(scored_gape_frame, plot_dir, basename)
-    plot_NCA(scored_gape_frame, plot_dir, basename)
-    plot_clustermap(scored_gape_frame, plot_dir, basename)
+    plot_UMAP(scored_gape_frame, session_specific_plot_dir, basename)
+    plot_NCA(scored_gape_frame, session_specific_plot_dir, basename)
+    plot_clustermap(scored_gape_frame, session_specific_plot_dir, basename)
 
     # Get count of each type of event
     event_counts = scored_gape_frame.event_type.value_counts()
     event_counts = event_counts.loc[wanted_event_types]
 
-    plot_event_counts(event_counts, plot_dir, basename)
+    plot_event_counts(event_counts, session_specific_plot_dir, basename)
 
     ############################################################
     ############################################################
@@ -411,7 +413,7 @@ for ind in range(len(all_data_frame)):
             wanted_event_types,
             JL_accuracy,
             basename,
-            plot_dir,
+            session_specific_plot_dir,
             event_counts,
             )
 
@@ -439,7 +441,7 @@ for ind in range(len(all_data_frame)):
     plot_average_confusion_multiclass(
             wanted_event_types,
             multiclass_xgb_confusion,
-            plot_dir,
+            session_specific_plot_dir,
             basename,
             )
 
@@ -447,10 +449,74 @@ for ind in range(len(all_data_frame)):
     plot_accuracy_histogram_multiclass(
             multiclass_xgb_accuracy,
             wanted_event_types,
-            plot_dir,
+            session_specific_plot_dir,
             basename,
             )
 
+    ############################## 
+    # Comparison of NM-BSA for multiclass classification
+    # on just gapes and LTPs
+    
+    # First perform analysis on just labelled data
+    event_map = { 
+                 'gape': 0,
+                 'tongue protrusion': 1,
+                 'mouth or tongue movement': 1
+                 }
+
+    # Extract wanted events
+    wanted_event_frame = scored_gape_frame.loc[scored_gape_frame.event_type.isin(event_map.keys())]
+
+    y = wanted_event_frame['event_type'].map(event_map).values
+
+    # Get BSA for given events
+    # gape = 6:11
+    # LTP = 11:
+    bsa_p_array = all_data_frame.loc[ind,'bsa_p']
+    wanted_bsa_p_list = []
+    for i, this_event_row in wanted_event_frame.iterrows():
+        taste = this_event_row['taste']
+        trial = this_event_row['trial']
+        time_lims = np.array(this_event_row['segment_bounds'])+2000
+        bsa_dat = bsa_p_array[taste, trial, time_lims[0]:time_lims[1]]
+        bsa_mode = stats.mode(bsa_dat, axis = 0).mode
+        wanted_bsa_p_list.append(bsa_mode)
+
+    # Convert bsa_p to predictions
+    def bsa_to_pred(x):
+        if np.logical_and(x>=6, x<11):
+            return 0
+        elif x>=11:
+            return 1
+        else:
+            return np.nan
+
+    # Get metrics for BSA
+    wanted_bsa_pred_list = np.array([bsa_to_pred(x) for x in wanted_bsa_p_list])
+    non_nan_inds = ~np.isnan(wanted_bsa_pred_list)
+    bsa_accuracy = accuracy_score(y[non_nan_inds], wanted_bsa_pred_list[non_nan_inds])
+    bsa_confusion = confusion_matrix(y[non_nan_inds], wanted_bsa_pred_list[non_nan_inds])
+    bsa_f1 = f1_score(y[non_nan_inds], wanted_bsa_pred_list[non_nan_inds])
+
+    # Get metrics for XGB
+    temp_event_frame = wanted_event_frame.loc[non_nan_inds]
+    temp_event_frame.event_type = temp_event_frame.event_type.map(event_map)
+
+    (
+        gape_ltp_xgb_accuracy, 
+        gape_ltp_xgb_confusion, 
+        gape_ltp_y_test_list, 
+        gape_ltp_y_pred_list,
+        gape_ltp_y_labels,
+        ) = xgb_multiclass_accuracy(
+                    temp_event_frame,
+                    list(event_map.values()),
+                    n_cv,
+                    )
+
+    gape_ltp_xgb_f1 = [f1_score(x,y) for x,y in zip(gape_ltp_y_test_list, gape_ltp_y_pred_list)]
+
+    ############################################################
     # Pool all artifacts and save
     wanted_artifacts = dict(
             basename = basename,
@@ -459,6 +525,12 @@ for ind in range(len(all_data_frame)):
             JL_accuracy = JL_accuracy,
             multiclass_accuracy = multiclass_xgb_accuracy,
             multiclass_confusion = multiclass_xgb_confusion,
+            bsa_accuracy = bsa_accuracy,
+            bsa_confusion = bsa_confusion,
+            bsa_f1 = bsa_f1,
+            gape_ltp_accuracy = gape_ltp_xgb_accuracy,
+            gape_ltp_confusion = gape_ltp_xgb_confusion,
+            gape_ltp_f1 = gape_ltp_xgb_f1,
             )
 
     dump(
@@ -532,7 +604,7 @@ sns.scatterplot(
         data = baseline_frame,
         x = 'mean',
         y = 'std',
-        hue = 'taste'
+        hue = 'session_name'
         )
 plt.savefig(os.path.join(plot_dir, 'baseline_mean_std_scatter.png'),
             bbox_inches='tight')
@@ -651,8 +723,63 @@ plt.savefig(os.path.join(plot_dir, 'feature_event_np2_heatmap.png'),
 plt.close()
 
 ##############################
+# On a per-session basis, relationship between baseline and feature amplitudes
+mean_baseline_frame = baseline_frame.groupby(['session_name','session_day','animal']).mean()
+mean_gape_frame = fin_gape_frame.\
+        loc[fin_gape_frame.feature_name.str.contains('amplitude_abs')].\
+        groupby(['session_name', 'feature_name', 'event_type']).mean()
+mean_gape_frame.reset_index(inplace = True)
+
+mean_merge_frame = mean_gape_frame.merge(
+        mean_baseline_frame,
+        how = 'left',
+        on = ['session_name']
+        )
+keep_cols = ['session_name','feature_name','event_type','features','mean']
+mean_merge_frame = mean_merge_frame[keep_cols]
+
+mean_merge_frame.rename(
+        columns = {'features' : 'post-stim','mean' : 'baseline'},
+        inplace = True
+        )
+mean_merge_frame = mean_merge_frame.astype({'post-stim':'float','baseline':'float'})
+
+g = sns.lmplot(
+        data = mean_merge_frame,
+        x = 'baseline',
+        y = 'post-stim',
+        col = 'event_type',
+        sharex = False,
+        sharey = False,
+        )
+g.set_axis_labels('Baseline Amplitude','Post-stimulus Amplitude')
+g.fig.suptitle('Baseline vs Post-stimulus Amplitude')
+plt.tight_layout()
+plt.savefig(os.path.join(plot_dir, 'baseline_feature_lmplot.png'),
+            bbox_inches='tight')
+plt.close()
+
+g = sns.lmplot(
+        data = mean_merge_frame,
+        x = 'baseline',
+        y = 'post-stim',
+        hue = 'event_type',
+        legend = False
+        )
+g.set_axis_labels('Baseline Amplitude','Post-stimulus Amplitude')
+g.fig.suptitle('Baseline vs Post-stimulus Amplitude')
+plt.tight_layout()
+plt.savefig(os.path.join(plot_dir, 'baseline_feature_lmplot_merged.png'),
+            bbox_inches='tight')
+plt.close()
+
+
+##############################
 # Normalization of amplitude using baseline
 ##############################
+# Another potential way to normalize would be to subtract 
+# the minimum value at baseline and divide by baseline amplitude
+
 merged_frame = fin_gape_frame.merge(
         baseline_frame,
         how = 'left',
@@ -762,3 +889,67 @@ plt.close()
 
 # Comparison of inter-session (but intra-animal) prediction
 # and inter-animal comparisons (using leave-one-animal-out)
+
+# Get features with normalized amplitude
+cat_gape_frame = pd.concat(all_gape_frames.values, axis = 0)
+wanted_cols = ['taste','trial','features','event_type', 'segment_bounds', 'animal_num', 'session_num']
+cat_gape_frame = cat_gape_frame[wanted_cols]
+
+# Merge with mean_baseline_frame
+mean_baseline_frame = mean_baseline_frame.reset_index()
+cat_gape_frame = cat_gape_frame.merge(
+        mean_baseline_frame[['session_day','animal','mean']],
+        how = 'left',
+        left_on = ['session_num','animal_num'],
+        right_on = ['session_day','animal']
+        )
+
+baseline_vec = cat_gape_frame['mean'].values
+
+raw_features = np.stack(cat_gape_frame['features'].values)
+scaled_raw_features = StandardScaler().fit_transform(raw_features)
+amplitude_inds = np.array([i for i,x in enumerate(feature_names) if 'amplitude' in x])
+normalized_features = raw_features.copy()
+normalized_features[:,amplitude_inds] = normalized_features[:,amplitude_inds] / baseline_vec[:,None]
+
+scaled_features = StandardScaler().fit_transform(normalized_features)
+
+fig, ax = plt.subplots(2,2, sharex = True, sharey = True, figsize = (10,10))
+img_kwargs = dict(aspect = 'auto', cmap = 'viridis', interpolation = 'nearest')
+ax[0][0].imshow(raw_features, **img_kwargs)
+ax[0][0].set_title('Raw Features')
+ax[0][1].imshow(scaled_raw_features, **img_kwargs)
+ax[0][1].set_title('Scaled Raw Features')
+ax[1][0].imshow(normalized_features, **img_kwargs)
+ax[1][0].set_title('Normalized Features')
+ax[1][1].imshow(scaled_features, **img_kwargs)
+ax[1][1].set_title('Scaled Normalized Features')
+plt.tight_layout()
+plt.savefig(os.path.join(plot_dir, 'feature_normalization_comparison.png'),
+            bbox_inches='tight')
+plt.close()
+
+# Plot amplitude before and after normalization
+pre_amp = scaled_raw_features[:,amplitude_inds[0]]
+post_amp = scaled_features[:,amplitude_inds[0]]
+
+minmax_pre_amp = (pre_amp - pre_amp.min()) / (pre_amp.max() - pre_amp.min())
+minmax_post_amp = (post_amp - post_amp.min()) / (post_amp.max() - post_amp.min())
+
+# calculate running average for each
+window = 100
+minmax_pre_amp_smooth = np.convolve(minmax_pre_amp, np.ones(window)/window, mode='same')
+minmax_post_amp_smooth = np.convolve(minmax_post_amp, np.ones(window)/window, mode='same')
+
+fig, ax = plt.subplots(1,1)
+plt.plot(minmax_pre_amp, label = 'Pre-Norm', alpha = 0.5, color = 'r')
+plt.plot(minmax_post_amp, label = 'Post-Norm', alpha = 0.5, color = 'b')
+plt.plot(minmax_pre_amp_smooth, label = 'Pre-Norm Smooth', color = 'r')
+plt.plot(minmax_post_amp_smooth, label = 'Post-Norm Smooth', color = 'b')
+plt.legend()
+plt.xlabel('Time')
+plt.ylabel('Amplitude')
+plt.title('Amplitude Before and After Normalization')
+plt.savefig(os.path.join(plot_dir, 'amplitude_norm_comparison.png'),
+            bbox_inches='tight')
+plt.close()

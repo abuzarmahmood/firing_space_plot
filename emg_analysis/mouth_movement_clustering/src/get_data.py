@@ -65,6 +65,11 @@ emg_path_df['emg_name'] = emg_path_df['emg_name'].str.lower()
 emg_path_df = emg_path_df.loc[emg_path_df.emg_name == 'emgad']
 
 ##############################
+# Check for BSA output
+bsa_results_dirs = [glob(os.path.join(x, '*BSA_results'))[0] for x in emg_path_df.path]
+emg_path_df['bsa_results_path'] = bsa_results_dirs
+
+##############################
 
 h5_files = glob(os.path.join(data_dir,'**','*','*', '*.h5'))
 h5_files = sorted(h5_files)
@@ -99,6 +104,8 @@ cols_to_delete = [
 
 scored_data_list = []
 envs_list = []
+bsa_p_list = []
+omega_list = []
 for ind, row in tqdm(merge_df.iterrows()): 
 
     ###############
@@ -114,6 +121,42 @@ for ind, row in tqdm(merge_df.iterrows()):
     env = np.load(env_path)
     envs_list.append(env)
 
+    ###############
+    bsa_p_filelist = glob(os.path.join(row.bsa_results_path, '*p.npy'))
+    bsa_omega_filelist = glob(os.path.join(row.bsa_results_path, '*omega.npy'))[0]
+
+    # Convert p to array
+    # Extract inds from p filenames
+    bsa_p_filelist.sort()
+    bsa_p_basenames = [os.path.basename(x) for x in bsa_p_filelist]
+    bsa_taste_inds = [int(x.split('_')[0][-2:]) for x in bsa_p_basenames]
+    bsa_trial_inds = [int(x.split('_')[1][-2:]) for x in bsa_p_basenames]
+
+    bsa_data = (np.stack([np.load(x) for x in bsa_p_filelist]) > 0.1).astype(int)
+
+    # Convert to 1D timeseries
+    freq_inds = np.arange(bsa_data.shape[2])
+    bsa_data_flat = freq_inds[np.argmax(bsa_data, axis = 2)]
+
+    # plt.imshow(bsa_data[0].T, interpolation = 'nearest', aspect = 'auto')
+    # plt.plot(bsa_data_flat[0])
+    # plt.show()
+
+    # taste x trial x time
+    p_array = np.zeros((
+        np.max(bsa_taste_inds)+1, 
+        np.max(bsa_trial_inds)+1,
+        bsa_data_flat.shape[-1]))
+
+    for i, (taste_ind, trial_ind) in enumerate(zip(bsa_taste_inds, bsa_trial_inds)):
+        p_array[taste_ind, trial_ind] = bsa_data_flat[i]
+
+    bsa_p_list.append(p_array)
+
+    # Omega 
+    omega_vec = np.load(bsa_omega_filelist)
+    omega_list.append(omega_vec)
+
 h5_files = merge_df.path_h5.tolist()
 taste_order_list = []
 for h5_file in tqdm(h5_files):
@@ -127,6 +170,8 @@ for h5_file in tqdm(h5_files):
 # Append to merge_df and drop any rows with None
 merge_df['scored_data'] = scored_data_list
 merge_df['env'] = envs_list
+merge_df['bsa_p'] = bsa_p_list
+merge_df['bsa_omega'] = omega_list
 merge_df['taste_orders'] = taste_order_list
 
 merge_df.dropna(inplace = True)
