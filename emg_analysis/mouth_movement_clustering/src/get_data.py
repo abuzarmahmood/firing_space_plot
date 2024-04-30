@@ -9,6 +9,7 @@ import pandas as pd
 from tqdm import tqdm
 from matplotlib.patches import Patch
 import seaborn as sns
+import json
 
 base_dir = '/media/bigdata/firing_space_plot/emg_analysis/mouth_movement_clustering'
 code_dir = os.path.join(base_dir, 'src')
@@ -80,6 +81,13 @@ h5_path_df = pd.DataFrame({'path': h5_files,
                            'h5': True})
 
 ##############################
+# Also get info file paths
+h5_dirs = [os.path.dirname(x) for x in h5_files]
+info_file_paths = [glob(os.path.join(x, '*.info'))[0] for x in h5_dirs]
+h5_path_df['info_file_path'] = info_file_paths
+
+
+##############################
 merge_df = pd.merge(scores_path_df, emg_path_df, on = 'basename',
                     suffixes = ('_scores', '_emg'),
                     how = 'outer')
@@ -106,6 +114,7 @@ scored_data_list = []
 envs_list = []
 bsa_p_list = []
 omega_list = []
+taste_map_list = []
 for ind, row in tqdm(merge_df.iterrows()): 
 
     ###############
@@ -157,6 +166,14 @@ for ind, row in tqdm(merge_df.iterrows()):
     omega_vec = np.load(bsa_omega_filelist)
     omega_list.append(omega_vec)
 
+    ###############
+    info_file_path = row.info_file_path
+    info_file = json.load(open(info_file_path, 'r'))
+    taste_names = info_file['taste_params']['tastes']
+    pal_rankings = info_file['taste_params']['pal_rankings']
+    taste_map = {taste:pal for taste, pal in zip(taste_names, pal_rankings)}
+    taste_map_list.append(taste_map)
+
 h5_files = merge_df.path_h5.tolist()
 taste_order_list = []
 for h5_file in tqdm(h5_files):
@@ -173,6 +190,7 @@ merge_df['env'] = envs_list
 merge_df['bsa_p'] = bsa_p_list
 merge_df['bsa_omega'] = omega_list
 merge_df['taste_orders'] = taste_order_list
+merge_df['taste_map'] = taste_map_list
 
 merge_df.dropna(inplace = True)
 merge_df.reset_index(inplace = True, drop = True)
@@ -280,6 +298,8 @@ for gape_frame in gape_frame_list:
     gape_frame['segment_center'] = [np.mean(x)/1000 for x in gape_frame.segment_bounds]
 
 merge_df['gape_frame'] = gape_frame_list
+gape_frame_raw_list = gape_frame_list.copy()
+merge_df['gape_frame_raw'] = gape_frame_raw_list
 
 
 ##############################
