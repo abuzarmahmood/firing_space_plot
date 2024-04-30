@@ -28,6 +28,9 @@ from sklearn.cluster import KMeans
 from cv2 import pointPolygonTest
 from sklearn.gaussian_process import GaussianProcessRegressor
 from scipy import stats
+import xgboost as xgb
+from sklearn.metrics import accuracy_score, f1_score
+import shap
 
 def calc_isotropic_boundary(X, center, n_points = 20):
     """
@@ -71,6 +74,7 @@ wanted_artifacts_paths = glob(os.path.join(artifact_dir, '*wanted_artifacts.pkl'
 wanted_artifacts_paths.sort()
 wanted_artifacts = [load(open(path, 'rb')) for path in wanted_artifacts_paths] 
 basenames = [x['basename'] for x in wanted_artifacts]
+animal_nums = [x.split('_')[0] for x in basenames]
 
 ############################################################
 # Comparison of JL accuracy vs ours
@@ -139,13 +143,14 @@ plt.savefig(os.path.join(plot_dir, 'NM_BSA_vs_our_accuracy_single_session.png'),
 plt.close()
 
 ############################################################
-# Most separable mouth movements for palatability
+# Preprocessing 
 ############################################################
 # Get all gape frames
 gape_frame_list = all_data_frame.gape_frame_raw.values
 fin_gape_frames = []
 for i, this_frame in enumerate(gape_frame_list):
     this_frame['session_ind'] = i
+    this_frame['animal_num'] = animal_nums[i]
     fin_gape_frames.append(this_frame)
 cat_gape_frame = pd.concat(fin_gape_frames, axis=0).reset_index(drop=True)
 
@@ -160,13 +165,14 @@ pal_frames = [x.rename(columns={'index':'taste'}) for x in pal_frames]
 fin_pal_frames = []
 for i, this_frame in enumerate(pal_frames):
     this_frame['session_ind'] = i
+    this_frame['animal_num'] = animal_nums[i]
     fin_pal_frames.append(this_frame)
 cat_pal_frame = pd.concat(fin_pal_frames, axis=0).reset_index(drop=True)
 
 merge_gape_pal = pd.merge(
         cat_gape_frame, 
         cat_pal_frame, 
-        on=['session_ind','taste'], 
+        on=['session_ind','taste','animal_num'], 
         how='inner')
 
 # Also get baseline values to normalize amplitude
@@ -212,6 +218,9 @@ merge_gape_pal = pd.merge(
         right_on=['session'],
         how='left')
 
+merge_gape_pal_backup = merge_gape_pal.copy()
+
+##############################
 # Keep only if pal is 1 or 4
 merge_gape_pal = merge_gape_pal[merge_gape_pal.pal.isin([1,4])]
 pal_vec = merge_gape_pal.pal.values
@@ -230,6 +239,11 @@ feature_names = [
 
 all_features = np.stack(merge_gape_pal.features.values)
 
+# Drop amplitude_rel
+drop_inds = [i for i, x in enumerate(feature_names) if 'amplitude_rel' in x]
+all_features = np.delete(all_features, drop_inds, axis=1)
+feature_names = np.delete(feature_names, drop_inds)
+
 # Normalize amplitude by baseline
 baseline_vec = merge_gape_pal.baseline_mean.values
 amplitude_inds = np.array(
@@ -237,13 +251,49 @@ amplitude_inds = np.array(
 all_features[:,amplitude_inds] = all_features[:,amplitude_inds] / \
         baseline_vec[:,None]
 
-scaled_features = StandardScaler().fit_transform(all_features)
-
 # Drop PCA features
 # In future, we can re-calculate PCA features
 drop_inds = np.array(
         [i for i, x in enumerate(feature_names) if 'pca' in x])
-scaled_features = np.delete(scaled_features, drop_inds, axis=1)
+all_features = np.delete(all_features, drop_inds, axis=1)
+
+# Recalculate PCA features
+# First scale all segments by amplitude and length
+all_segments = merge_gape_pal.segment_raw.values
+
+# MinMax scale segments
+min_max_segments = [x-np.min(x) for x in all_segments]
+min_max_segments = [x/np.max(x) for x in min_max_segments]
+
+# Scale all segments to same length
+max_len = np.max([len(x) for x in min_max_segments])
+scaled_segments = [np.interp(np.linspace(0,1,max_len), np.linspace(0,1,len(x)), x) \
+        for x in min_max_segments]
+scaled_segments = np.stack(scaled_segments)
+
+# Get PCA features
+pca_obj = PCA()
+pca_obj.fit(scaled_segments)
+pca_features = pca_obj.transform(scaled_segments)[:,:3]
+
+# Add PCA features to all features
+all_features = np.concatenate([all_features, pca_features], axis=-1)
+
+# Scale features
+scaled_features = StandardScaler().fit_transform(all_features)
+
+# Correct feature_names
+pca_feature_names = [feature_names[i] for i in drop_inds]
+feature_names = np.delete(feature_names, drop_inds)
+feature_names = np.concatenate([feature_names, pca_feature_names])
+
+
+############################################################
+# Most separable mouth movements for palatability
+############################################################
+############################################################
+# Unsupervised clustering of UMAP features
+############################################################
 
 # Get explained variance for features
 pca_obj = PCA()
@@ -261,8 +311,6 @@ umap_obj = UMAP(n_components=2)
 umap_obj.fit(scaled_features)
 umap_features = umap_obj.transform(scaled_features)
 
-# Pull out segments for comparison
-all_segments = merge_gape_pal.segment_raw.values
 
 # K-Means cluster umap embedding to pull out notable segments
 n_clusters = 30
@@ -384,7 +432,7 @@ plt.close()
 x_lims = [np.min(umap_features[:,0]), np.max(umap_features[:,0])]
 y_lims = [np.min(umap_features[:,1]), np.max(umap_features[:,1])]
 
-n_bins = 30
+n_bins = 25
 x_vals = np.linspace(x_lims[0]*1.1, x_lims[1]*1.1, n_bins)
 y_vals = np.linspace(y_lims[0]*1.1, y_lims[1]*1.1, n_bins)
 
@@ -406,6 +454,7 @@ for i, this_pal in enumerate(np.unique(pal_vec)):
 hist_x_mesh, hist_y_mesh = np.meshgrid(x_edges[:-1], y_edges[:-1])
 hist_x_mesh = hist_x_mesh.T
 hist_y_mesh = hist_y_mesh.T
+hist_mesh_flat = np.stack([hist_x_mesh.flatten(), hist_y_mesh.flatten()], axis=-1)
 
 # ll_eval_list = []
 # for i, this_pal in enumerate(np.unique(pal_vec)):
@@ -425,6 +474,8 @@ vmax = np.max([
 
 # ll_diff = ll_eval_list[0] - ll_eval_list[1]
 hist_diff = hist_list[0] / hist_list[1]
+cmap = plt.cm.jet
+norm = mpl.colors.CenteredNorm(0, 0.5)
 fig, ax = plt.subplots(2,3, sharex=True, sharey=True,
                        figsize=(20,10))
 pal_colors = ['r','b']
@@ -438,7 +489,7 @@ for i, this_pal in enumerate(np.unique(pal_vec)):
                     c=pal_colors[i], label=this_pal, alpha=0.1)
     ax[0, i].set_title('Palatability: ' + str(this_pal))
 img = ax[0, 2].pcolormesh(hist_x_mesh, hist_y_mesh, np.log10(hist_diff),
-               cmap='jet')
+               cmap=cmap, norm=norm)
 plt.colorbar(img, ax=ax[0, 2],
              label = '<- Palatable | Unpalatable ->')
 ax[0, 2].set_xlabel('UMAP 1')
@@ -496,14 +547,14 @@ gp.fit(X, y)
 y_pred, sigma = gp.predict(hist_mesh_flat, return_std=True)
 y_pred = y_pred.reshape(hist_x_mesh.shape)
 
-fig, ax = plt.subplots(1,2, sharex=True, sharey=True)
-img = ax[0].pcolormesh(hist_x_mesh, hist_y_mesh, np.log10(hist_diff),
-                cmap='jet')
-plt.colorbar(img, ax=ax[0])
-img = ax[1].pcolormesh(hist_x_mesh, hist_y_mesh, y_pred,
-                cmap='jet')
-plt.colorbar(img, ax=ax[1])
-plt.show()
+# fig, ax = plt.subplots(1,2, sharex=True, sharey=True)
+# img = ax[0].pcolormesh(hist_x_mesh, hist_y_mesh, np.log10(hist_diff),
+#                 cmap='jet')
+# plt.colorbar(img, ax=ax[0])
+# img = ax[1].pcolormesh(hist_x_mesh, hist_y_mesh, y_pred,
+#                 cmap='jet')
+# plt.colorbar(img, ax=ax[1])
+# plt.show()
 
 ###############
 # Take n points from each cluster and evaluate histdiff (via GP)
@@ -650,5 +701,523 @@ plt.close()
 sns.clustermap(stacked_frame_sorted.T, row_cluster=False, col_cluster=True,
                cmap='viridis', figsize=(10,5))
 plt.savefig(os.path.join(plot_dir, 'cluster_constituency_clustermap.png'),
+            bbox_inches='tight')
+plt.close()
+
+############################################################
+# Cross-validated classification accuracy 
+############################################################
+# Test classifier by leaving out:
+# 1) Random session
+# 1) Session within animal
+# 2) Session across animals
+# 3) Whole animals
+merge_gape_pal = merge_gape_pal_backup.copy()
+
+feature_names = [
+    'duration',
+    'amplitude_rel',
+    'amplitude_abs',
+    'left_interval',
+    'right_interval',
+    'pca_1',
+    'pca_2',
+    'pca_3',
+    'max_freq',
+]
+
+all_features = np.stack(merge_gape_pal.features.values)
+
+# Drop amplitude_rel
+drop_inds = [i for i, x in enumerate(feature_names) if 'amplitude_rel' in x]
+all_features = np.delete(all_features, drop_inds, axis=1)
+feature_names = np.delete(feature_names, drop_inds)
+
+# Normalize amplitude by baseline
+baseline_vec = merge_gape_pal.baseline_mean.values
+amplitude_inds = np.array(
+        [i for i, x in enumerate(feature_names) if 'amplitude' in x])
+all_features[:,amplitude_inds] = all_features[:,amplitude_inds] / \
+        baseline_vec[:,None]
+
+# Drop PCA features
+# In future, we can re-calculate PCA features
+drop_inds = np.array(
+        [i for i, x in enumerate(feature_names) if 'pca' in x])
+all_features = np.delete(all_features, drop_inds, axis=1)
+
+# Recalculate PCA features
+# First scale all segments by amplitude and length
+all_segments = merge_gape_pal.segment_raw.values
+
+# MinMax scale segments
+min_max_segments = [x-np.min(x) for x in all_segments]
+min_max_segments = [x/np.max(x) for x in min_max_segments]
+
+# Scale all segments to same length
+max_len = np.max([len(x) for x in min_max_segments])
+scaled_segments = [np.interp(np.linspace(0,1,max_len), np.linspace(0,1,len(x)), x) \
+        for x in min_max_segments]
+scaled_segments = np.stack(scaled_segments)
+
+# Get PCA features
+pca_obj = PCA()
+pca_obj.fit(scaled_segments)
+pca_features = pca_obj.transform(scaled_segments)[:,:3]
+
+# Add PCA features to all features
+all_features = np.concatenate([all_features, pca_features], axis=-1)
+
+# Scale features
+scaled_features = StandardScaler().fit_transform(all_features)
+
+# Correct feature_names
+pca_feature_names = [feature_names[i] for i in drop_inds]
+feature_names = np.delete(feature_names, drop_inds)
+feature_names = np.concatenate([feature_names, pca_feature_names])
+
+# Categorize animal_num
+animal_codes = merge_gape_pal.animal_num.astype('category').cat.codes.values
+
+fig,ax = plt.subplots(1,4, sharey=True)
+ax[0].imshow(scaled_features, aspect='auto', interpolation='nearest')
+ax[0].set_xticks(np.arange(len(feature_names)))
+ax[0].set_xticklabels(feature_names, rotation=45, ha='right')
+ax[0].set_xlabel('Feature')
+ax[0].set_ylabel('Segment')
+ax[1].imshow(merge_gape_pal.session_ind.values[:,None], 
+             aspect='auto', interpolation='nearest',
+             cmap = 'tab20')
+ax[2].imshow(animal_codes[:,None],
+             aspect='auto', interpolation='nearest',
+             cmap = 'tab20')
+scored_data = merge_gape_pal.scored.fillna(False).values
+ax[3].imshow(scored_data[:,None],
+             aspect='auto', interpolation='nearest',
+             )
+ax[0].set_title('Features')
+ax[1].set_title('Session')
+ax[2].set_title('Animal')
+ax[3].set_title(f'Scored, n={np.sum(scored_data)}')
+fig.savefig(os.path.join(plot_dir, 'scaled_features_for_crossval.png'),
+            bbox_inches='tight')
+plt.close()
+
+##############################
+merge_gape_pal['features'] = list(scaled_features)
+
+scored_df = merge_gape_pal[merge_gape_pal.scored == True]
+
+# Correct event_types
+types_to_drop = ['to discuss', 'other', 'unknown mouth movement','out of view']
+scored_df = scored_df[~scored_df.event_type.isin(typestypes_to_drop = ['to discuss', 'other', 'unknown mouth movement','out of view']_to_drop)]
+
+# Remap event_types
+event_type_map = {
+        'mouth movements' : 'mouth or tongue movement',
+        'tongue protrusion' : 'mouth or tongue movement',
+        'mouth or tongue movement' : 'mouth or tongue movement',
+        'lateral tongue movement' : 'lateral tongue protrusion',
+        'lateral tongue protrusion' : 'lateral tongue protrusion',
+        'gape' : 'gape',
+        'no movement' : 'no movement',
+        }
+
+scored_df['event_type'] = scored_df['event_type'].map(event_type_map)
+scored_df['event_codes'] = scored_df['event_type'].astype('category').cat.codes
+scored_df['is_gape'] = (scored_df['event_type'] == 'gape')*1
+
+scored_df.dropna(subset=['event_type'], inplace=True)
+
+print(scored_df.event_type.value_counts())
+
+############################################################
+# JL comparison
+############################################################
+
+jl_comparison_plot_dir = os.path.join(plot_dir, 'jl_comparison')
+os.makedirs(jl_comparison_plot_dir, exist_ok=True)
+
+##############################
+# Leave one session out
+##############################
+
+# Get all unique sessions
+unique_sessions = scored_df.session_ind.unique()
+
+test_y_list = []
+pred_y_list = []
+jl_pred_y_list = []
+mean_abs_shap_list = []
+for i, this_session in enumerate(tqdm(unique_sessions)):
+    # Leave out this session
+    train_df = scored_df[scored_df.session_ind != this_session]
+    test_df = scored_df[scored_df.session_ind == this_session]
+
+    # Train classifier
+    X_train = np.stack(train_df.features.values)
+    y_train = train_df.is_gape.values
+    X_test = np.stack(test_df.features.values)
+    y_test = test_df.is_gape.values
+
+    jl_pred_y = test_df.classifier.values
+    jl_pred_y_list.append(jl_pred_y)
+
+    clf = xgb.XGBClassifier()
+    clf.fit(X_train, y_train)
+    y_pred = clf.predict(X_test)
+
+    test_y_list.append(y_test)
+    pred_y_list.append(y_pred)
+
+    # Get shap values
+    # explainer = shap.Explainer(clf)
+    # shap_values = explainer(X_train)
+    # mean_abs_shap = np.abs(shap_values.values).mean(axis=0)
+    # mean_abs_shap_list.append(mean_abs_shap)
+    mean_abs_shap_list.append(clf.feature_importances_)
+
+
+# Get accuracy and f1
+jl_accuracy = [accuracy_score(y_test, jl_pred_y) for y_test, jl_pred_y in zip(test_y_list, jl_pred_y_list)]
+accuracy = [accuracy_score(y_test, pred_y) for y_test, pred_y in zip(test_y_list, pred_y_list)]
+jl_f1 = [f1_score(y_test, jl_pred_y) for y_test, jl_pred_y in zip(test_y_list, jl_pred_y_list)]
+f1 = [f1_score(y_test, pred_y) for y_test, pred_y in zip(test_y_list, pred_y_list)]
+
+fig, ax = plt.subplots(1,2)
+ax[0].scatter(jl_accuracy, accuracy)
+ax[0].plot([0,1],[0,1],'k--')
+ax[0].set_xlabel('JL Accuracy')
+ax[0].set_ylabel('Our Accuracy')
+ax[0].set_title('Accuracy Comparison')
+ax[0].set_aspect('equal')
+ax[1].scatter(jl_f1, f1)
+ax[1].plot([0,1],[0,1],'k--')
+ax[1].set_xlabel('JL F1')
+ax[1].set_ylabel('Our F1')
+ax[1].set_title('F1 Comparison')
+ax[1].set_aspect('equal')
+fig.suptitle('Leave One Session Out\nComparison of JL vs Our Accuracy')
+plt.tight_layout()
+plt.savefig(os.path.join(jl_comparison_plot_dir, 
+                         'leave_one_session_out_comparison.png'),
+            bbox_inches='tight')
+plt.close()
+
+# Plot shap values
+shap_df = pd.DataFrame(mean_abs_shap_list, columns=feature_names)
+# Melt
+shap_df = shap_df.melt(var_name='Feature', value_name='Mean Abs SHAP')
+# Sort features by mean abs shap
+shap_df.sort_values('Mean Abs SHAP', ascending=False, inplace=True)
+
+
+sns.boxplot(data=shap_df, x='Feature', y='Mean Abs SHAP',
+            fill = False, showfliers=False)
+sns.stripplot(data=shap_df, x='Feature', y='Mean Abs SHAP',
+              color='k', alpha=0.5)
+plt.xticks(rotation=45, ha='right')
+plt.ylabel('Mean Abs SHAP')
+plt.title('Mean Abs SHAP Comparison')
+plt.tight_layout()
+plt.savefig(os.path.join(jl_comparison_plot_dir, 'mean_abs_shap_session_comparison.png'),
+            bbox_inches='tight')
+plt.close()
+
+##############################
+# Leave on animal out 
+##############################
+
+# Get all unique sessions
+scored_df['animal_code'] = scored_df.animal_num.astype('category').cat.codes
+unique_animals = scored_df.animal_code.unique()
+
+test_y_list = []
+pred_y_list = []
+jl_pred_y_list = []
+mean_abs_shap_list = []
+for i, this_session in enumerate(tqdm(unique_animals)):
+    # Leave out this session
+    train_df = scored_df[scored_df.animal_code != this_session]
+    test_df = scored_df[scored_df.animal_code == this_session]
+
+    # Train classifier
+    X_train = np.stack(train_df.features.values)
+    y_train = train_df.is_gape.values
+    X_test = np.stack(test_df.features.values)
+    y_test = test_df.is_gape.values
+
+    jl_pred_y = test_df.classifier.values
+    jl_pred_y_list.append(jl_pred_y)
+
+    clf = xgb.XGBClassifier()
+    clf.fit(X_train, y_train)
+    y_pred = clf.predict(X_test)
+
+    test_y_list.append(y_test)
+    pred_y_list.append(y_pred)
+
+    # Get shap values
+    # explainer = shap.Explainer(clf)
+    # shap_values = explainer(X_train)
+    # mean_abs_shap = np.abs(shap_values.values).mean(axis=0)
+    # mean_abs_shap_list.append(mean_abs_shap)
+    mean_abs_shap_list.append(clf.feature_importances_)
+
+
+# Get accuracy and f1
+jl_accuracy = [accuracy_score(y_test, jl_pred_y) for y_test, jl_pred_y in zip(test_y_list, jl_pred_y_list)]
+accuracy = [accuracy_score(y_test, pred_y) for y_test, pred_y in zip(test_y_list, pred_y_list)]
+jl_f1 = [f1_score(y_test, jl_pred_y) for y_test, jl_pred_y in zip(test_y_list, jl_pred_y_list)]
+f1 = [f1_score(y_test, pred_y) for y_test, pred_y in zip(test_y_list, pred_y_list)]
+
+fig, ax = plt.subplots(1,2)
+ax[0].scatter(jl_accuracy, accuracy)
+ax[0].plot([0,1],[0,1],'k--')
+ax[0].set_xlabel('JL Accuracy')
+ax[0].set_ylabel('Our Accuracy')
+ax[0].set_title('Accuracy Comparison')
+ax[0].set_aspect('equal')
+ax[1].scatter(jl_f1, f1)
+ax[1].plot([0,1],[0,1],'k--')
+ax[1].set_xlabel('JL F1')
+ax[1].set_ylabel('Our F1')
+ax[1].set_title('F1 Comparison')
+ax[1].set_aspect('equal')
+fig.suptitle('Leave One Session Out\nComparison of JL vs Our Accuracy')
+plt.tight_layout()
+plt.savefig(os.path.join(jl_comparison_plot_dir, 
+                         'leave_one_animal_out_comparison.png'),
+            bbox_inches='tight')
+plt.close()
+
+# Plot shap values
+shap_df = pd.DataFrame(mean_abs_shap_list, columns=feature_names)
+# Melt
+shap_df = shap_df.melt(var_name='Feature', value_name='Mean Abs SHAP')
+# Sort features by mean abs shap
+shap_df.sort_values('Mean Abs SHAP', ascending=False, inplace=True)
+
+
+sns.boxplot(data=shap_df, x='Feature', y='Mean Abs SHAP',
+            fill = False, showfliers=False)
+sns.stripplot(data=shap_df, x='Feature', y='Mean Abs SHAP',
+              color='k', alpha=0.5)
+plt.xticks(rotation=45, ha='right')
+plt.ylabel('Mean Abs SHAP')
+plt.title('Mean Abs SHAP Comparison')
+plt.tight_layout()
+plt.savefig(os.path.join(jl_comparison_plot_dir, 'mean_abs_shap_animal_comparison.png'),
+            bbox_inches='tight')
+plt.close()
+
+############################################################
+# NM-BSA Comparison 
+############################################################
+bsa_comparison_plot_dir = os.path.join(plot_dir, 'bsa_comparison')
+os.makedirs(bsa_comparison_plot_dir, exist_ok=True)
+
+# Get BSA for given events
+# gape = 6:11
+# LTP = 11:
+bsa_p_array = all_data_frame.loc[ind,'bsa_p']
+wanted_bsa_p_list = []
+for i, this_event_row in scored_df.iterrows():
+    taste = this_event_row['taste']
+    trial = this_event_row['trial']
+    time_lims = np.array(this_event_row['segment_bounds'])+2000
+    bsa_dat = bsa_p_array[taste, trial, time_lims[0]:time_lims[1]]
+    bsa_mode = stats.mode(bsa_dat, axis = 0).mode
+    wanted_bsa_p_list.append(bsa_mode)
+
+# Convert bsa_p to predictions
+def bsa_to_pred(x):
+    if np.logical_and(x>=6, x<11):
+        return 0
+    elif x>=11:
+        return 1
+    else:
+        return 2
+
+bsa_aligned_event_map = {
+        'gape' : 0,
+        'mouth or tongue movement' : 1,
+        'lateral tongue protrusion' : 2,
+        'no movement' : 2,
+        }
+
+scored_df['bsa_aligned_event_codes'] = scored_df['event_type'].map(bsa_aligned_event_map)
+
+# Get metrics for BSA
+wanted_bsa_pred_list = np.array([bsa_to_pred(x) for x in wanted_bsa_p_list]).astype('int')
+scored_df['bsa_pred'] = wanted_bsa_pred_list
+
+##############################
+# Leave one session out
+##############################
+test_y_list = []
+pred_y_list = []
+bsa_pred_y_list = []
+mean_abs_shap_list = []
+for i, this_session in enumerate(tqdm(unique_sessions)):
+    # Leave out this session
+    train_df = scored_df[scored_df.session_ind != this_session]
+    test_df = scored_df[scored_df.session_ind == this_session]
+
+    # Train classifier
+    X_train = np.stack(train_df.features.values)
+    y_train = train_df.bsa_aligned_event_codes.values
+    X_test = np.stack(test_df.features.values)
+    y_test = test_df.bsa_aligned_event_codes.values
+
+    bsa_pred_y = test_df.bsa_pred.values
+    bsa_pred_y_list.append(bsa_pred_y)
+
+    clf = xgb.XGBClassifier()
+    clf.fit(X_train, y_train)
+    y_pred = clf.predict(X_test)
+
+    test_y_list.append(y_test)
+    pred_y_list.append(y_pred)
+
+    # Get shap values
+    # explainer = shap.Explainer(clf)
+    # shap_values = explainer(X_train)
+    # mean_abs_shap = np.abs(shap_values.values).mean(axis=0)
+    # mean_abs_shap_list.append(mean_abs_shap)
+    mean_abs_shap_list.append(clf.feature_importances_)
+
+
+# Get accuracy and f1
+bsa_accuracy = [accuracy_score(y_test, bsa_pred_y) \
+        for y_test, bsa_pred_y in zip(test_y_list, bsa_pred_y_list)]
+accuracy = [accuracy_score(y_test, pred_y) for y_test, pred_y in zip(test_y_list, pred_y_list)]
+bsa_f1 = [f1_score(y_test, bsa_pred_y, average='macro') \
+        for y_test, bsa_pred_y in zip(test_y_list, bsa_pred_y_list)]
+f1 = [f1_score(y_test, pred_y, average='macro') \
+        for y_test, pred_y in zip(test_y_list, pred_y_list)]
+
+fig, ax = plt.subplots(1,2)
+ax[0].scatter(bsa_accuracy, accuracy)
+ax[0].plot([0,1],[0,1],'k--')
+ax[0].set_xlabel('BSA Accuracy')
+ax[0].set_ylabel('Our Accuracy')
+ax[0].set_title('Accuracy Comparison')
+ax[0].set_aspect('equal')
+ax[1].scatter(bsa_f1, f1)
+ax[1].plot([0,1],[0,1],'k--')
+ax[1].set_xlabel('BSA F1')
+ax[1].set_ylabel('Our F1')
+ax[1].set_title('F1 Comparison')
+ax[1].set_aspect('equal')
+fig.suptitle('Leave One Session Out\nComparison of BSA vs Our Accuracy')
+plt.tight_layout()
+plt.savefig(os.path.join(bsa_comparison_plot_dir, 
+                         'leave_one_session_out_comparison.png'),
+            bbox_inches='tight')
+plt.close()
+
+# Plot shap values
+shap_df = pd.DataFrame(mean_abs_shap_list, columns=feature_names)
+# Melt
+shap_df = shap_df.melt(var_name='Feature', value_name='Mean Abs SHAP')
+# Sort features by mean abs shap
+shap_df.sort_values('Mean Abs SHAP', ascending=False, inplace=True)
+
+
+sns.boxplot(data=shap_df, x='Feature', y='Mean Abs SHAP',
+            fill = False, showfliers=False)
+sns.stripplot(data=shap_df, x='Feature', y='Mean Abs SHAP',
+              color='k', alpha=0.5)
+plt.xticks(rotation=45, ha='right')
+plt.ylabel('Mean Abs SHAP')
+plt.title('Mean Abs SHAP Comparison')
+plt.tight_layout()
+plt.savefig(os.path.join(bsa_comparison_plot_dir, 'mean_abs_shap_session_comparison.png'),
+            bbox_inches='tight')
+plt.close()
+
+##############################
+# Leave one animal out
+##############################
+test_y_list = []
+pred_y_list = []
+bsa_pred_y_list = []
+mean_abs_shap_list = []
+for i, this_session in enumerate(tqdm(unique_animals)):
+    # Leave out this session
+    train_df = scored_df[scored_df.animal_code != this_session]
+    test_df = scored_df[scored_df.animal_code == this_session]
+
+    # Train classifier
+    X_train = np.stack(train_df.features.values)
+    y_train = train_df.bsa_aligned_event_codes.values
+    X_test = np.stack(test_df.features.values)
+    y_test = test_df.bsa_aligned_event_codes.values
+
+    bsa_pred_y = test_df.bsa_pred.values
+    bsa_pred_y_list.append(bsa_pred_y)
+
+    clf = xgb.XGBClassifier()
+    clf.fit(X_train, y_train)
+    y_pred = clf.predict(X_test)
+
+    test_y_list.append(y_test)
+    pred_y_list.append(y_pred)
+
+    # Get shap values
+    # explainer = shap.Explainer(clf)
+    # shap_values = explainer(X_train)
+    # mean_abs_shap = np.abs(shap_values.values).mean(axis=0)
+    # mean_abs_shap_list.append(mean_abs_shap)
+    mean_abs_shap_list.append(clf.feature_importances_)
+
+
+# Get accuracy and f1
+bsa_accuracy = [accuracy_score(y_test, bsa_pred_y) \
+        for y_test, bsa_pred_y in zip(test_y_list, bsa_pred_y_list)]
+accuracy = [accuracy_score(y_test, pred_y) for y_test, pred_y in zip(test_y_list, pred_y_list)]
+bsa_f1 = [f1_score(y_test, bsa_pred_y, average='macro') \
+        for y_test, bsa_pred_y in zip(test_y_list, bsa_pred_y_list)]
+f1 = [f1_score(y_test, pred_y, average='macro') \
+        for y_test, pred_y in zip(test_y_list, pred_y_list)]
+
+fig, ax = plt.subplots(1,2)
+ax[0].scatter(bsa_accuracy, accuracy)
+ax[0].plot([0,1],[0,1],'k--')
+ax[0].set_xlabel('BSA Accuracy')
+ax[0].set_ylabel('Our Accuracy')
+ax[0].set_title('Accuracy Comparison')
+ax[0].set_aspect('equal')
+ax[1].scatter(bsa_f1, f1)
+ax[1].plot([0,1],[0,1],'k--')
+ax[1].set_xlabel('BSA F1')
+ax[1].set_ylabel('Our F1')
+ax[1].set_title('F1 Comparison')
+ax[1].set_aspect('equal')
+fig.suptitle('Leave One Session Out\nComparison of BSA vs Our Accuracy')
+plt.tight_layout()
+plt.savefig(os.path.join(bsa_comparison_plot_dir, 
+                         'leave_one_animal_out_comparison.png'),
+            bbox_inches='tight')
+plt.close()
+
+# Plot shap values
+shap_df = pd.DataFrame(mean_abs_shap_list, columns=feature_names)
+# Melt
+shap_df = shap_df.melt(var_name='Feature', value_name='Mean Abs SHAP')
+# Sort features by mean abs shap
+shap_df.sort_values('Mean Abs SHAP', ascending=False, inplace=True)
+
+
+sns.boxplot(data=shap_df, x='Feature', y='Mean Abs SHAP',
+            fill = False, showfliers=False)
+sns.stripplot(data=shap_df, x='Feature', y='Mean Abs SHAP',
+              color='k', alpha=0.5)
+plt.xticks(rotation=45, ha='right')
+plt.ylabel('Mean Abs SHAP')
+plt.title('Mean Abs SHAP Comparison')
+plt.tight_layout()
+plt.savefig(os.path.join(bsa_comparison_plot_dir, 'mean_abs_shap_animal_comparison.png'),
             bbox_inches='tight')
 plt.close()
