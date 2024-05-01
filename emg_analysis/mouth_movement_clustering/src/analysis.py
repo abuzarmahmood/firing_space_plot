@@ -809,11 +809,13 @@ plt.close()
 merge_gape_pal['raw_features'] = list(all_features)
 merge_gape_pal['features'] = list(scaled_features)
 
+merge_gape_pal.to_pickle(os.path.join(artifact_dir, 'merge_gape_pal.pkl'))
+
 scored_df = merge_gape_pal[merge_gape_pal.scored == True]
 
 # Correct event_types
 types_to_drop = ['to discuss', 'other', 'unknown mouth movement','out of view']
-scored_df = scored_df[~scored_df.event_type.isin(typestypes_to_drop = ['to discuss', 'other', 'unknown mouth movement','out of view']_to_drop)]
+scored_df = scored_df[~scored_df.event_type.isin(types_to_drop)]
 
 # Remap event_types
 event_type_map = {
@@ -833,6 +835,23 @@ scored_df['is_gape'] = (scored_df['event_type'] == 'gape')*1
 scored_df.dropna(subset=['event_type'], inplace=True)
 
 print(scored_df.event_type.value_counts())
+
+event_type_counts = scored_df.event_type.value_counts().to_dict()
+
+def func(pct, allvals):
+    absolute = int(np.round(pct/100.*np.sum(allvals)))
+    return f"{pct:.1f}%\n({absolute:d})"
+
+fig, ax = plt.subplots()
+ax.pie(event_type_counts.values(), labels=event_type_counts.keys(),
+       autopct=lambda pct: func(pct, np.array(list(event_type_counts.values()))),
+       explode = [0.1]*len(event_type_counts),
+       )
+ax.set_title('Event Type Distribution')
+fig.savefig(os.path.join(plot_dir, 'event_type_distribution_bsa.png'),
+            bbox_inches='tight')
+plt.close()
+
 
 ############################################################
 # JL comparison

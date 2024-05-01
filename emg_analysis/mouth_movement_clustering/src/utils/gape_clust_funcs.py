@@ -10,6 +10,7 @@ from detect_peaks import detect_peaks
 import pandas as pd
 from sklearn.preprocessing import StandardScaler
 from QDA_classifier import QDA
+from time import time
 
 
 def extract_movements(this_trial_dat, size = 250):
@@ -195,7 +196,7 @@ def get_peak_edges(peak_ind, below_mean_ind):
 
 def JL_process(
         this_trial_dat, 
-        this_laser_prestim_dat, 
+        this_day_prestim_dat, 
         pre_stim,
         post_stim,
         ):
@@ -211,11 +212,12 @@ def JL_process(
     gapes : (time,)
     """
 
+    start_time = time()
     peak_ind = detect_peaks(
         this_trial_dat,
         mpd=85,
-        mph=np.mean(this_laser_prestim_dat) +
-        np.std(this_laser_prestim_dat)
+        mph=np.mean(this_day_prestim_dat) +
+        np.std(this_day_prestim_dat)
     )
 
 
@@ -225,11 +227,11 @@ def JL_process(
     # Get the indices, in the smoothed signal,
     # that are below the mean of the smoothed signal
     below_mean_ind = np.where(this_trial_dat <=
-                              np.mean(this_laser_prestim_dat))[0]
+                              np.mean(this_day_prestim_dat))[0]
 
     #plt.plot(this_trial_dat)
     #plt.plot(peak_ind, this_trial_dat[peak_ind], 'ro')
-    #plt.axhline(np.mean(this_laser_prestim_dat), color='k')
+    #plt.axhline(np.mean(this_day_prestim_dat), color='k')
     #plt.scatter(below_mean_ind, this_trial_dat[below_mean_ind], color='g')
     #plt.show()
 
@@ -237,7 +239,7 @@ def JL_process(
     accept_peaks = np.where(peak_ind > pre_stim)[0]
     peak_ind = peak_ind[accept_peaks]
     if len(peak_ind) == 0:
-        return None
+        return None, [np.nan, np.nan]
 
 
     # Run through the accepted peaks, and append their breadths to durations.
@@ -247,7 +249,7 @@ def JL_process(
     left_end_list, right_end_list, keep_peaks = \
             get_peak_edges(peak_ind, below_mean_ind)
     if len(peak_ind) == 0:
-        return None
+        return None, [np.nan, np.nan]
     peak_ind = peak_ind[keep_peaks]
 
         #left_end_list = [np.where(below_mean_ind < peak)[0][-1] \
@@ -261,7 +263,9 @@ def JL_process(
     durations = dur[dur_bool]
     peak_ind = peak_ind[dur_bool]
     if len(peak_ind) == 0:
-        return None
+        return None, [np.nan, np.nan]
+
+    end_data_time = time()
 
     # In case there aren't any peaks or just one peak
     # (very unlikely), skip this trial 
@@ -280,7 +284,13 @@ def JL_process(
     else:
         gape_peak_ind = None
 
-    return gape_peak_ind
+    end_classification_time = time()
+
+    data_extraction_time = end_data_time - start_time
+    classification_time = end_classification_time - end_data_time
+    time_list = [data_extraction_time, classification_time]
+
+    return gape_peak_ind, time_list
 
 # Convert segment_dat and gapes_Li to pandas dataframe for easuer handling
 def gen_gape_frame(segment_dat_list, gapes_Li):

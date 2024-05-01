@@ -10,6 +10,7 @@ from tqdm import tqdm
 from matplotlib.patches import Patch
 import seaborn as sns
 import json
+from time import time
 
 base_dir = '/media/bigdata/firing_space_plot/emg_analysis/mouth_movement_clustering'
 code_dir = os.path.join(base_dir, 'src')
@@ -192,6 +193,8 @@ merge_df['bsa_omega'] = omega_list
 merge_df['taste_orders'] = taste_order_list
 merge_df['taste_map'] = taste_map_list
 
+# merge_df.basename[merge_df.taste_orders.isna()]
+
 merge_df.dropna(inplace = True)
 merge_df.reset_index(inplace = True, drop = True)
 
@@ -223,6 +226,7 @@ post_stim = 5000
 ###############
 # Run everything through JL Process
 gapes_Li_list = []
+Li_time_taken_list = []
 for ind, row in tqdm(merge_df.iterrows()):
     envs = row.env
     gapes_Li = np.zeros(envs.shape)
@@ -234,12 +238,14 @@ for ind, row in tqdm(merge_df.iterrows()):
 
         ### Jenn Li Process ###
         # Get peak indices
-        gape_peak_inds = JL_process(
+        gape_peak_inds, time_list = JL_process(
                             this_trial_dat, 
                             this_day_prestim_dat,
                             pre_stim,
                             post_stim,
                             )
+
+        Li_time_taken_list.append(time_list)
 
         if gape_peak_inds is not None:
             gapes_Li[this_ind][gape_peak_inds] = 1
@@ -248,9 +254,13 @@ for ind, row in tqdm(merge_df.iterrows()):
 
 merge_df['gapes_Li'] = gapes_Li_list
 
+Li_time_frame = pd.DataFrame(Li_time_taken_list, columns = ['preprocessing', 'classification'])
+Li_time_frame.to_csv(os.path.join(artifact_dir, 'Li_time_frame.csv'))
+
 ###############
 # Run everything through AM Process 
 segment_dat_list_list = []
+AM_time_taken_list = []
 for ind, row in tqdm(merge_df.iterrows()):
     segment_dat_list = []
     envs = row.env
@@ -258,6 +268,8 @@ for ind, row in tqdm(merge_df.iterrows()):
 
     for this_ind in inds:
         this_trial_dat = envs[this_ind]
+
+        start_time = time() 
         segment_starts, segment_ends, segment_dat = extract_movements(
             this_trial_dat, size=200)
 
@@ -273,6 +285,10 @@ for ind, row in tqdm(merge_df.iterrows()):
          segment_ends) = extract_features(
             segment_dat, segment_starts, segment_ends)
 
+        end_feature_extraction_time = time()
+        preprocessing_time = end_feature_extraction_time - start_time
+        AM_time_taken_list.append(preprocessing_time)
+
         segment_bounds = list(zip(segment_starts, segment_ends))
         merged_dat = [feature_array, segment_dat, segment_bounds] 
         segment_dat_list.append(merged_dat)
@@ -280,6 +296,9 @@ for ind, row in tqdm(merge_df.iterrows()):
     segment_dat_list_list.append(segment_dat_list)
 
 merge_df['segment_dat_list'] = segment_dat_list_list
+
+AM_time_frame = pd.DataFrame(AM_time_taken_list, columns = ['preprocessing'])
+AM_time_frame.to_csv(os.path.join(artifact_dir, 'AM_time_frame.csv'))
 
 ##############################
 # Generate gape frame
