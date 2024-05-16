@@ -20,6 +20,8 @@ from tqdm import tqdm
 from time import time
 import xgboost as xgb
 import sys
+from ast import literal_eval
+from sklearn.metrics import accuracy_score
 
 base_dir = '/media/bigdata/firing_space_plot/emg_analysis/mouth_movement_clustering'
 code_dir = os.path.join(base_dir, 'src')
@@ -95,13 +97,96 @@ session_specific_plot_dir = os.path.join(plot_dir, 'session_specific_plots')
 all_data_pkl_path = os.path.join(artifact_dir, 'all_data_frame.pkl')
 all_data_frame = pd.read_pickle(all_data_pkl_path)
 
-pred_plot_dir = os.path.join(plot_dir, 'prediction_plots', 'jl_qda')
-if not os.path.exists(pred_plot_dir):
-    os.makedirs(pred_plot_dir)
+
+
+##############################
+# Specificitiy of annotations 
+##############################
+merge_gape_pal_path = os.path.join(artifact_dir, 'merge_gape_pal.pkl')
+merge_gape_pal = pd.read_pickle(merge_gape_pal_path)
+
+feature_names_path = os.path.join(artifact_dir, 'merge_gape_pal_feature_names.npy')
+feature_names = np.load(feature_names_path)
+
+scored_df = merge_gape_pal[merge_gape_pal.scored == True]
+
+# Correct event_types
+types_to_drop = ['to discuss', 'other', 'unknown mouth movement','out of view']
+scored_df = scored_df[~scored_df.event_type.isin(types_to_drop)]
+
+# Remap event_types
+event_type_map = {
+        'mouth movements' : 'mouth or tongue movement',
+        'tongue protrusion' : 'mouth or tongue movement',
+        'mouth or tongue movement' : 'mouth or tongue movement',
+        'lateral tongue movement' : 'lateral tongue protrusion',
+        'lateral tongue protrusion' : 'lateral tongue protrusion',
+        'gape' : 'gape',
+        'no movement' : 'no movement',
+        }
+
+scored_df['event_type'] = scored_df['event_type'].map(event_type_map)
+scored_df['event_codes'] = scored_df['event_type'].astype('category').cat.codes
+scored_df['is_gape'] = (scored_df['event_type'] == 'gape')*1
+
+scored_df.dropna(subset=['event_type'], inplace=True)
+
+# plt.imshow(np.stack(scored_df.features.values), aspect='auto', interpolation='none')
+# plt.xticks(np.arange(len(feature_names)), feature_names, rotation=90)
+# plt.tight_layout()
+# plt.show()
+
+# Generate leave-one-animal-out predictions
+# Convert 'lateral tongue protrustion' and 'no movement' to 'other'
+scored_df['event_type'] = scored_df['event_type'].replace(
+        ['lateral tongue protrusion','no movement'],
+        'other'
+        )
+
+scored_df['event_type'] = scored_df['event_type'].replace(
+        ['mouth or tongue movement'],
+        'MTMs'
+        )
+
+event_code_dict = {
+        'gape' : 1,
+        'MTMs' : 2,
+        'other' : 0,
+        }
+
+scored_df['event_codes'] = scored_df['event_type'].map(event_code_dict)
+
+# Plot histogram of segment centers for gape and MTMs
+pred_plot_dir = os.path.join(plot_dir, 'prediction_plots')
+
+plot_df = scored_df[scored_df.event_type.isin(['gape','MTMs'])]
+
+g = sns.displot(
+        data = plot_df,
+        x = 'segment_center',
+        row = 'event_type',
+        hue = 'event_type',
+        legend = False,
+        )
+g.fig.suptitle('Histogram of Segment Centers for Annoteted Gapes and MTMs')
+plt.tight_layout()
+plt.subplots_adjust(top=0.9)
+plt.savefig(
+        os.path.join(pred_plot_dir, 'annotated_segment_center_hist.png'),
+        bbox_inches='tight')
+plt.close()
+
+# Calculate specificity of annotations
+time_bins = [[-2000, 0], [0, 2000], [2000, 5000]]
+x_inds = np.stack([np.logical_and(x_vec >= x[0], x_vec < x[1]) for x in time_bins])
 
 ##############################
 # Gapes by JL
 ##############################
+
+pred_plot_dir = os.path.join(plot_dir, 'prediction_plots', 'jl_qda')
+if not os.path.exists(pred_plot_dir):
+    os.makedirs(pred_plot_dir)
 
 taste_map_list = all_data_frame.taste_map.tolist()
 taste_list = [list(x.keys()) for x in taste_map_list]
@@ -122,6 +207,8 @@ for gape_frame in tqdm(gape_frame_list):
         gape_array[taste,trial,segment_bounds[0]:segment_bounds[1]] = 1
     gape_array_list.append(gape_array)
 
+gape_array_list = np.array(gape_array_list)
+
 x_vec = np.arange(-2000, 5000)
 
 # Plot gapes for all trials
@@ -137,7 +224,7 @@ for i, (gape_array, basename) in enumerate(zip(gape_array_list, basenames)):
     plt.close(fig)
 
 # Also make plots for mean gapes
-mean_gapes = np.mean(np.array(gape_array_list),axis=2)
+mean_gapes = np.mean(gape_array_list,axis=2)
 
 fig, ax = plt.subplots(len(mean_gapes),1,sharex=True,sharey=True,
                        figsize = (5, len(mean_gapes)*3))
@@ -153,6 +240,53 @@ plt.tight_layout()
 plt.subplots_adjust(top=0.95)
 fig.savefig(os.path.join(pred_plot_dir, 'mean_gapes_JL.png'))
 plt.close(fig)
+
+###############
+# Calculate mean_rate of events in time-bins
+
+binned_events_list = []
+for this_inds in x_inds:
+    binned_events = gape_array_list[..., this_inds]
+    binned_events_list.append(binned_events)
+
+mean_rate_list = np.array([np.mean(x, axis=-1) for x in binned_events_list])
+
+# Calculate fraction of total gapes in 0-2000 ms bin
+pred_specificity = mean_rate_list[1].sum(axis=None) / np.sum(mean_rate_list, axis=None)
+
+pred_specificity_df = pd.DataFrame(
+        dict(
+            algorithm = 'JL',
+            event_type = 'gapes',
+            specificity = pred_specificity,
+            ),
+        index = [0]
+        )
+###############
+
+df_inds = np.array(list(np.ndindex(mean_rate_list.shape)))
+mean_rate_df = pd.DataFrame(
+        dict(
+            time_bin = df_inds[:,0],
+            session = df_inds[:,1],
+            taste = df_inds[:,2],
+            trial = df_inds[:,3],
+            mean_rate = mean_rate_list.flatten()
+            )
+        )
+
+g = sns.boxplot(
+        x = 'time_bin',
+        y = 'mean_rate',
+        data = mean_rate_df,
+        dodge = True
+        )
+g.set_xticklabels(time_bins)
+plt.title('Mean Rate of Gapes by Time Bin\n' +\
+        f'Gape Specificity: {pred_specificity:.2f}')
+plt.savefig(os.path.join(pred_plot_dir, 'mean_rate_gapes.png'))
+plt.close()
+
 
 ##############################
 # Gapes by JL (no amplitude info)
@@ -194,7 +328,7 @@ fig, ax = plt.subplots()
 sns.histplot(gape_fractions, ax=ax)
 ax.set_title('Fraction of Gapes by JL (no amplitude info)')
 ax.set_xlim(0,1)
-ax.set_xlabel('Fraction of Gapes')
+ax.set_xlabel('Fraction of Gapes per trial')
 ax.set_ylabel('Count')
 fig.savefig(os.path.join(pred_plot_dir, 'gape_fraction_hist.png'))
 plt.close(fig)
@@ -213,7 +347,6 @@ fin_peak_frame = pd.DataFrame(
         columns = ['session_number','taste','trial','segment_center']
         )
     
-
 JL_gape_shape = (4,30,7000)
 gape_array_list = []
 for session_num in tqdm(fin_peak_frame.session_number.unique()):
@@ -224,6 +357,7 @@ for session_num in tqdm(fin_peak_frame.session_number.unique()):
         gape_array[taste,trial,segment_center] = 1
     gape_array_list.append(gape_array)
 
+gape_array_list = np.array(gape_array_list)
 x_vec = np.arange(-2000, 5000)
 
 # Plot gapes for all trials
@@ -240,6 +374,53 @@ for i, (gape_array, basename) in enumerate(zip(gape_array_list, basenames)):
     fig.suptitle(basename)
     fig.savefig(os.path.join(pred_plot_dir, basename + '_JL_gapes_no_amp.png'))
     plt.close(fig)
+
+###############
+# Calculate mean_rate of events in time-bins
+binned_events_list = []
+for this_inds in x_inds:
+    binned_events = gape_array_list[..., this_inds]
+    binned_events_list.append(binned_events)
+
+mean_rate_list = np.array([np.mean(x, axis=-1) for x in binned_events_list])
+
+# Calculate fraction of total gapes in 0-2000 ms bin
+pred_specificity = mean_rate_list[1].sum(axis=None) / np.sum(mean_rate_list, axis=None)
+
+this_specificity_df = pd.DataFrame(
+        dict(
+            algorithm = 'JL_no_amp',
+            event_type = 'gapes',
+            specificity = pred_specificity,
+            ),
+        index = [0]
+        )
+pred_specificity_df = pd.concat([pred_specificity_df, this_specificity_df])
+
+df_inds = np.array(list(np.ndindex(mean_rate_list.shape)))
+mean_rate_df = pd.DataFrame(
+        dict(
+            time_bin = df_inds[:,0],
+            session = df_inds[:,1],
+            taste = df_inds[:,2],
+            trial = df_inds[:,3],
+            mean_rate = mean_rate_list.flatten()
+            )
+        )
+
+g = sns.boxplot(
+        x = 'time_bin',
+        y = 'mean_rate',
+        data = mean_rate_df,
+        dodge = True
+        )
+g.set_xticklabels(time_bins)
+plt.title('Mean Rate of Gapes by Time Bin\n' +\
+        f'Gape Specificity: {pred_specificity:.2f}')
+plt.savefig(os.path.join(pred_plot_dir, 'mean_rate_gapes.png'))
+plt.close()
+
+###############
 
 # Also make plots for mean gapes
 mean_gapes = np.mean(np.array(gape_array_list),axis=2)
@@ -281,6 +462,12 @@ def bsa_to_pred(x):
     else:
         return 0
 
+bsa_event_map = {
+        0 : 'nothing',
+        1 : 'gape',
+        2 : 'MTMs',
+        }
+
 bsa_pred = np.vectorize(bsa_to_pred)(wanted_bsa_p_list)
 
 # Plot predictions
@@ -288,15 +475,23 @@ bsa_pred_plot_dir = os.path.join(plot_dir, 'prediction_plots', 'bsa')
 if not os.path.exists(bsa_pred_plot_dir):
     os.makedirs(bsa_pred_plot_dir)
 
+# Create cmap for BSA predictions
+cmap = plt.cm.get_cmap('jet', 3)
+
 for i, this_pred in enumerate(bsa_pred):
     fig, ax = plt.subplots(4,1,sharex=True,sharey=True)
     this_tastes = taste_list[i]
     for taste in range(4):
-        im = ax[taste].imshow(this_pred[taste],aspect='auto',
-                         cmap='jet', vmin=0, vmax=2)
-        ax[taste].set_ylabel(f'{this_tastes[taste]}')
+        im = ax[taste].pcolormesh(
+                x_vec, np.arange(30), 
+                this_pred[taste],
+                  cmap=cmap,vmin=0,vmax=2,)
+        ax[taste].set_ylabel(f'{this_tastes[taste]}' + '\nTrial #')
+    ax[-1].set_xlabel('Time (ms)')
     cbar_ax = fig.add_axes([0.98, 0.15, 0.02, 0.7])
-    fig.colorbar(im, cax=cbar_ax)
+    cbar = fig.colorbar(im, cax=cbar_ax)
+    cbar.set_ticks([0.5,1,1.5])
+    cbar.set_ticklabels(['nothing','gape','MTMs'])
     basename = basenames[i]
     plt.tight_layout()
     plt.subplots_adjust(top=0.95)
@@ -304,4 +499,309 @@ for i, this_pred in enumerate(bsa_pred):
     fig.savefig(os.path.join(bsa_pred_plot_dir, basename + '_BSA_pred.png'),
                 bbox_inches='tight')
     plt.close(fig)
+
+# Mean BSA predictions
+# First break down by category
+bsa_pred_separated = []
+for this_pred in bsa_pred:
+    this_pred_separated = [this_pred == x for x in range(3)]
+    this_pred_separated*=1
+    bsa_pred_separated.append(this_pred_separated)
+
+bsa_pred_separated = np.array(bsa_pred_separated)
+
+binned_events_list = []
+for this_inds in x_inds:
+    binned_events = bsa_pred_separated[..., this_inds]
+    binned_events_list.append(binned_events)
+
+mean_rate_list = np.array([np.mean(x, axis=-1) for x in binned_events_list])
+mean_rate_inds = np.stack(list(np.ndindex(mean_rate_list.shape)))
+
+mean_rate_df = pd.DataFrame(
+        dict(
+            time_bin = mean_rate_inds[:,0],
+            session = mean_rate_inds[:,1],
+            event_type = mean_rate_inds[:,2],
+            taste = mean_rate_inds[:,3],
+            trial = mean_rate_inds[:,4],
+            mean_rate = mean_rate_list.flatten()
+            )
+        )
+
+mean_rate_df['time_bin_str'] = [str(time_bins[x]) for x in mean_rate_df.time_bin]
+mean_rate_df['event_str'] = [['nothing','gape','MTMs'][x] for x in mean_rate_df.event_type]
+mean_rate_df['taste_str'] = [taste_list[x][y] for x,y in zip(mean_rate_df.session, mean_rate_df.taste)]
+
+g = sns.catplot(
+        data = mean_rate_df,
+        x = 'time_bin_str',
+        y = 'mean_rate',
+        col = 'event_str',
+        row = 'taste_str',
+        kind = 'box',
+        dodge = True
+        )
+g.fig.suptitle('Mean Rate of Events by Time Bin')
+plt.tight_layout()
+plt.subplots_adjust(top=0.95)
+plt.savefig(os.path.join(bsa_pred_plot_dir, 'mean_rate_events.png'))
+plt.close()
+
+##############################
+# Calculate fraction of non-null events in 0-2000 ms bin 
+
+# Drop 'nothing' events
+bsa_binary_pred = bsa_pred > 0
+
+binned_events_list = []
+for this_inds in x_inds:
+    binned_events = bsa_binary_pred[..., this_inds]
+    binned_events_list.append(binned_events)
+
+mean_rate_list = np.array([np.mean(x, axis=-1) for x in binned_events_list])
+
+# Calculate fraction of total gapes in 0-2000 ms bin
+pred_specificity = mean_rate_list[1].sum(axis=None) / np.sum(mean_rate_list, axis=None)
+
+this_specificity_df = pd.DataFrame(
+        dict(
+            algorithm = 'BSA',
+            event_type = 'gapes+MTMs',
+            specificity = pred_specificity,
+            ),
+        index = [0]
+        )
+pred_specificity_df = pd.concat([pred_specificity_df, this_specificity_df])
+
+df_inds = np.array(list(np.ndindex(mean_rate_list.shape)))
+mean_rate_df = pd.DataFrame(
+        dict(
+            time_bin = df_inds[:,0],
+            session = df_inds[:,1],
+            taste = df_inds[:,2],
+            trial = df_inds[:,3],
+            mean_rate = mean_rate_list.flatten()
+            )
+        )
+
+g = sns.boxplot(
+        x = 'time_bin',
+        y = 'mean_rate',
+        data = mean_rate_df,
+        dodge = True
+        )
+g.set_xticklabels(time_bins)
+plt.title('Mean Rate of Events by Time Bin\n' +\
+        f'Gape Specificity: {pred_specificity:.2f}')
+plt.savefig(os.path.join(bsa_pred_plot_dir, 'mean_rate_events.png'))
+plt.close()
+
+###############
+
+# Also make plots for mean gapes
+mean_gapes = np.mean(np.array(gape_array_list),axis=2)
+
+kern_len = 250
+kernel = np.ones(kern_len)/kern_len
+fig, ax = plt.subplots(len(mean_gapes),1,sharex=True,sharey=True,
+                       figsize = (5, len(mean_gapes)*3))
+for i, (this_mean_gape, basename) in enumerate(zip(mean_gapes, basenames)):
+    this_tastes = taste_list[i]
+    for taste in range(4):
+        taste_mean_gape = this_mean_gape[taste]
+        smooth_gape = np.convolve(taste_mean_gape, kernel, mode='same')
+        ax[i].plot(x_vec, smooth_gape, label=f'{this_tastes[taste]}')
+    ax[i].set_title(basename)
+    ax[i].axvline(0, color='r', linestyle='--')
+    ax[i].legend(loc='upper right')
+    ax[i].set_xlim(x_vec[0] + 2*kern_len, x_vec[-1] - 2*kern_len)
+fig.suptitle('Mean Gapes by JL')
+plt.tight_layout()
+plt.subplots_adjust(top=0.95)
+fig.savefig(os.path.join(pred_plot_dir, 'mean_gapes_JL_no_amp.png'))
+plt.close(fig)
+
+
+##############################
+pred_specificity = [x.rate.iloc[1] / x.rate.sum() for x in mean_rate_dfs] 
+pred_specificity = [np.round(x,2) for x in pred_specificity]
+
+this_specificity_df = pd.DataFrame(
+        dict(
+            event_type = ['nothing','gape','MTMs'],
+            specificity = pred_specificity,
+            ),
+        )
+this_specificity_df['algorithm'] = 'BSA'
+pred_specificity_df = pd.concat([pred_specificity_df, this_specificity_df])
+
+
+###############
+
+mean_bsa_pred = np.mean(bsa_pred_separated, axis=-2)
+
+
+fig, ax = plt.subplots(*mean_bsa_pred.shape[:2],
+                       sharex=True,sharey=True,
+                       figsize = (10,10)
+                       )
+for i in range(mean_bsa_pred.shape[0]):
+    for j in range(mean_bsa_pred.shape[1]):
+        ax[i,j].plot(mean_bsa_pred[i,j].T)
+        ax[i,j].set_title(f'Session {i}, {bsa_event_map[j]}')
+fig.suptitle('Mean BSA Predictions')
+plt.tight_layout()
+plt.subplots_adjust(top=0.9)
+fig.savefig(os.path.join(bsa_pred_plot_dir, 'mean_bsa_pred.png'))
+plt.close(fig)
+
+##############################
+# XGB Predictions 
+##############################
+
+# Train on scored data but predict on all data
+unique_animals = scored_df.animal_num.unique()
+
+for i, this_session in enumerate(tqdm(unique_animals)):
+    # Leave out this session
+    train_df = scored_df[scored_df.animal_num != this_session]
+    test_df = merge_gape_pal[merge_gape_pal.animal_num == this_session]
+
+    # Train model
+    X_train = np.stack(train_df.features.values)
+    y_train = train_df.event_codes.values
+
+    X_pred = np.stack(test_df.features.values)
+
+    clf = xgb.XGBClassifier()
+    clf.fit(X_train, y_train)
+    y_pred = clf.predict(X_pred)
+
+    merge_gape_pal.loc[merge_gape_pal.animal_num == this_session, 'xgb_pred'] = y_pred
+
+    # For sanity checking, check accuracy on y_train
+    y_train_pred = clf.predict(X_train)
+    train_acc = accuracy_score(y_train, y_train_pred) 
+    print(f'Train Accuracy: {train_acc:.2f}')
+
+# Convert xgb_pred to int
+merge_gape_pal['xgb_pred'] = merge_gape_pal['xgb_pred'].astype('int')
+
+###############
+# Convert to array so downstream processing can be same as BSA
+JL_gape_shape = (4,30,7000)
+xgb_pred_array_list = []
+for session_num in tqdm(merge_gape_pal.session_ind.unique()):
+    this_peak_frame = merge_gape_pal.loc[merge_gape_pal.session_ind == session_num] 
+    event_array = np.zeros(JL_gape_shape)
+    inds = this_peak_frame[['taste','trial','segment_bounds']]
+    pred_vals = this_peak_frame['xgb_pred'].values
+    for ind, pred_val in enumerate(pred_vals):
+        taste, trial, segment_bounds = inds.iloc[ind]
+        segment_bounds += 2000
+        this_pred = pred_vals[ind]
+        event_array[taste,trial,segment_bounds[0]:segment_bounds[1]] = this_pred
+
+    xgb_pred_array_list.append(event_array)
+
+xgb_pred_array_list = np.array(xgb_pred_array_list)
+# Convert to int
+xgb_pred_array_list = xgb_pred_array_list.astype('int')
+
+# Plot
+xgb_pred_plot_dir = os.path.join(plot_dir, 'prediction_plots', 'xgb')
+if not os.path.exists(xgb_pred_plot_dir):
+    os.makedirs(xgb_pred_plot_dir)
+
+# Create cmap for BSA predictions
+cmap = plt.cm.get_cmap('jet', 3)
+
+for i, this_pred in enumerate(xgb_pred_array_list):
+    fig, ax = plt.subplots(4,1,sharex=True,sharey=True)
+    this_tastes = taste_list[i]
+    for taste in range(4):
+        im = ax[taste].pcolormesh(
+                x_vec, np.arange(30), 
+                this_pred[taste],
+                  cmap=cmap,vmin=0,vmax=2,)
+        ax[taste].set_ylabel(f'{this_tastes[taste]}' + '\nTrial #')
+    ax[-1].set_xlabel('Time (ms)')
+    cbar_ax = fig.add_axes([0.98, 0.15, 0.02, 0.7])
+    cbar = fig.colorbar(im, cax=cbar_ax)
+    cbar.set_ticks([0.5,1,1.5])
+    cbar.set_ticklabels(['nothing','gape','MTMs'])
+    basename = basenames[i]
+    plt.tight_layout()
+    plt.subplots_adjust(top=0.95)
+    fig.suptitle(basename)
+    fig.savefig(os.path.join(xgb_pred_plot_dir, basename + '_xgb_pred.png'),
+                bbox_inches='tight')
+    plt.close(fig)
+
+
+###############
+# Make joint plots of bsa and xgb predictions
+xgb_bsa_pred_plot_dir = os.path.join(plot_dir, 'prediction_plots', 'xgb_bsa')
+if not os.path.exists(xgb_bsa_pred_plot_dir):
+    os.makedirs(xgb_bsa_pred_plot_dir)
+
+# Create cmap for BSA predictions
+cmap = plt.cm.get_cmap('jet', 3)
+
+for i, (this_xgb_pred, this_bsa_pred) in enumerate(zip(xgb_pred_array_list, bsa_pred)):
+    fig, ax = plt.subplots(4,2,sharex=True,sharey=True)
+    this_tastes = taste_list[i]
+    for taste in range(4):
+        im = ax[taste,0].pcolormesh(
+                x_vec, np.arange(30), 
+                this_xgb_pred[taste],
+                  cmap=cmap,vmin=0,vmax=2,)
+        ax[taste,0].set_ylabel(f'{this_tastes[taste]}' + '\nTrial #')
+        im = ax[taste,1].pcolormesh(
+                x_vec, np.arange(30), 
+                this_bsa_pred[taste],
+                  cmap=cmap,vmin=0,vmax=2,)
+        ax[0,0].set_title('XGB')
+        ax[0,1].set_title('BSA')
+    ax[-1,0].set_xlabel('Time (ms)')
+    ax[-1,1].set_xlabel('Time (ms)')
+    cbar_ax = fig.add_axes([0.98, 0.15, 0.02, 0.7])
+    cbar = fig.colorbar(im, cax=cbar_ax)
+    cbar.set_ticks([0.5,1,1.5])
+    cbar.set_ticklabels(['nothing','gape','MTMs'])
+    basename = basenames[i]
+    plt.tight_layout()
+    plt.subplots_adjust(top=0.95)
+    fig.suptitle(basename)
+    fig.savefig(os.path.join(xgb_bsa_pred_plot_dir, basename + '_xgb_bsa_pred.png'),
+                bbox_inches='tight')
+    plt.close(fig)
+
+# Also make plots for mean events
+
+xgb_pred_separated = []
+for this_pred in xgb_pred_array_list:
+    this_pred_separated = [this_pred == x for x in range(3)]
+    this_pred_separated*=1
+    xgb_pred_separated.append(this_pred_separated)
+
+xgb_pred_separated = np.array(xgb_pred_separated)*1
+mean_xgb_pred_separated = np.mean(xgb_pred_separated, axis=-2)
+
+fig, ax = plt.subplots(*mean_xgb_pred_separated.shape[:2],
+                       figsize = (10,10),
+                       sharex=True,sharey=True,
+                       )
+cut_len = 250
+for i in range(mean_xgb_pred_separated.shape[0]):
+    for j in range(mean_xgb_pred_separated.shape[1]):
+        ax[i,j].plot(x_vec[cut_len:-cut_len], mean_xgb_pred_separated[i,j].T[cut_len:-cut_len])
+        ax[i,j].set_title(f'Session {i}, {bsa_event_map[j]}')
+fig.suptitle('Mean XGB Predictions')
+plt.tight_layout()
+plt.subplots_adjust(top=0.9)
+fig.savefig(os.path.join(xgb_pred_plot_dir, 'mean_xgb_pred.png'))
+plt.close(fig)
+
 
