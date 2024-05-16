@@ -778,6 +778,9 @@ pca_feature_names = [feature_names[i] for i in drop_inds]
 feature_names = np.delete(feature_names, drop_inds)
 feature_names = np.concatenate([feature_names, pca_feature_names])
 
+np.save(os.path.join(artifact_dir, 'merge_gape_pal_feature_names.npy'),
+        feature_names)
+
 # Categorize animal_num
 animal_codes = merge_gape_pal.animal_num.astype('category').cat.codes.values
 
