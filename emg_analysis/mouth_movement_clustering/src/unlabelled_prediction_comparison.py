@@ -138,10 +138,16 @@ scored_df.dropna(subset=['event_type'], inplace=True)
 
 # Generate leave-one-animal-out predictions
 # Convert 'lateral tongue protrustion' and 'no movement' to 'other'
-scored_df['event_type'] = scored_df['event_type'].replace(
-        ['lateral tongue protrusion','no movement'],
-        'other'
-        )
+
+# Drop LTPs for now as amplitude information of no_movement
+# might be becoming confused by merging with LTPs
+
+scored_df = scored_df[scored_df.event_type != 'lateral tongue protrusion']
+
+# scored_df['event_type'] = scored_df['event_type'].replace(
+#         ['lateral tongue protrusion','no movement'],
+#         'other'
+#         )
 
 scored_df['event_type'] = scored_df['event_type'].replace(
         ['mouth or tongue movement'],
@@ -151,7 +157,8 @@ scored_df['event_type'] = scored_df['event_type'].replace(
 event_code_dict = {
         'gape' : 1,
         'MTMs' : 2,
-        'other' : 0,
+        # 'other' : 0,
+        'no movement' : 0,
         }
 
 scored_df['event_codes'] = scored_df['event_type'].map(event_code_dict)
@@ -159,10 +166,10 @@ scored_df['event_codes'] = scored_df['event_type'].map(event_code_dict)
 # Plot histogram of segment centers for gape and MTMs
 pred_plot_dir = os.path.join(plot_dir, 'prediction_plots')
 
-plot_df = scored_df[scored_df.event_type.isin(['gape','MTMs'])]
+# plot_df = scored_df[scored_df.event_type.isin(['gape','MTMs'])]
 
 g = sns.displot(
-        data = plot_df,
+        data = scored_df,
         x = 'segment_center',
         row = 'event_type',
         hue = 'event_type',
@@ -178,6 +185,7 @@ plt.close()
 
 # Calculate specificity of annotations
 time_bins = [[-2000, 0], [0, 2000], [2000, 5000]]
+x_vec = np.arange(-2000, 5000)
 x_inds = np.stack([np.logical_and(x_vec >= x[0], x_vec < x[1]) for x in time_bins])
 
 ##############################
@@ -209,7 +217,6 @@ for gape_frame in tqdm(gape_frame_list):
 
 gape_array_list = np.array(gape_array_list)
 
-x_vec = np.arange(-2000, 5000)
 
 # Plot gapes for all trials
 for i, (gape_array, basename) in enumerate(zip(gape_array_list, basenames)):
@@ -672,9 +679,15 @@ for i, this_session in enumerate(tqdm(unique_animals)):
     X_train = np.stack(train_df.features.values)
     y_train = train_df.event_codes.values
 
+    # Calculate sample weights and normalize weight for each class
+    class_weights = train_df.event_codes.value_counts(normalize=True)
+    inv_class_weights = 1 / class_weights
+    sample_weights = inv_class_weights.loc[y_train].values 
+
     X_pred = np.stack(test_df.features.values)
 
     clf = xgb.XGBClassifier()
+    clf.fit(X_train, y_train, sample_weight=sample_weights)
     clf.fit(X_train, y_train)
     y_pred = clf.predict(X_pred)
 
@@ -688,6 +701,9 @@ for i, this_session in enumerate(tqdm(unique_animals)):
 # Convert xgb_pred to int
 merge_gape_pal['xgb_pred'] = merge_gape_pal['xgb_pred'].astype('int')
 
+# Add event name to xgb_pred
+merge_gape_pal['xgb_pred_event'] = merge_gape_pal['xgb_pred'].map(bsa_event_map)
+
 ###############
 # Convert to array so downstream processing can be same as BSA
 JL_gape_shape = (4,30,7000)
@@ -699,9 +715,10 @@ for session_num in tqdm(merge_gape_pal.session_ind.unique()):
     pred_vals = this_peak_frame['xgb_pred'].values
     for ind, pred_val in enumerate(pred_vals):
         taste, trial, segment_bounds = inds.iloc[ind]
-        segment_bounds += 2000
+        updated_bounds = segment_bounds.copy()
+        updated_bounds += 2000
         this_pred = pred_vals[ind]
-        event_array[taste,trial,segment_bounds[0]:segment_bounds[1]] = this_pred
+        event_array[taste,trial,updated_bounds[0]:updated_bounds[1]] = this_pred
 
     xgb_pred_array_list.append(event_array)
 
@@ -740,6 +757,33 @@ for i, this_pred in enumerate(xgb_pred_array_list):
     plt.close(fig)
 
 
+# Also make plots for mean events
+
+xgb_pred_separated = []
+for this_pred in xgb_pred_array_list:
+    this_pred_separated = [this_pred == x for x in range(3)]
+    this_pred_separated*=1
+    xgb_pred_separated.append(this_pred_separated)
+
+xgb_pred_separated = np.array(xgb_pred_separated)*1
+mean_xgb_pred_separated = np.mean(xgb_pred_separated, axis=-2)
+
+fig, ax = plt.subplots(*mean_xgb_pred_separated.shape[:2],
+                       figsize = (10,10),
+                       sharex=True,sharey=True,
+                       )
+cut_len = 250
+for i in range(mean_xgb_pred_separated.shape[0]):
+    for j in range(mean_xgb_pred_separated.shape[1]):
+        ax[i,j].plot(x_vec[cut_len:-cut_len], mean_xgb_pred_separated[i,j].T[cut_len:-cut_len])
+        ax[i,j].set_title(f'Session {i}, {bsa_event_map[j]}')
+fig.suptitle('Mean XGB Predictions')
+plt.tight_layout()
+plt.subplots_adjust(top=0.9)
+fig.savefig(os.path.join(xgb_pred_plot_dir, 'mean_xgb_pred.png'))
+plt.close(fig)
+
+
 ###############
 # Make joint plots of bsa and xgb predictions
 xgb_bsa_pred_plot_dir = os.path.join(plot_dir, 'prediction_plots', 'xgb_bsa')
@@ -772,36 +816,42 @@ for i, (this_xgb_pred, this_bsa_pred) in enumerate(zip(xgb_pred_array_list, bsa_
     cbar.set_ticklabels(['nothing','gape','MTMs'])
     basename = basenames[i]
     plt.tight_layout()
-    plt.subplots_adjust(top=0.95)
+    plt.subplots_adjust(top=0.9)
     fig.suptitle(basename)
     fig.savefig(os.path.join(xgb_bsa_pred_plot_dir, basename + '_xgb_bsa_pred.png'),
                 bbox_inches='tight')
     plt.close(fig)
 
-# Also make plots for mean events
+##############################
+# Plot emg envelope traces colored by predictions
+trial_group_list = list(merge_gape_pal.groupby(['session_ind','taste','trial']))
 
-xgb_pred_separated = []
-for this_pred in xgb_pred_array_list:
-    this_pred_separated = [this_pred == x for x in range(3)]
-    this_pred_separated*=1
-    xgb_pred_separated.append(this_pred_separated)
+env_plot_dir = os.path.join(plot_dir, xgb_pred_plot_dir, 'env_traces')
+if not os.path.exists(env_plot_dir):
+    os.makedirs(env_plot_dir)
 
-xgb_pred_separated = np.array(xgb_pred_separated)*1
-mean_xgb_pred_separated = np.mean(xgb_pred_separated, axis=-2)
+n_plots = 100
+inds = np.random.choice(len(trial_group_list), n_plots, replace=False)
 
-fig, ax = plt.subplots(*mean_xgb_pred_separated.shape[:2],
-                       figsize = (10,10),
-                       sharex=True,sharey=True,
-                       )
-cut_len = 250
-for i in range(mean_xgb_pred_separated.shape[0]):
-    for j in range(mean_xgb_pred_separated.shape[1]):
-        ax[i,j].plot(x_vec[cut_len:-cut_len], mean_xgb_pred_separated[i,j].T[cut_len:-cut_len])
-        ax[i,j].set_title(f'Session {i}, {bsa_event_map[j]}')
-fig.suptitle('Mean XGB Predictions')
-plt.tight_layout()
-plt.subplots_adjust(top=0.9)
-fig.savefig(os.path.join(xgb_pred_plot_dir, 'mean_xgb_pred.png'))
-plt.close(fig)
+from matplotlib.lines import Line2D
 
+cmap = plt.cm.get_cmap('tab10')
+custom_lines = [Line2D([0],[0], color = cmap(x), lw=2) for x in range(3)]
 
+for i in tqdm(inds):
+    this_group_inds, this_group = trial_group_list[i]
+    session_num, this_taste, this_trial = this_group_inds
+
+    fig, ax = plt.subplots()
+    for i, this_row in this_group.iterrows():
+        dat = this_row['segment_raw']
+        bounds = this_row['segment_bounds']
+        ax.plot(np.arange(*bounds), dat,
+                color = cmap(this_row['xgb_pred']),
+                linewidth = 2)
+        ax.legend(custom_lines, list(bsa_event_map.values()))
+    ax.set_title(f'Session {session_num}, {this_taste}, Trial {this_trial}')
+    ax.set_xlabel('Time (ms)')
+    ax.set_ylabel('EMG Envelope')
+    fig.savefig(os.path.join(env_plot_dir, f'{session_num}_{this_taste}_{this_trial}_env.png'))
+    plt.close(fig)

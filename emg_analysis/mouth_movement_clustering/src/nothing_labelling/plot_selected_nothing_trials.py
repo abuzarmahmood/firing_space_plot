@@ -49,19 +49,23 @@ if not os.path.exists(nothing_selected_plot_dir):
 selected_inds_path = os.path.join(artifact_dir, 'nothing_labels.csv')
 selected_inds = pd.read_csv(selected_inds_path)
 
+basename_list = []
 for i in tqdm(selected_inds.Abu):
 
     this_ind = inds[i]
-
-    save_path = os.path.join(nothing_selected_plot_dir, f'sample_{i}.png')
 
     # if os.path.exists(save_path):
     #     continue
 
     this_env = wanted_envs[tuple(this_ind)]
-    this_taste = taste_list[this_ind[0]][this_ind[1]]
+    # this_taste = taste_list[this_ind[0]][this_ind[1]]
+    this_taste = this_ind[1]
     this_basename = basenames[this_ind[0]]
+    basename_list.append(this_basename)
     this_trial_ind = this_ind[-1]
+
+    name_str = f'{this_basename}_{this_taste}_{this_trial_ind}'
+    save_path = os.path.join(nothing_selected_plot_dir, f'{name_str}.png') 
 
     all_trials_env = all_envs[this_ind[0], this_ind[1], :]
 
@@ -74,8 +78,17 @@ for i in tqdm(selected_inds.Abu):
     ax[0].set_xlabel('Time (ms)')
     ax[0].set_ylabel('EMG Value')
     ax[1].plot(x_vec, all_trials_env.T, color='black', alpha=0.1)
-    ax[1].set_title(f'{this_basename} - {this_taste} - {this_trial_ind}' +\
+    ax[1].set_title(name_str +\
                  '\n' + f'Sample {i} - All Trials')
     plt.tight_layout()
     plt.savefig(save_path)
     plt.close()
+
+# Histogram of selected basenames
+plt.figure()
+sns.histplot(sorted(basename_list))
+plt.xticks(rotation=45, ha='right')
+plt.title('Selected Basenames')
+plt.tight_layout()
+plt.savefig(os.path.join(nothing_selected_plot_dir, 'selected_basenames.png'))
+plt.close()

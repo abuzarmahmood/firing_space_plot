@@ -24,7 +24,8 @@ all_data_pkl_path = os.path.join(artifact_dir, 'all_data_frame.pkl')
 all_data_frame = pd.read_pickle(all_data_pkl_path)
 
 all_envs = all_data_frame['env'].tolist()
-all_gape_frames = all_data_frame['gape_frame_raw'].tolist()
+# all_gape_frames = all_data_frame['gape_frame_raw'].tolist()
+all_gape_frames = all_data_frame['gape_frame'].tolist()
 
 ##############################
 
@@ -52,6 +53,9 @@ for session_ind in trange(len(all_envs)):
                                    'trial':trial_ind,
                                    'diff':dat_diff})
 
-diff_frame = pd.DataFrame(diff_dict_list)
-diff_frame['diff'].sum()
+# plt.plot(filt_env)
+# plt.plot(segment_array)
+# plt.show()
 
+diff_frame = pd.DataFrame(diff_dict_list)
+print(f"Summed difference : {diff_frame['diff'].sum()}")

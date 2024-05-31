@@ -27,7 +27,9 @@ def extract_movements(this_trial_dat, size = 250):
         segment_ends = segment_ends[1:]
     segment_dat = [this_trial_dat[x:y]
                    for x, y in zip(segment_starts, segment_ends)]
-    return segment_starts, segment_ends, segment_dat
+    filtered_segment_dat = [filtered_dat[x:y]
+                            for x, y in zip(segment_starts, segment_ends)]
+    return segment_starts, segment_ends, segment_dat, filtered_segment_dat
 
 def threshold_movement_lengths(
         segment_starts,

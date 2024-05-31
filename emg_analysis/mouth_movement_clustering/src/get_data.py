@@ -11,6 +11,7 @@ from matplotlib.patches import Patch
 import seaborn as sns
 import json
 from time import time
+import distinctipy
 
 base_dir = '/media/bigdata/firing_space_plot/emg_analysis/mouth_movement_clustering'
 code_dir = os.path.join(base_dir, 'src')
@@ -123,6 +124,8 @@ for ind, row in tqdm(merge_df.iterrows()):
     scored_data_path = row.path_scores
     scored_data = pd.read_csv(scored_data_path)
     scored_data.drop(columns = cols_to_delete, inplace = True)	
+    # Indicate these scores were from video to differentiate from emg only
+    scored_data['scoring_type'] = 'video'
     scored_data_list.append(scored_data)
 
     ###############
@@ -175,6 +178,8 @@ for ind, row in tqdm(merge_df.iterrows()):
     taste_map = {taste:pal for taste, pal in zip(taste_names, pal_rankings)}
     taste_map_list.append(taste_map)
 
+
+
 h5_files = merge_df.path_h5.tolist()
 taste_order_list = []
 for h5_file in tqdm(h5_files):
@@ -194,8 +199,8 @@ merge_df['taste_orders'] = taste_order_list
 merge_df['taste_map'] = taste_map_list
 
 # merge_df.basename[merge_df.taste_orders.isna()]
-
 merge_df.dropna(inplace = True)
+merge_keep_inds = merge_df.index
 merge_df.reset_index(inplace = True, drop = True)
 
 # Confirm that there are as many 'trial start's as trials in the ephys data
@@ -208,6 +213,7 @@ for ind, row in merge_df.iterrows():
         print('Mismatch in trials for {}'.format(row.basename))
 
 ############################################################
+############################################################
 fin_score_table_list = []
 for ind, row in tqdm(merge_df.iterrows()):
     scored_data = merge_df.loc[ind, 'scored_data'].copy()
@@ -215,7 +221,94 @@ for ind, row in tqdm(merge_df.iterrows()):
     fin_scored_table = process_scored_data(scored_data, taste_orders)
     fin_score_table_list.append(fin_scored_table)
 
-merge_df['scored_data'] = fin_score_table_list
+##############################
+
+# Also add nothing scores from emg only
+nothing_labels_path = os.path.join(artifact_dir, 'nothing_labels.csv')
+nothing_labels = pd.read_csv(nothing_labels_path)
+nothing_labels_ind_path = os.path.join(artifact_dir, 'nothing_label_inds.npy')
+nothing_labels_inds = np.load(nothing_labels_ind_path)
+
+# Break down by session
+nothing_selected_samples = nothing_labels.Abu.values
+fin_nothing_inds = nothing_labels_inds[nothing_selected_samples]
+fin_nothing_inds_df = pd.DataFrame(fin_nothing_inds, columns = ['session','taste_num', 'taste_trial'])
+nothing_groups_inds, nothing_groups_dfs = zip(*list(fin_nothing_inds_df.groupby('session')))
+
+##############################
+# Make plots to make sure they are the same as plots during selection
+plot_dir = os.path.join(base_dir, 'plots')
+nothing_label_plot_dir = os.path.join(plot_dir, 'nothing_label')
+if not os.path.exists(nothing_label_plot_dir):
+    os.makedirs(nothing_label_plot_dir)
+
+nothing_selected_plot_dir = os.path.join(nothing_label_plot_dir, 'nothing_selected_get_data')
+if not os.path.exists(nothing_selected_plot_dir):
+    os.makedirs(nothing_selected_plot_dir)
+
+basenames = merge_df.basename.tolist()
+all_envs = np.array(merge_df.env.tolist())
+x_vec = np.arange(-2000, 5000)
+
+for i, this_ind in enumerate(tqdm(fin_nothing_inds)):
+
+    this_taste = this_ind[1]
+    this_basename = basenames[this_ind[0]]
+    this_trial_ind = this_ind[-1]
+
+    name_str = f'{this_basename}_{this_taste}_{this_trial_ind}'
+    save_path = os.path.join(nothing_selected_plot_dir, f'{name_str}.png') 
+
+    all_trials_env = all_envs[this_ind[0], this_ind[1], :]
+
+    fig, ax = plt.subplots(1,2, figsize=(10,5), sharey=True, sharex=True)
+    ax[0].plot(x_vec, all_envs[tuple(this_ind)], color='black')
+    ax[0].set_title(f'{this_basename} - {this_taste} - {this_trial_ind}' +\
+                 '\n' + f'Sample {i} - Selected')
+    ax[0].axvspan(-2000, -1000, color='yellow', alpha=0.5)
+    ax[0].axhline(0, color='black', linestyle='--')
+    ax[0].set_xlabel('Time (ms)')
+    ax[0].set_ylabel('EMG Value')
+    ax[1].plot(x_vec, all_trials_env.T, color='black', alpha=0.1)
+    ax[1].set_title(name_str +\
+                 '\n' + f'Sample {i} - All Trials')
+    plt.tight_layout()
+    plt.savefig(save_path)
+    plt.close()
+
+## NOTE: Plots match up with those during selection
+
+##############################
+
+fin_scored_data_list = []
+for this_session in range(len(fin_score_table_list)):
+    this_scored_data = fin_score_table_list[this_session]
+    if this_session in nothing_groups_inds:
+        which_nothing_group = np.where(np.array(nothing_groups_inds) == this_session)[0][0]
+        this_nothing_df = nothing_groups_dfs[which_nothing_group]
+
+        nothing_frame_list = []
+        for ind, row in this_nothing_df.iterrows():
+            this_taste = row.taste_num
+            this_trial = row.taste_trial
+            this_nothing_frame = pd.DataFrame({
+                'Behavior' : ['nothing'],
+                'scoring_type' : ['emg'],
+                'taste_num' : [this_taste],
+                'taste_trial' : [this_trial],
+                'rel_time' : [(-2, -1)],
+            })
+            nothing_frame_list.append(this_nothing_frame)
+        this_nothing_frame = pd.concat(nothing_frame_list)
+        this_scored_data = pd.concat([this_scored_data, this_nothing_frame]) 
+        this_scored_data.reset_index(inplace = True, drop = True)
+        fin_scored_data_list.append(this_scored_data)
+    else:
+        fin_scored_data_list.append(this_scored_data)
+
+##############################
+
+merge_df['scored_data'] = fin_scored_data_list 
 
 ############################################################
 # Extract mouth movements 
@@ -270,12 +363,17 @@ for ind, row in tqdm(merge_df.iterrows()):
         this_trial_dat = envs[this_ind]
 
         start_time = time() 
-        segment_starts, segment_ends, segment_dat = extract_movements(
+        (
+            segment_starts, 
+            segment_ends, 
+            segment_dat, 
+            filtered_segment_dat
+            ) = extract_movements(
             this_trial_dat, size=200)
 
         # Threshold movement lengths
         segment_starts, segment_ends, segment_dat = threshold_movement_lengths(
-            segment_starts, segment_ends, segment_dat, 
+            segment_starts, segment_ends, filtered_segment_dat, 
             min_len = 50, max_len= 500)
 
         (feature_array,
@@ -379,17 +477,25 @@ for this_gape_frame in gape_frame_list:
     all_event_types.extend(this_gape_frame.event_type.unique())
 all_event_types = list(set(all_event_types))
 
-cmap = plt.get_cmap('tab10')# len(event_types))
-event_colors = {all_event_types[i]:cmap(i) for i in range(len(all_event_types))}
+# cmap = plt.get_cmap('tab10', len(event_types))
+colors = distinctipy.get_colors(len(all_event_types))
+# event_colors = {all_event_types[i]:cmap(i) for i in range(len(all_event_types))}
+event_colors = {all_event_types[i]:colors[i] for i in range(len(all_event_types))}
 
 t = np.arange(-2000, 5000)
 for i, this_basename in enumerate(tqdm(merge_df.basename.unique())):
 
-    gape_frame = merge_df.loc[merge_df.basename == this_basename, 'gape_frame'].values[0]
+    gape_frame = merge_df.loc[
+            merge_df.basename == this_basename, 'gape_frame'
+            ].values[0]
     gape_frame.dropna(inplace = True)
 
     scored_gape_frame = gape_frame.copy()
     event_types = scored_gape_frame.event_type.unique()
+
+    envs = merge_df.loc[
+            merge_df.basename == this_basename, 'env'
+            ].values[0]
 
     #event_types = ['mouth movements','unknown mouth movement','gape','tongue protrusion','lateral tongue protrusion']
     #scored_gape_frame = scored_gape_frame.loc[scored_gape_frame.event_type.isin(event_types)]
@@ -403,15 +509,24 @@ for i, this_basename in enumerate(tqdm(merge_df.basename.unique())):
     legend_elements = [Patch(facecolor=event_colors[event], edgecolor='k',
                              label=event.title()) for event in event_types]
 
+    line_legend_elements = [Patch(facecolor='k', edgecolor='k',
+                                  label='EMG Env'),
+                            Patch(facecolor='r', edgecolor='k',
+                                  label='Detected Movement')]
+
     # Plot with black horizontal lines over detected movements
     plot_n = np.min([30, len(plot_dat)])
     fig,ax = plt.subplots(plot_n, 1, sharex=True, sharey=True,
                           figsize = (10, plot_n*2))
     for i in range(plot_n):
         this_scores = plot_dat[i]
+        this_taste = this_scores.taste.values[0]
+        this_trial = this_scores.trial.values[0]
+        this_y_string = f'Taste {this_taste}, Trial {this_trial}'
         this_inds = plot_inds[i]
         this_env = envs[this_inds]
         ax[i].plot(t, this_env, color = 'k')
+        ax[i].set_title(this_y_string)
         score_bounds_list = []
         for _, this_event in this_scores.iterrows():
             event_type = this_event.event_type
@@ -420,11 +535,12 @@ for i, this_basename in enumerate(tqdm(merge_df.basename.unique())):
             segment_start = this_event.segment_bounds[0]
             segment_stop = this_event.segment_bounds[1]
             segment_inds = np.logical_and(t >= segment_start, t <= segment_stop) 
-            segment_t = t[segment_inds]
-            segment_env = this_env[segment_inds]
+            segment_t = t[segment_inds][:-1]
+            # segment_env = this_env[segment_inds]
+            segment_env = this_event['segment_raw'] 
             env_max = np.max(segment_env)
             h_line_y = env_max*1.3
-            ax[i].plot(segment_t, segment_env, color='k')
+            ax[i].plot(segment_t, segment_env, color='r')
             ax[i].hlines(h_line_y, segment_t[0], segment_t[-1], 
                          color = 'k', linewidth = 5, alpha = 0.7)
             this_event_c = event_colors[event_type]
@@ -433,6 +549,8 @@ for i, this_basename in enumerate(tqdm(merge_df.basename.unique())):
                               color=this_event_c, alpha=0.5, label=event_type)
                 score_bounds_list.append(tuple(this_event.score_bounds))
     ax[0].legend(handles=legend_elements, loc='upper right',
+                 bbox_to_anchor=(1.5, 1.1))
+    ax[1].legend(handles=line_legend_elements, loc='upper right',
                  bbox_to_anchor=(1.5, 1.1))
     ax[0].set_xlim([-2000, 5000])
     fig.subplots_adjust(right=0.75)
