@@ -108,7 +108,14 @@ merge_gape_pal = pd.read_pickle(merge_gape_pal_path)
 feature_names_path = os.path.join(artifact_dir, 'merge_gape_pal_feature_names.npy')
 feature_names = np.load(feature_names_path)
 
-scored_df = merge_gape_pal[merge_gape_pal.scored == True]
+# Load scored_df anew to have the updated codes and event_types
+# scored_df = merge_gape_pal[merge_gape_pal.scored == True]
+scored_df_path = os.path.join(artifact_dir, 'scored_df.pkl')
+scored_df = pd.read_pickle(scored_df_path)
+
+# Over-write with updated event coes and types
+scored_df['event_type'] = scored_df['updated_event_type']
+scored_df['event_codes'] = scored_df['updated_codes']
 
 # Correct event_types
 types_to_drop = ['to discuss', 'other', 'unknown mouth movement','out of view']
@@ -123,6 +130,7 @@ event_type_map = {
         'lateral tongue protrusion' : 'lateral tongue protrusion',
         'gape' : 'gape',
         'no movement' : 'no movement',
+        'nothing' : 'no movement',
         }
 
 scored_df['event_type'] = scored_df['event_type'].map(event_type_map)
@@ -631,37 +639,37 @@ plt.close(fig)
 
 
 ##############################
-pred_specificity = [x.rate.iloc[1] / x.rate.sum() for x in mean_rate_dfs] 
-pred_specificity = [np.round(x,2) for x in pred_specificity]
-
-this_specificity_df = pd.DataFrame(
-        dict(
-            event_type = ['nothing','gape','MTMs'],
-            specificity = pred_specificity,
-            ),
-        )
-this_specificity_df['algorithm'] = 'BSA'
-pred_specificity_df = pd.concat([pred_specificity_df, this_specificity_df])
-
-
-###############
-
-mean_bsa_pred = np.mean(bsa_pred_separated, axis=-2)
-
-
-fig, ax = plt.subplots(*mean_bsa_pred.shape[:2],
-                       sharex=True,sharey=True,
-                       figsize = (10,10)
-                       )
-for i in range(mean_bsa_pred.shape[0]):
-    for j in range(mean_bsa_pred.shape[1]):
-        ax[i,j].plot(mean_bsa_pred[i,j].T)
-        ax[i,j].set_title(f'Session {i}, {bsa_event_map[j]}')
-fig.suptitle('Mean BSA Predictions')
-plt.tight_layout()
-plt.subplots_adjust(top=0.9)
-fig.savefig(os.path.join(bsa_pred_plot_dir, 'mean_bsa_pred.png'))
-plt.close(fig)
+# pred_specificity = [x.rate.iloc[1] / x.rate.sum() for x in mean_rate_dfs] 
+# pred_specificity = [np.round(x,2) for x in pred_specificity]
+# 
+# this_specificity_df = pd.DataFrame(
+#         dict(
+#             event_type = ['nothing','gape','MTMs'],
+#             specificity = pred_specificity,
+#             ),
+#         )
+# this_specificity_df['algorithm'] = 'BSA'
+# pred_specificity_df = pd.concat([pred_specificity_df, this_specificity_df])
+# 
+# 
+# ###############
+# 
+# mean_bsa_pred = np.mean(bsa_pred_separated, axis=-2)
+# 
+# 
+# fig, ax = plt.subplots(*mean_bsa_pred.shape[:2],
+#                        sharex=True,sharey=True,
+#                        figsize = (10,10)
+#                        )
+# for i in range(mean_bsa_pred.shape[0]):
+#     for j in range(mean_bsa_pred.shape[1]):
+#         ax[i,j].plot(mean_bsa_pred[i,j].T)
+#         ax[i,j].set_title(f'Session {i}, {bsa_event_map[j]}')
+# fig.suptitle('Mean BSA Predictions')
+# plt.tight_layout()
+# plt.subplots_adjust(top=0.9)
+# fig.savefig(os.path.join(bsa_pred_plot_dir, 'mean_bsa_pred.png'))
+# plt.close(fig)
 
 ##############################
 # XGB Predictions 

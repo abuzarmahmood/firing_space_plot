@@ -31,6 +31,9 @@ from scipy import stats
 import xgboost as xgb
 from sklearn.metrics import accuracy_score, f1_score, confusion_matrix
 import shap
+from sklearn.cluster import AgglomerativeClustering
+from sklearn.neighbors import NeighborhoodComponentsAnalysis
+from scipy.spatial.distance import mahalanobis
 
 def calc_isotropic_boundary(X, center, n_points = 20):
     """
@@ -302,11 +305,11 @@ pca_obj = PCA()
 pca_obj.fit(scaled_features)
 explained_variance = pca_obj.explained_variance_ratio_
 
-plt.plot(np.cumsum(explained_variance), '-o')
-plt.xlabel('Number of Components')
-plt.ylabel('Explained Variance')
-plt.ylim([0,1])
-plt.show()
+# plt.plot(np.cumsum(explained_variance), '-o')
+# plt.xlabel('Number of Components')
+# plt.ylabel('Explained Variance')
+# plt.ylim([0,1])
+# plt.show()
 
 # Get UMAP features
 umap_obj = UMAP(n_components=2)
@@ -829,6 +832,7 @@ event_type_map = {
         'lateral tongue protrusion' : 'lateral tongue protrusion',
         'gape' : 'gape',
         'no movement' : 'no movement',
+        'nothing' : 'no movement',
         }
 
 scored_df['event_type'] = scored_df['event_type'].map(event_type_map)
@@ -850,8 +854,197 @@ ax.pie(event_type_counts.values(), labels=event_type_counts.keys(),
        autopct=lambda pct: func(pct, np.array(list(event_type_counts.values()))),
        explode = [0.1]*len(event_type_counts),
        )
-ax.set_title('Event Type Distribution')
+ax.set_title('Event Type Distribution\n' + f'n={len(scored_df)}')
 fig.savefig(os.path.join(plot_dir, 'event_type_distribution_bsa.png'),
+            bbox_inches='tight')
+plt.close()
+
+# Make pie-chart for how many 'no-movements' are video labelled
+# vs emg-labelled
+# If segment_center < 0, them emg_labelled
+
+no_movement_scored_df = scored_df[scored_df.event_type == 'no movement']
+no_movement_scored_df['emg_labelled'] = (no_movement_scored_df.segment_center < 0)
+
+emg_labelled_counts = no_movement_scored_df.emg_labelled.value_counts().to_dict()
+fig, ax = plt.subplots()
+ax.pie(emg_labelled_counts.values(), labels=emg_labelled_counts.keys(),
+       autopct=lambda pct: func(pct, np.array(list(emg_labelled_counts.values()))),
+       explode = [0.1]*len(emg_labelled_counts),
+       )
+ax.set_title('No Movement Labelled by EMG\n' + f'n={len(no_movement_scored_df)}')
+fig.savefig(os.path.join(plot_dir, 'event_no_movement_labelled_by_emg.png'),
+            bbox_inches='tight')
+plt.close()
+
+##############################
+# Overlayed line-plots for each type
+n_types = len(event_type_counts)
+fig, ax = plt.subplots(len(event_type_counts),1, sharex=True, sharey=True,
+                       figsize=(5, 5*len(event_type_counts)))
+for i, this_type in enumerate(event_type_counts.keys()):
+    this_df = scored_df[scored_df.event_type == this_type]
+    this_segments = this_df.segment_raw.values
+    for this_segment in this_segments:
+        ax[i].plot(this_segment, color='k', alpha=0.1)
+    ax[i].set_title(f'{this_type}, n={len(this_segments)}')
+plt.xlabel('Time (ms)')
+fig.suptitle('Raw Segments by Event Type')
+fig.savefig(os.path.join(plot_dir, 'raw_segments_by_event_type.png'),
+            bbox_inches='tight')
+plt.close()
+
+##############################
+# Feature clustering by event type 
+features = np.stack(scored_df.features.values)
+event_codes = scored_df.event_codes.values
+sort_order = np.argsort(event_codes)
+sorted_features = features[sort_order]
+sorted_event_codes = event_codes[sort_order]
+
+sorted_features_df = pd.DataFrame(sorted_features, columns=feature_names)
+
+event_code_map = scored_df[['event_codes', 'event_type']].drop_duplicates() 
+
+cmap = plt.cm.tab10
+row_colors = [cmap(x) for x in sorted_event_codes] 
+g = sns.clustermap(sorted_features_df, row_cluster=False, col_cluster=False,
+               row_colors = row_colors, cmap='viridis')
+legend_elements = [mpl.lines.Line2D([0], [0], color=cmap(i), label=event_type,
+                                    linewidth = 5) \
+        for i, event_type in zip(event_code_map.event_codes, event_code_map.event_type)] 
+g.ax_heatmap.legend(handles=legend_elements, title='Event Type',
+                    bbox_to_anchor=(1.04,1), loc='upper left')
+plt.suptitle('Feature Clustering by Event Type')
+plt.savefig(os.path.join(plot_dir, 'feature_clustering_by_event_type.png'),
+            bbox_inches='tight')
+plt.close()
+
+##############################
+# UMAP / NCA plot to visualize distinction of clusters by event type
+nca_obj = NeighborhoodComponentsAnalysis(n_components=2)
+nca_features = nca_obj.fit_transform(features, event_codes)
+
+plt.figure()
+for i in range(n_types):
+    inds = np.where(event_codes == i)
+    event_name = event_code_map[event_code_map.event_codes == i].event_type.values[0]
+    plt.scatter(nca_features[inds,0], nca_features[inds,1], label=event_name, alpha=0.5)
+plt.legend()
+plt.xlabel('NCA 1')
+plt.ylabel('NCA 2')
+plt.title('NCA Features by Event Type')
+plt.savefig(os.path.join(plot_dir, 'nca_features_by_event_type.png'),
+            bbox_inches='tight')
+plt.close()
+
+umap_obj = UMAP(n_components=2)
+umap_features = umap_obj.fit_transform(features)
+
+plt.figure()
+for i in range(n_types):
+    inds = np.where(event_codes == i)
+    event_name = event_code_map[event_code_map.event_codes == i].event_type.values[0]
+    plt.scatter(umap_features[inds,0], umap_features[inds,1], label=event_name, alpha=0.5)
+plt.legend()
+plt.xlabel('UMAP 1')
+plt.ylabel('UMAP 2')
+plt.title('UMAP Features by Event Type')
+plt.savefig(os.path.join(plot_dir, 'umap_features_by_event_type.png'),
+            bbox_inches='tight')
+plt.close()
+
+# # 3D NCA
+# nca_obj = NeighborhoodComponentsAnalysis(n_components=3)
+# nca_features = nca_obj.fit_transform(features, event_codes)
+# 
+# fig = plt.figure()
+# ax = fig.add_subplot(111, projection='3d')
+# for i in range(n_types):
+#     inds = np.where(event_codes == i)
+#     event_name = event_code_map[event_code_map.event_codes == i].event_type.values[0]
+#     ax.scatter(nca_features[inds,0], nca_features[inds,1], nca_features[inds,2], label=event_name, alpha=0.5)
+# ax.legend()
+# ax.set_xlabel('NCA 1')
+# ax.set_ylabel('NCA 2')
+# ax.set_zlabel('NCA 3')
+# plt.title('NCA Features by Event Type')
+# plt.show()
+
+##############################
+# Fit a GMM to 3D NCA of 'no movement' data
+# and assign all points within 3 mahalanobis distances
+# as no movement
+
+# Get no movement data
+no_movement_code = event_code_map[event_code_map.event_type == 'no movement'].event_codes.values[0]
+no_movement_inds = np.where(event_codes == no_movement_code)
+no_movement_3d_nca = nca_features[no_movement_inds] 
+
+# Fit gaussian
+mean_vec = np.mean(no_movement_3d_nca, axis=0)
+cov_mat = np.cov(no_movement_3d_nca, rowvar=False)
+
+# # Calculate contours for standard deviations
+# def calc_std_contour(mean_vec, cov_mat, n_std):
+#     eig_vals, eig_vecs = np.linalg.eig(cov_mat)
+#     eig_vals = np.diag(eig_vals)
+#     std_mat = np.dot(eig_vecs, np.sqrt(eig_vals))
+#     std_mat = std_mat * n_std
+#     return std_mat
+# 
+# std_vec = np.array([1,2,3])
+# std_contours = [calc_std_contour(mean_vec, cov_mat, x) for x in std_vec]
+
+# Calculate mahalanobis distance
+mahal_dist = np.array([mahalanobis(x, mean_vec, np.linalg.inv(cov_mat)) for x in nca_features])
+mahal_thresh = 2.5
+
+updated_codes = event_codes.copy()
+updated_codes[mahal_dist < mahal_thresh] = no_movement_code
+
+fig, ax = plt.subplots(1,2, sharex=True, sharey=True, 
+                       figsize=(10,5))
+for i in range(n_types):
+    inds = np.where(event_codes == i)
+    event_name = event_code_map[event_code_map.event_codes == i].event_type.values[0]
+    ax[0].scatter(nca_features[inds,0], nca_features[inds,1], label=event_name, alpha=0.1)
+ax[0].legend()
+ax[0].set_xlabel('NCA 1')
+ax[0].set_ylabel('NCA 2')
+ax[0].set_title('NCA Features by Event Type')
+# Overlay scatter with GMM
+for i in range(n_types):
+    inds = np.where(updated_codes == i)
+    event_name = event_code_map[event_code_map.event_codes == i].event_type.values[0]
+    ax[1].scatter(nca_features[inds,0], nca_features[inds,1], label=event_name, alpha=0.1)
+ax[1].legend()
+ax[1].set_xlabel('NCA 1')
+ax[1].set_ylabel('NCA 2')
+ax[1].set_title('NCA Features by Event Type')
+plt.savefig(os.path.join(plot_dir, 'no_movement_reassignment.png'),
+            bbox_inches='tight')
+plt.close()
+
+# Update codes in scored_df
+scored_df['updated_codes'] = updated_codes
+scored_df['updated_event_type'] = scored_df.updated_codes.map(
+        event_code_map.set_index('event_codes').event_type)
+scored_df.to_pickle(os.path.join(artifact_dir, 'scored_df.pkl'))
+
+# Plot raw segments by updated codes
+fig, ax = plt.subplots(len(event_type_counts),1, sharex=True, sharey=True,
+                       figsize=(5, 5*len(event_type_counts)))
+for i, this_type in enumerate(event_type_counts.keys()):
+    this_code = event_code_map[event_code_map.event_type == this_type].event_codes.values[0]
+    this_df = scored_df[scored_df.updated_codes == this_code]
+    this_segments = this_df.segment_raw.values
+    for this_segment in this_segments:
+        ax[i].plot(this_segment, color='k', alpha=0.1)
+    ax[i].set_title(f'{this_type}, n={len(this_segments)}')
+plt.xlabel('Time (ms)')
+fig.suptitle('Raw Segments by Event Type')
+fig.savefig(os.path.join(plot_dir, 'raw_segments_by_updated_events.png'),
             bbox_inches='tight')
 plt.close()
 

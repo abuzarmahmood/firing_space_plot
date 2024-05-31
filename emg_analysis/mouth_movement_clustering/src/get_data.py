@@ -12,6 +12,7 @@ import seaborn as sns
 import json
 from time import time
 import distinctipy
+from scipy.ndimage import white_tophat
 
 base_dir = '/media/bigdata/firing_space_plot/emg_analysis/mouth_movement_clustering'
 code_dir = os.path.join(base_dir, 'src')
@@ -262,7 +263,9 @@ for i, this_ind in enumerate(tqdm(fin_nothing_inds)):
     all_trials_env = all_envs[this_ind[0], this_ind[1], :]
 
     fig, ax = plt.subplots(1,2, figsize=(10,5), sharey=True, sharex=True)
-    ax[0].plot(x_vec, all_envs[tuple(this_ind)], color='black')
+    this_env = all_envs[tuple(this_ind)]
+    filtered_dat = white_tophat(this_env, size=200)
+    ax[0].plot(x_vec, filtered_dat, color='black')
     ax[0].set_title(f'{this_basename} - {this_taste} - {this_trial_ind}' +\
                  '\n' + f'Sample {i} - Selected')
     ax[0].axvspan(-2000, -1000, color='yellow', alpha=0.5)

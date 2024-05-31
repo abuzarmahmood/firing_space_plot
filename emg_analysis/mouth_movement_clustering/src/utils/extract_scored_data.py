@@ -123,8 +123,10 @@ def process_scored_data(scored_data, taste_orders):
     # Convert events to start and stop
     scored_data = scored_data.loc[scored_data.Behavior != 'trial start']
 
-    start_table = scored_data.loc[scored_data['Behavior type'] == 'START']
-    stop_table = scored_data.loc[scored_data['Behavior type'] == 'STOP']
+    start_table = scored_data.copy()
+    stop_table = scored_data.copy()
+    start_table = start_table.loc[start_table['Behavior type'] == 'START']
+    stop_table = stop_table.loc[stop_table['Behavior type'] == 'STOP']
     start_table.reset_index(inplace=True, drop=True)
     stop_table.reset_index(inplace=True, drop=True)
     start_table['event_num'] = np.arange(len(start_table))
