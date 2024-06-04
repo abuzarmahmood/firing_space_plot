@@ -22,6 +22,7 @@ import xgboost as xgb
 import sys
 from ast import literal_eval
 from sklearn.metrics import accuracy_score
+from scipy.stats import ttest_rel
 
 base_dir = '/media/bigdata/firing_space_plot/emg_analysis/mouth_movement_clustering'
 code_dir = os.path.join(base_dir, 'src')
@@ -93,7 +94,6 @@ def modified_JL_process(
 base_dir = '/media/bigdata/firing_space_plot/emg_analysis/mouth_movement_clustering'
 artifact_dir = os.path.join(base_dir, 'artifacts')
 plot_dir = os.path.join(base_dir, 'plots')
-session_specific_plot_dir = os.path.join(plot_dir, 'session_specific_plots')
 all_data_pkl_path = os.path.join(artifact_dir, 'all_data_frame.pkl')
 all_data_frame = pd.read_pickle(all_data_pkl_path)
 
@@ -192,7 +192,7 @@ plt.savefig(
 plt.close()
 
 # Calculate specificity of annotations
-time_bins = [[-2000, 0], [0, 2000], [2000, 5000]]
+time_bins = [[-2000, 0], [0, 2000], [2000, 4000]]
 x_vec = np.arange(-2000, 5000)
 x_inds = np.stack([np.logical_and(x_vec >= x[0], x_vec < x[1]) for x in time_bins])
 
@@ -242,7 +242,7 @@ for i, (gape_array, basename) in enumerate(zip(gape_array_list, basenames)):
 mean_gapes = np.mean(gape_array_list,axis=2)
 
 fig, ax = plt.subplots(len(mean_gapes),1,sharex=True,sharey=True,
-                       figsize = (5, len(mean_gapes)*3))
+                       figsize = (5, len(mean_gapes)*1.5))
 for i, (this_mean_gape, basename) in enumerate(zip(mean_gapes, basenames)):
     this_tastes = taste_list[i]
     for taste in range(4):
@@ -257,7 +257,7 @@ fig.savefig(os.path.join(pred_plot_dir, 'mean_gapes_JL.png'))
 plt.close(fig)
 
 ###############
-# Calculate mean_rate of events in time-bins
+# Calculate counts of events in each timebin 
 
 binned_events_list = []
 for this_inds in x_inds:
@@ -267,15 +267,16 @@ for this_inds in x_inds:
 mean_rate_list = np.array([np.mean(x, axis=-1) for x in binned_events_list])
 
 # Calculate fraction of total gapes in 0-2000 ms bin
-pred_specificity = mean_rate_list[1].sum(axis=None) / np.sum(mean_rate_list, axis=None)
+pred_specificity = mean_rate_list[1].sum(axis=(1,2)) / np.sum(mean_rate_list, axis=(0,2,3))
+mean_pred_specificity = pred_specificity.mean()
 
 pred_specificity_df = pd.DataFrame(
         dict(
             algorithm = 'JL',
             event_type = 'gapes',
+            session_ind = np.arange(len(pred_specificity)),
             specificity = pred_specificity,
             ),
-        index = [0]
         )
 ###############
 
@@ -298,7 +299,7 @@ g = sns.boxplot(
         )
 g.set_xticklabels(time_bins)
 plt.title('Mean Rate of Gapes by Time Bin\n' +\
-        f'Gape Specificity: {pred_specificity:.2f}')
+        f'Gape Specificity: {mean_pred_specificity:.2f}')
 plt.savefig(os.path.join(pred_plot_dir, 'mean_rate_gapes.png'))
 plt.close()
 
@@ -479,7 +480,7 @@ def bsa_to_pred(x):
 
 bsa_event_map = {
         0 : 'nothing',
-        1 : 'gape',
+        1 : 'gapes',
         2 : 'MTMs',
         }
 
@@ -545,8 +546,33 @@ mean_rate_df = pd.DataFrame(
         )
 
 mean_rate_df['time_bin_str'] = [str(time_bins[x]) for x in mean_rate_df.time_bin]
-mean_rate_df['event_str'] = [['nothing','gape','MTMs'][x] for x in mean_rate_df.event_type]
+mean_rate_df['event_str'] = mean_rate_df.event_type.map(bsa_event_map)
 mean_rate_df['taste_str'] = [taste_list[x][y] for x,y in zip(mean_rate_df.session, mean_rate_df.taste)]
+
+# Calculate specificity per movement type
+bin_sums = mean_rate_df.groupby(
+        ['event_type', 'time_bin', 'event_str', 'time_bin_str','session']).sum()['mean_rate']
+bin_sums = pd.DataFrame(bin_sums)
+bin_sums.reset_index(inplace=True)
+
+spec_list = []
+event_name_list = []
+for this_type in bin_sums['event_type'].unique():
+    this_frame = bin_sums.loc[bin_sums.event_type == this_type]
+    this_spec = this_frame.loc[this_frame.time_bin == 1].mean_rate.values / \
+            this_frame.groupby('session').sum().mean_rate.values
+    spec_list.append(this_spec)
+    event_name_list.extend(this_frame.event_str.unique())
+
+spec_list = [np.round(x, 3) for x in spec_list]
+mean_spec_list = [np.mean(x) for x in spec_list]
+mean_bsa_spec_dict = dict(zip(event_name_list, mean_spec_list))
+
+event_list_long = [[x]*len(y) for x,y in zip(event_name_list, spec_list)]
+session_list= [np.arange(len(y)) for y in spec_list]
+session_list_long = [x for y in session_list for x in y]
+event_list_long = [x for y in event_list_long for x in y]
+spec_list_long = [x for y in spec_list for x in y]
 
 g = sns.catplot(
         data = mean_rate_df,
@@ -557,85 +583,87 @@ g = sns.catplot(
         kind = 'box',
         dodge = True
         )
-g.fig.suptitle('Mean Rate of Events by Time Bin')
+plt.suptitle('Mean Rate of Events by Time Bin\n' +\
+         f'Specificities : {mean_bsa_spec_dict}')
 plt.tight_layout()
 plt.subplots_adjust(top=0.95)
 plt.savefig(os.path.join(bsa_pred_plot_dir, 'mean_rate_events.png'))
 plt.close()
+
+# Add to pred_specificity_df
+this_spec_df = pd.DataFrame(
+        dict(
+            session_ind = session_list_long,
+            event_type = event_list_long,
+            specificity = spec_list_long,
+            )
+        )
+this_spec_df['algorithm'] = 'BSA'
+
+pred_specificity_df = pd.concat([pred_specificity_df, this_spec_df])
 
 ##############################
 # Calculate fraction of non-null events in 0-2000 ms bin 
+# Calculate specificity for each event-type separately
 
-# Drop 'nothing' events
-bsa_binary_pred = bsa_pred > 0
+# # Drop 'nothing' events
+# bsa_binary_pred = bsa_pred > 0
+# 
+# binned_events_list = []
+# for this_inds in x_inds:
+#     binned_events = bsa_binary_pred[..., this_inds]
+#     binned_events_list.append(binned_events)
 
-binned_events_list = []
-for this_inds in x_inds:
-    binned_events = bsa_binary_pred[..., this_inds]
-    binned_events_list.append(binned_events)
+# mean_rate_list = np.array([np.mean(x, axis=-1) for x in binned_events_list])
+# mean_rate_list = np.swapaxes(mean_rate_list, 1,2)
+# 
+# df_inds = np.array(list(np.ndindex(mean_rate_list.shape)))
+# mean_rate_df = pd.DataFrame(
+#         dict(
+#             event_type = df_inds[:,0],
+#             time_bin = df_inds[:,1],
+#             session = df_inds[:,2],
+#             taste = df_inds[:,3],
+#             trial = df_inds[:,4],
+#             mean_rate = mean_rate_list.flatten()
+#             )
+#         )
+# mean_rate_df['event_type_name'] = mean_rate_df['event_type'].map(bsa_event_map)
+# 
+# g = sns.catplot(
+#         x = 'time_bin',
+#         y = 'mean_rate',
+#         row = 'event_type_name',
+#         col = 'session',
+#         data = mean_rate_df,
+#         dodge = True,
+#         kind = 'box',
+#         )
+# g.set_xticklabels([str(x) for x in time_bins])
+# specificity_str = str([np.round(x,3) for x in pred_specificity])
+# plt.suptitle('Mean Rate of Events by Time Bin\n' +\
+#         f'Specificities : {specificity_str}')
+# plt.subplots_adjust(top = 0.9)
+# plt.savefig(os.path.join(bsa_pred_plot_dir, 'mean_rate_events.png'))
+# plt.close()
 
-mean_rate_list = np.array([np.mean(x, axis=-1) for x in binned_events_list])
-
-# Calculate fraction of total gapes in 0-2000 ms bin
-pred_specificity = mean_rate_list[1].sum(axis=None) / np.sum(mean_rate_list, axis=None)
-
-this_specificity_df = pd.DataFrame(
-        dict(
-            algorithm = 'BSA',
-            event_type = 'gapes+MTMs',
-            specificity = pred_specificity,
-            ),
-        index = [0]
-        )
-pred_specificity_df = pd.concat([pred_specificity_df, this_specificity_df])
-
-df_inds = np.array(list(np.ndindex(mean_rate_list.shape)))
-mean_rate_df = pd.DataFrame(
-        dict(
-            time_bin = df_inds[:,0],
-            session = df_inds[:,1],
-            taste = df_inds[:,2],
-            trial = df_inds[:,3],
-            mean_rate = mean_rate_list.flatten()
-            )
-        )
-
-g = sns.boxplot(
-        x = 'time_bin',
-        y = 'mean_rate',
-        data = mean_rate_df,
-        dodge = True
-        )
-g.set_xticklabels(time_bins)
-plt.title('Mean Rate of Events by Time Bin\n' +\
-        f'Gape Specificity: {pred_specificity:.2f}')
-plt.savefig(os.path.join(bsa_pred_plot_dir, 'mean_rate_events.png'))
-plt.close()
+# # Calculate fraction of total gapes in 0-2000 ms bin
+# # pred_specificity = mean_rate_list[1].sum(axis=None) / np.sum(mean_rate_list, axis=None)
+# pred_specificity = [x[1].sum(axis=None) / np.sum(x, axis=None) \
+#         for x in mean_rate_list]
+# 
+# this_specificity_df = pd.DataFrame(
+#         dict(
+#             algorithm = 'BSA',
+#             event_type = 'gapes+MTMs',
+#             specificity = pred_specificity,
+#             ),
+#         index = [0]
+#         )
+# pred_specificity_df = pd.concat([pred_specificity_df, this_specificity_df])
 
 ###############
 
-# Also make plots for mean gapes
-mean_gapes = np.mean(np.array(gape_array_list),axis=2)
-
-kern_len = 250
-kernel = np.ones(kern_len)/kern_len
-fig, ax = plt.subplots(len(mean_gapes),1,sharex=True,sharey=True,
-                       figsize = (5, len(mean_gapes)*3))
-for i, (this_mean_gape, basename) in enumerate(zip(mean_gapes, basenames)):
-    this_tastes = taste_list[i]
-    for taste in range(4):
-        taste_mean_gape = this_mean_gape[taste]
-        smooth_gape = np.convolve(taste_mean_gape, kernel, mode='same')
-        ax[i].plot(x_vec, smooth_gape, label=f'{this_tastes[taste]}')
-    ax[i].set_title(basename)
-    ax[i].axvline(0, color='r', linestyle='--')
-    ax[i].legend(loc='upper right')
-    ax[i].set_xlim(x_vec[0] + 2*kern_len, x_vec[-1] - 2*kern_len)
-fig.suptitle('Mean Gapes by JL')
-plt.tight_layout()
-plt.subplots_adjust(top=0.95)
-fig.savefig(os.path.join(pred_plot_dir, 'mean_gapes_JL_no_amp.png'))
-plt.close(fig)
 
 
 ##############################
@@ -776,6 +804,132 @@ for this_pred in xgb_pred_array_list:
 xgb_pred_separated = np.array(xgb_pred_separated)*1
 mean_xgb_pred_separated = np.mean(xgb_pred_separated, axis=-2)
 
+##############################
+##############################
+binned_events_list = []
+for this_inds in x_inds:
+    binned_events = xgb_pred_separated[..., this_inds]
+    binned_events_list.append(binned_events)
+
+mean_rate_list = np.array([np.mean(x, axis=-1) for x in binned_events_list])
+mean_rate_inds = np.stack(list(np.ndindex(mean_rate_list.shape)))
+
+mean_rate_df = pd.DataFrame(
+        dict(
+            time_bin = mean_rate_inds[:,0],
+            session = mean_rate_inds[:,1],
+            event_type = mean_rate_inds[:,2],
+            taste = mean_rate_inds[:,3],
+            trial = mean_rate_inds[:,4],
+            mean_rate = mean_rate_list.flatten()
+            )
+        )
+
+mean_rate_df['time_bin_str'] = [str(time_bins[x]) for x in mean_rate_df.time_bin]
+mean_rate_df['event_str'] = mean_rate_df.event_type.map(bsa_event_map)
+mean_rate_df['taste_str'] = [taste_list[x][y] for x,y in zip(mean_rate_df.session, mean_rate_df.taste)]
+
+# Calculate specificity per movement type
+bin_sums = mean_rate_df.groupby(
+        ['event_type', 'time_bin', 'event_str', 'time_bin_str','session']).sum()['mean_rate']
+bin_sums = pd.DataFrame(bin_sums)
+bin_sums.reset_index(inplace=True)
+
+spec_list = []
+event_name_list = []
+for this_type in bin_sums['event_type'].unique():
+    this_frame = bin_sums.loc[bin_sums.event_type == this_type]
+    this_spec = this_frame.loc[this_frame.time_bin == 1].mean_rate.values / \
+            this_frame.groupby('session').sum().mean_rate.values
+    spec_list.append(this_spec)
+    event_name_list.extend(this_frame.event_str.unique())
+
+spec_list = [np.round(x, 3) for x in spec_list]
+mean_spec_list = [np.mean(x) for x in spec_list]
+mean_xgb_spec_dict = dict(zip(event_name_list, mean_spec_list))
+
+event_list_long = [[x]*len(y) for x,y in zip(event_name_list, spec_list)]
+session_list= [np.arange(len(y)) for y in spec_list]
+session_list_long = [x for y in session_list for x in y]
+event_list_long = [x for y in event_list_long for x in y]
+spec_list_long = [x for y in spec_list for x in y]
+
+g = sns.catplot(
+        data = mean_rate_df,
+        x = 'time_bin_str',
+        y = 'mean_rate',
+        col = 'event_str',
+        row = 'taste_str',
+        kind = 'box',
+        dodge = True
+        )
+plt.suptitle('Mean Rate of Events by Time Bin\n' +\
+         f'Specificities : {mean_xgb_spec_dict}')
+plt.tight_layout()
+plt.subplots_adjust(top=0.95)
+plt.savefig(os.path.join(xgb_pred_plot_dir, 'mean_rate_events.png'))
+plt.close()
+
+# Add to pred_specificity_df
+this_spec_df = pd.DataFrame(
+        dict(
+            session_ind = session_list_long,
+            event_type = event_list_long,
+            specificity = spec_list_long,
+            )
+        )
+this_spec_df['algorithm'] = 'XGB'
+
+pred_specificity_df = pd.concat([pred_specificity_df, this_spec_df])
+
+# Write out specificity_df to artifacts
+pred_specificity_df.to_csv(
+        os.path.join(artifact_dir, 'pred_specificity_df.csv')
+        )
+
+##############################
+##############################
+# Plot paired specificity data for BSA and XGB
+
+plot_pred_spec_df = pred_specificity_df.loc[pred_specificity_df.event_type != 'nothing']
+plot_pred_spec_df = plot_pred_spec_df.loc[plot_pred_spec_df.algorithm.isin(['BSA','XGB', 'JL'])]
+
+event_type_list = [x[1] for x in list(plot_pred_spec_df.groupby('event_type'))]
+event_type_list = [[x[1] for x in list(this_frame.groupby('algorithm'))] for this_frame in event_type_list]
+
+event_type_list_values = [[x.specificity for x in y] for y in event_type_list]
+event_type_events = [x[0].event_type.unique()[0] for x in event_type_list]
+ttest_list = [ttest_rel(*x) for x in event_type_list_values]
+pval_list = [np.round(x.pvalue,3) for x in ttest_list]
+pval_dict = dict(zip(event_type_events, pval_list))
+
+fig, ax = plt.subplots(1,2, sharex=True, sharey=True,
+                       figsize = (5,5))
+for i, this_type in enumerate(plot_pred_spec_df.event_type.unique()):
+    ax[i].set_title(this_type)
+    this_frame = plot_pred_spec_df.loc[plot_pred_spec_df.event_type == this_type]
+    for session_ind, df in list(this_frame.groupby('session_ind')):
+        bsa_value = df.loc[df.algorithm=='BSA'].specificity.values[0]
+        xgb_value = df.loc[df.algorithm=='XGB'].specificity.values[0]
+        try:
+            jl_value = df.loc[df.algorithm=='JL'].specificity.values[0]
+        except:
+            jl_value = None
+        ax[i].plot(['BSA','XGB'], [bsa_value, xgb_value], '-o', color = 'k')
+        ax[i].scatter('JL-QDA', jl_value, color = 'k') 
+        ax[i].set_xlabel('Algorithm')
+ax[0].set_ylabel('Prediction Specificity')
+fig.suptitle('Changes in specificty between algorithms\n' +\
+        f'pvalues for BSA-XGB comparison = {pval_dict}')
+plt.tight_layout()
+fig.savefig(os.path.join(plot_dir, 'prediction_plots', 'specificity_comparison.png'),
+            bbox_inches = 'tight')
+plt.close(fig)
+# plt.show()
+        
+##############################
+##############################
+
 fig, ax = plt.subplots(*mean_xgb_pred_separated.shape[:2],
                        figsize = (10,10),
                        sharex=True,sharey=True,
@@ -791,7 +945,7 @@ plt.subplots_adjust(top=0.9)
 fig.savefig(os.path.join(xgb_pred_plot_dir, 'mean_xgb_pred.png'))
 plt.close(fig)
 
-
+############################################################
 ###############
 # Make joint plots of bsa and xgb predictions
 xgb_bsa_pred_plot_dir = os.path.join(plot_dir, 'prediction_plots', 'xgb_bsa')
