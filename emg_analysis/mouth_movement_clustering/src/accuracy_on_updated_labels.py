@@ -12,10 +12,11 @@ from time import time
 import xgboost as xgb
 import sys
 from ast import literal_eval
-from sklearn.metrics import accuracy_score, f1_score
+from sklearn.metrics import accuracy_score, f1_score, confusion_matrix
 from scipy.stats import ttest_rel
 from sklearn.preprocessing import StandardScaler
 from scipy import stats
+from scipy.stats import pearsonr
 
 base_dir = '/media/bigdata/firing_space_plot/emg_analysis/mouth_movement_clustering'
 code_dir = os.path.join(base_dir, 'src')
@@ -43,6 +44,10 @@ artifact_dir = os.path.join(base_dir, 'artifacts')
 plot_dir = os.path.join(base_dir, 'plots')
 all_data_pkl_path = os.path.join(artifact_dir, 'all_data_frame.pkl')
 all_data_frame = pd.read_pickle(all_data_pkl_path)
+
+updated_plot_dir = os.path.join(plot_dir, 'updated_annotation_accuracy')
+if not os.path.exists(updated_plot_dir):
+    os.makedirs(updated_plot_dir)
 
 ##############################
 ##############################
@@ -106,23 +111,46 @@ scored_df['event_codes'] = scored_df['event_type'].map(event_code_dict)
 
 ############################################################
 
-X_mat = np.stack(scored_df.features.values)
-# X_mat_raw = np.stack(scored_df.raw_features.values)
-X_mat_scaled = StandardScaler().fit_transform(X_mat)
-# X_mat_raw_scaled = StandardScaler().fit_transform(X_mat_raw)
-
-# fig, ax = plt.subplots(2,2)
-# ax[0,0].imshow(X_mat_raw, aspect='auto', interpolation='nearest')
-# ax[0,1].imshow(X_mat, aspect='auto', interpolation='nearest')
-# ax[1,0].imshow(X_mat_raw_scaled, aspect='auto', interpolation='nearest')
-# ax[1,1].imshow(X_mat_scaled, aspect='auto', interpolation='nearest')
-# plt.show()
 
 session_group_list = [x[1] for x in scored_df.groupby('session')]
 
 ##############################
 # JL Accuracy - Updated Annotations
 ##############################
+scored_df['updated_gapes'] = scored_df['updated_event_type'] == 'gape'
+scored_df['updated_gapes'] = scored_df['updated_gapes'].map({True:'gape', False:'not gape'})
+
+event_counts = scored_df.groupby('session').updated_gapes.value_counts()
+event_counts = pd.DataFrame(event_counts)
+event_counts.reset_index(inplace=True)
+event_counts = event_counts.pivot(
+        index = 'session', columns = 'updated_gapes', values = 'count')
+event_counts.reset_index(inplace=True)
+
+event_fractions = event_counts.copy()
+event_fractions[['gape','not gape']] = event_fractions[['gape','not gape']].div(
+        event_fractions[['gape','not gape']].sum(axis=1), axis=0)
+
+event_counts.plot(x = 'session', kind='bar', stacked=True)
+plt.tight_layout()
+plt.legend(title = 'Is Gape?')
+plt.xlabel('Session')
+plt.ylabel('Count')
+plt.title('Updated Gape Counts Across Sessions')
+plt.savefig(os.path.join(updated_plot_dir, 'updated_gape_counts.png'),
+            bbox_inches='tight')
+plt.close()
+
+event_fractions.plot(x = 'session', kind='bar', stacked=True)
+plt.tight_layout()
+plt.legend(title = 'Is Gape?')
+plt.xlabel('Session')
+plt.ylabel('Fraction')
+plt.title('Updated Gape Fractions Across Sessions')
+plt.savefig(os.path.join(updated_plot_dir, 'updated_gape_fractions.png'),
+            bbox_inches='tight')
+plt.close()
+
 jl_session_acc = []
 jl_session_f1 = []
 for this_group in session_group_list:
@@ -132,6 +160,16 @@ for this_group in session_group_list:
     this_f1 = f1_score(jl_pred, updated_annot)
     jl_session_acc.append(this_acc)
     jl_session_f1.append(this_f1)
+
+acc_frac_corr = pearsonr(jl_session_acc, event_fractions['gape'])
+rho, pval = acc_frac_corr
+plt.scatter(jl_session_acc, event_fractions['gape'])
+plt.xlabel('Accuracy')
+plt.ylabel('Fraction of Gapes')
+plt.title('JL Accuracy vs Gape Fraction\n' + f'rho = {rho:.2f}, p = {pval:.2f}')
+plt.savefig(os.path.join(updated_plot_dir, 'jl_acc_vs_gape_fraction.png'),
+            bbox_inches='tight')
+plt.close()
 
 ############################################################
 # BSA Accuracy - Updated Annotations 
@@ -172,123 +210,87 @@ bsa_aligned_event_map = {
 
 bsa_labels = ['gape', 'mouth or tongue movement', 'LTP/Nothing']
 
-scored_df['bsa_aligned_event_codes'] = scored_df['event_type'].map(bsa_aligned_event_map)
+scored_df['bsa_aligned_event_codes'] = scored_df['updated_event_type'].map(bsa_aligned_event_map)
+scored_df['bsa_aligned_event_names'] = scored_df['bsa_aligned_event_codes'].map({0:'gape', 1:'MTMs', 2:'LTP/Nothing'})
 
 # Get metrics for BSA
 wanted_bsa_pred_list = np.array([bsa_to_pred(x) for x in wanted_bsa_p_list]).astype('int')
 scored_df['bsa_pred'] = wanted_bsa_pred_list
 
-#######################################
-# plot frequency ranges for all movements
-max_freq_ind = np.where(feature_names == 'max_freq')[0][0]
-freq_vec = scored_df.raw_features.apply(lambda x: x[max_freq_ind])
-event_vec = scored_df.event_type.values
+##############################
+# Plots of counts and fractions for bsa_aligned_event_codes
 
-bsa_omega = all_data_frame.bsa_omega.values[0]
-omega_cutoff_inds = [6,11]
-omega_cutoff_freqs = bsa_omega[omega_cutoff_inds]
+event_counts = scored_df.groupby('session').bsa_aligned_event_names.value_counts()
+event_counts = pd.DataFrame(event_counts)
+event_counts.reset_index(inplace=True)
+event_counts = event_counts.pivot(
+        index = 'session', columns = 'bsa_aligned_event_names', values = 'count')
+# event_counts.reset_index(inplace=True)
 
-bsa_inferred_freq = bsa_omega[wanted_bsa_p_list]
+event_fractions = event_counts.copy()
+event_fractions = event_fractions.div(event_fractions.sum(axis=1), axis=0)
 
-freq_df = pd.DataFrame(
-        dict(
-            max_freq = freq_vec,
-            bsa_freq = bsa_inferred_freq,
-            event = event_vec
-            )
-        )
-
-fig, ax = plt.subplots(freq_df.event.nunique(), 2, sharex=True,
-                       figsize = (10, 3*freq_df.event.nunique()))
-for i, this_event in enumerate(freq_df.event.unique()):
-    this_freqs = freq_df[freq_df.event == this_event].max_freq
-    ax[i,0].hist(this_freqs, bins = 25, alpha=0.7)
-    ax[i,0].set_ylabel(this_event)
-    for this_cutoff in omega_cutoff_freqs:
-        ax[i,0].axvline(this_cutoff, color='r', linestyle='--', alpha=0.7)
-    this_bsa_freqs = freq_df[freq_df.event == this_event].bsa_freq
-    ax[i,1].hist(this_bsa_freqs, bins = 25, alpha=0.7)
-    ax[i,1].set_ylabel(this_event)
-    for this_cutoff in omega_cutoff_freqs:
-        ax[i,1].axvline(this_cutoff, color='r', linestyle='--', alpha=0.7)
-ax[0,0].set_title('Max Freq')
-ax[0,1].set_title('BSA Freq')
-plt.xlabel('Frequency (Hz)')
-plt.ylabel('Count')
-plt.suptitle('Frequency Distribution of Mouth Movements')
+event_counts.plot(kind='bar', stacked=True)
 plt.tight_layout()
-plt.savefig(os.path.join(plot_dir, 'event_frequency_ranges.png'),
+plt.legend(title = 'Event Type')
+plt.xlabel('Session')
+plt.ylabel('Count')
+plt.title('BSA Aligned Event Counts Across Sessions')
+plt.savefig(os.path.join(updated_plot_dir, 'bsa_aligned_event_counts.png'),
             bbox_inches='tight')
 plt.close()
 
-# Direct overlays of gape and 'mouth or tongue movement'
-freq_regions = [[0, 4.15], [4.15, 6.4], [6.4, 20]]
-freq_region_labels = ['Null', 'Gape', 'LTP']
-fig,ax = plt.subplots(2,1, sharex=True, sharey=True)
-for event_type in ['gape', 'mouth or tongue movement']:
-    dat_inds = np.where(scored_df.event_type == event_type)
-    max_freq = freq_vec.values[dat_inds]
-    bsa_freq = bsa_inferred_freq[dat_inds]
-    bsa_freq += np.random.normal(0, 0.1, len(bsa_freq))
-    ax[0].hist(max_freq, bins = 25, alpha=0.7, label = event_type,
-               density=True)
-    ax[1].hist(bsa_freq, bins = 25, alpha=0.7, label = event_type,
-               density=True)
-ax[0].legend()
-for this_cutoff in omega_cutoff_freqs:
-    ax[0].axvline(this_cutoff, color='r', linestyle='--', alpha=0.7)
-    ax[1].axvline(this_cutoff, color='r', linestyle='--', alpha=0.7)
-ax1_y_lims = ax[1].get_ylim()
-for label, region in zip(freq_region_labels, freq_regions):
-    ax[1].text(np.mean(region), ax1_y_lims[1]*0.75, label, fontweight='bold',
-               ha='center')
-ax[0].set_title('Max Freq')
-ax[1].set_title('BSA Freq')
-plt.xlabel('Frequency (Hz)')
-plt.ylabel('Count')
-plt.suptitle('Frequency Distribution of Gape and Mouth Movements')
+event_fractions.plot(kind='bar', stacked=True)
 plt.tight_layout()
-plt.savefig(os.path.join(plot_dir, 'gape_mouth_freq_comparison.png'),
+plt.legend(title = 'Event Type')
+plt.xlabel('Session')
+plt.ylabel('Fraction')
+plt.title('BSA Aligned Event Fractions Across Sessions')
+plt.savefig(os.path.join(updated_plot_dir, 'bsa_aligned_event_fractions.png'),
             bbox_inches='tight')
 plt.close()
 
-
-# Correlate max freq with bsa freq
-rho, p = stats.spearmanr(freq_df.max_freq, freq_df.bsa_freq)
-rho, p = np.round(rho, 3), np.round(p, 3)
-
-fig, ax = plt.subplots()
-ax.scatter(freq_df.max_freq, freq_df.bsa_freq,
-            alpha=0.1)
-ax.plot([0,15],[0,15],'k--')
-ax.set_xlabel('Max Freq')
-ax.set_ylabel('BSA Freq')
-ax.set_title('Max Freq vs BSA Freq\n' + \
-        f'Spearman Rho: {rho}, p: {p}')
-ax.set_aspect('equal')
-plt.savefig(os.path.join(plot_dir, 'max_freq_vs_bsa_freq.png'),)
-plt.close()
-
 ##############################
-# Leave one session out
-##############################
+
+session_group_list = [x[1] for x in scored_df.groupby('session')]
+
+bsa_session_acc = []
+bsa_session_f1 = []
+bsa_conf_mat_list = []
+for this_group in session_group_list:
+    bsa_pred = this_group.bsa_pred.values
+    updated_annot = this_group.bsa_aligned_event_codes.values
+    this_acc = accuracy_score(bsa_pred, updated_annot)
+    this_f1 = f1_score(bsa_pred, updated_annot, average = 'weighted')
+    this_conf_mat = confusion_matrix(bsa_pred, updated_annot, normalize = 'true')
+    bsa_session_acc.append(this_acc)
+    bsa_session_f1.append(this_f1)
+    bsa_conf_mat_list.append(this_conf_mat)
+
+############################################################
+# XGB Accuracy - Updated Annotations 
+############################################################
+X_mat = np.stack(scored_df.features.values)
+X_mat_scaled = StandardScaler().fit_transform(X_mat)
+scored_df['scaled_features'] = [x for x in X_mat_scaled]
+
 test_y_list = []
 pred_y_list = []
-bsa_pred_y_list = []
-mean_abs_shap_list = []
-for i, this_session in enumerate(tqdm(unique_sessions)):
+for i, this_session in enumerate(tqdm(scored_df.session_ind.unique())):
+
+    this_session_data = scored_df[scored_df.session_ind == this_session]
+    this_animal_num = this_session_data.animal_num.values[0]
+
     # Leave out this session
-    train_df = scored_df[scored_df.session_ind != this_session]
-    test_df = scored_df[scored_df.session_ind == this_session]
+    train_df = scored_df[scored_df.animal_num != this_animal_num]
+    # test_df = scored_df[scored_df.animal_num == this_animal_num]
+    test_df = this_session_data.copy() 
 
     # Train classifier
-    X_train = np.stack(train_df.features.values)
+    X_train = np.stack(train_df.scaled_features.values)
     y_train = train_df.bsa_aligned_event_codes.values
-    X_test = np.stack(test_df.features.values)
+    X_test = np.stack(test_df.scaled_features.values)
     y_test = test_df.bsa_aligned_event_codes.values
-
-    bsa_pred_y = test_df.bsa_pred.values
-    bsa_pred_y_list.append(bsa_pred_y)
 
     clf = xgb.XGBClassifier()
     clf.fit(X_train, y_train)
@@ -297,24 +299,72 @@ for i, this_session in enumerate(tqdm(unique_sessions)):
     test_y_list.append(y_test)
     pred_y_list.append(y_pred)
 
-    # Get shap values
-    # explainer = shap.Explainer(clf)
-    # shap_values = explainer(X_train)
-    # mean_abs_shap = np.abs(shap_values.values).mean(axis=0)
-    # mean_abs_shap_list.append(mean_abs_shap)
-    mean_abs_shap_list.append(clf.feature_importances_)
+xgb_accu_list = [accuracy_score(x,y) for x,y in zip(test_y_list, pred_y_list)]
+xgb_f1_list = [f1_score(x,y, average = 'weighted') for x,y in zip(test_y_list, pred_y_list)]
+xgb_conf_mat_list = [confusion_matrix(x,y, normalize = 'true') for x,y in zip(test_y_list, pred_y_list)]
 
+############################################################
+# Make plots
+############################################################
 
-# Get accuracy and f1
-bsa_accuracy = [accuracy_score(y_test, bsa_pred_y) \
-        for y_test, bsa_pred_y in zip(test_y_list, bsa_pred_y_list)]
-accuracy = [accuracy_score(y_test, pred_y) for y_test, pred_y in zip(test_y_list, pred_y_list)]
-bsa_f1 = [f1_score(y_test, bsa_pred_y, average='macro') \
-        for y_test, bsa_pred_y in zip(test_y_list, bsa_pred_y_list)]
-f1 = [f1_score(y_test, pred_y, average='macro') \
-        for y_test, pred_y in zip(test_y_list, pred_y_list)]
-bsa_confusion = [confusion_matrix(y_test, bsa_pred_y, normalize='true') \
-        for y_test, bsa_pred_y in zip(test_y_list, bsa_pred_y_list)]
-confusion = [confusion_matrix(y_test, pred_y, normalize='true') \
-        for y_test, pred_y in zip(test_y_list, pred_y_list)]
+# XGB vs BSA accuracy and f1
+fig, ax = plt.subplots(1,2, figsize = (10,5))
+ax[0].scatter(xgb_accu_list, bsa_session_acc)
+min_val = min(min(xgb_accu_list), min(bsa_session_acc))
+max_val = max(max(xgb_accu_list), max(bsa_session_acc))
+ax[0].plot([min_val, max_val], [min_val, max_val], 'k--')
+ax[0].set_xlabel('XGB Accuracy')
+ax[0].set_ylabel('BSA Accuracy')
+ax[0].set_title('XGB vs BSA Accuracy')
+ax[1].scatter(xgb_f1_list, bsa_session_f1)
+min_val = min(min(xgb_f1_list), min(bsa_session_f1))
+max_val = max(max(xgb_f1_list), max(bsa_session_f1))
+ax[1].plot([min_val, max_val], [min_val, max_val], 'k--')
+ax[1].set_xlabel('XGB F1')
+ax[1].set_ylabel('BSA F1')
+ax[1].set_title('XGB vs BSA F1')
+fig.suptitle('XGB vs BSA Accuracy and F1\nLeave one animal out cross-validation')
+plt.tight_layout()
+plt.savefig(os.path.join(updated_plot_dir, 'xgb_bsa_acc_f1.png'),
+            bbox_inches='tight')
+plt.close()
+
+# Comparison of confusion matrices
+mean_bsa_confusion = np.mean(bsa_conf_mat_list, axis = 0)
+std_bsa_confusion = np.std(bsa_conf_mat_list, axis = 0)
+mean_xgb_confusion = np.mean(xgb_conf_mat_list, axis = 0)
+std_xgb_confusion = np.std(xgb_conf_mat_list, axis = 0)
+
+fig, ax = plt.subplots(1,2, figsize=(10,5))
+img = ax[0].matshow(mean_bsa_confusion, cmap='viridis', vmin=0, vmax=1)
+# plt.colorbar(img, ax=ax[0])
+for i in range(mean_bsa_confusion.shape[0]):
+    for j in range(mean_bsa_confusion.shape[1]):
+        ax[0].text(j, i, f'{mean_bsa_confusion[i,j]:.2f}\n±{std_bsa_confusion[i,j]:.2f}',
+                 ha='center', va='center', color='k', fontweight='bold')
+ax[0].set_xlabel('Predicted')
+ax[0].set_ylabel('True')
+ax[0].set_xticks(np.arange(3))
+ax[0].set_xticklabels(bsa_labels, rotation=45, ha='left')
+ax[0].set_yticks(np.arange(3))
+ax[0].set_yticklabels(bsa_labels)
+ax[0].set_title('BSA: Mean+Std Confusion Matrix')
+img = ax[1].matshow(mean_xgb_confusion, cmap='viridis', vmin=0, vmax=1)
+# plt.colorbar(img, ax=ax[1])
+for i in range(mean_xgb_confusion.shape[0]):
+    for j in range(mean_xgb_confusion.shape[1]):
+        ax[1].text(j, i, f'{mean_xgb_confusion[i,j]:.2f}\n±{std_xgb_confusion[i,j]:.2f}',
+                 ha='center', va='center', color='k', fontweight='bold')
+ax[1].set_xlabel('Predicted')
+ax[1].set_ylabel('True')
+ax[1].set_xticks(np.arange(3))
+ax[1].set_xticklabels(bsa_labels, rotation=45, ha='left')
+ax[1].set_yticks(np.arange(3))
+ax[1].set_yticklabels(bsa_labels)
+ax[1].set_title('XGB: Mean+Std Confusion Matrix')
+plt.tight_layout()
+plt.savefig(os.path.join(updated_plot_dir, 'mean_std_confusion_diff_session.png'),
+            bbox_inches='tight')
+plt.close()
+
 
