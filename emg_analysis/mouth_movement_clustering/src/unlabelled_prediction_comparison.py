@@ -113,6 +113,26 @@ feature_names = np.load(feature_names_path)
 scored_df_path = os.path.join(artifact_dir, 'scored_df.pkl')
 scored_df = pd.read_pickle(scored_df_path)
 
+###############
+g = sns.displot(
+        data = scored_df.loc[scored_df.event_type != 'lateral tongue protrusion'],
+        x = 'segment_center',
+        row = 'event_type',
+        hue = 'event_type',
+        legend = False,
+        )
+g.fig.suptitle('Histogram of Segment Centers for Annoteted Gapes and MTMs')
+plt.tight_layout()
+plt.subplots_adjust(top=0.9)
+plt.savefig(
+        os.path.join(pred_plot_dir, 'annotated_segment_center_hist.png'),
+        bbox_inches='tight')
+plt.close()
+
+_, max_y = g.axes[0][0].get_ylim()
+###############
+
+
 # Over-write with updated event coes and types
 scored_df['event_type'] = scored_df['updated_event_type']
 scored_df['event_codes'] = scored_df['updated_codes']
@@ -183,11 +203,13 @@ g = sns.displot(
         hue = 'event_type',
         legend = False,
         )
+for this_ax in g.axes.flatten():
+    this_ax.set_ylim([0, max_y])
 g.fig.suptitle('Histogram of Segment Centers for Annoteted Gapes and MTMs')
 plt.tight_layout()
 plt.subplots_adjust(top=0.9)
 plt.savefig(
-        os.path.join(pred_plot_dir, 'annotated_segment_center_hist.png'),
+        os.path.join(pred_plot_dir, 'annotated_segment_center_hist_updated.png'),
         bbox_inches='tight')
 plt.close()
 
