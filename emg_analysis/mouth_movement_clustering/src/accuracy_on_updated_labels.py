@@ -336,12 +336,17 @@ mean_xgb_confusion = np.mean(xgb_conf_mat_list, axis = 0)
 std_xgb_confusion = np.std(xgb_conf_mat_list, axis = 0)
 
 fig, ax = plt.subplots(1,2, figsize=(10,5))
-img = ax[0].matshow(mean_bsa_confusion, cmap='viridis', vmin=0, vmax=1)
+img = ax[0].matshow(mean_bsa_confusion, cmap='gray', vmin=0, vmax=1)
 # plt.colorbar(img, ax=ax[0])
 for i in range(mean_bsa_confusion.shape[0]):
     for j in range(mean_bsa_confusion.shape[1]):
-        ax[0].text(j, i, f'{mean_bsa_confusion[i,j]:.2f}\n±{std_bsa_confusion[i,j]:.2f}',
-                 ha='center', va='center', color='k', fontweight='bold')
+        mean_val = mean_bsa_confusion[i,j]
+        if mean_val < 0.5:
+            c = 'white'
+        else:
+            c = 'black'
+        ax[0].text(j, i, f'{mean_val:.2f}\n±{std_bsa_confusion[i,j]:.2f}',
+                 ha='center', va='center', color=c, fontweight='bold')
 ax[0].set_xlabel('Predicted')
 ax[0].set_ylabel('True')
 ax[0].set_xticks(np.arange(3))
@@ -349,12 +354,17 @@ ax[0].set_xticklabels(bsa_labels, rotation=45, ha='left')
 ax[0].set_yticks(np.arange(3))
 ax[0].set_yticklabels(bsa_labels)
 ax[0].set_title('BSA: Mean+Std Confusion Matrix')
-img = ax[1].matshow(mean_xgb_confusion, cmap='viridis', vmin=0, vmax=1)
+img = ax[1].matshow(mean_xgb_confusion, cmap='gray', vmin=0, vmax=1)
 # plt.colorbar(img, ax=ax[1])
 for i in range(mean_xgb_confusion.shape[0]):
     for j in range(mean_xgb_confusion.shape[1]):
-        ax[1].text(j, i, f'{mean_xgb_confusion[i,j]:.2f}\n±{std_xgb_confusion[i,j]:.2f}',
-                 ha='center', va='center', color='k', fontweight='bold')
+        mean_val = mean_xgb_confusion[i,j]
+        if mean_val < 0.5:
+            c = 'white'
+        else:
+            c = 'black'
+        ax[1].text(j, i, f'{mean_val:.2f}\n±{std_xgb_confusion[i,j]:.2f}',
+                 ha='center', va='center', color=c, fontweight='bold')
 ax[1].set_xlabel('Predicted')
 ax[1].set_ylabel('True')
 ax[1].set_xticks(np.arange(3))
@@ -364,7 +374,7 @@ ax[1].set_yticklabels(bsa_labels)
 ax[1].set_title('XGB: Mean+Std Confusion Matrix')
 plt.tight_layout()
 plt.savefig(os.path.join(updated_plot_dir, 'mean_std_confusion_diff_session.png'),
-            bbox_inches='tight')
+            bbox_inches='tight', dpi = 300)
 plt.close()
 
 

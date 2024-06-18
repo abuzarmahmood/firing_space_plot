@@ -974,8 +974,29 @@ xgb_bsa_pred_plot_dir = os.path.join(plot_dir, 'prediction_plots', 'xgb_bsa')
 if not os.path.exists(xgb_bsa_pred_plot_dir):
     os.makedirs(xgb_bsa_pred_plot_dir)
 
+bsa_event_map = {
+        0 : 'nothing',
+        1 : 'gapes',
+        2 : 'MTMs',
+        }
+
+event_color_map = {
+        # 0 : '#ffffff',
+        # # 1 : '#17becf',
+        # 1 : '#843c39',
+        # 2 : '#1f77b4',
+        0 : '#D1D1D1',
+        # 1 : '#17becf',
+        1 : '#EF8636',
+        2 : '#3B75AF',
+        }
+
+# Create segmented colormap
+from matplotlib.colors import ListedColormap
+cmap = ListedColormap(list(event_color_map.values()), name = 'NBT_cmap')
+
 # Create cmap for BSA predictions
-cmap = plt.cm.get_cmap('jet', 3)
+# cmap = plt.cm.get_cmap('jet', 3)
 
 for i, (this_xgb_pred, this_bsa_pred) in enumerate(zip(xgb_pred_array_list, bsa_pred)):
     fig, ax = plt.subplots(4,2,sharex=True,sharey=True)
@@ -1003,7 +1024,7 @@ for i, (this_xgb_pred, this_bsa_pred) in enumerate(zip(xgb_pred_array_list, bsa_
     plt.subplots_adjust(top=0.9)
     fig.suptitle(basename)
     fig.savefig(os.path.join(xgb_bsa_pred_plot_dir, basename + '_xgb_bsa_pred.png'),
-                bbox_inches='tight')
+                bbox_inches='tight', dpi = 300)
     plt.close(fig)
 
 ##############################
