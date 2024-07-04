@@ -336,32 +336,32 @@ var_explained = [x.explained_variance_ratio_ for x in cxn_type_pca_obj]
 cxn_type_pca = [x.transform(data.T) for x, data in \
         zip(cxn_type_pca_obj, cxn_type_filters)]
 
-# Plot PCA
-fig, ax = plt.subplots(len(cxn_type_names),1,
-                       sharex=True, sharey=True,
-                       figsize = (5,10))
-for ind, (cxn_type, cxn_pca) in enumerate(zip(cxn_type_names, cxn_type_pca)):
-    for i, cxn in enumerate(cxn_pca.T):
-        ax[ind].plot(cxn, 
-                     label = f'PC{i+1}:{np.round(var_explained[ind][i],2)}',
-                     alpha = 0.7, linewidth = 2)
-    ax[ind].set_title(cxn_type)
-    ax[ind].set_ylabel('PCA Magnitude')
-    # Put legend on right of each plot
-    ax[ind].legend(loc='center left', bbox_to_anchor=(1, 0.5))
-    ax[ind].set_xscale('log')
-    # Plot all coup filter peaks
-    for coup_peak in coup_filter_peaks:
-        ax[ind].axvline(coup_peak, color = 'k', linestyle = '--', 
-                        alpha = 0.3, zorder = -1)
-ax[-1].set_xlabel('Time (ms)')
-plt.suptitle('PCA of Significant Filters')
-# Put legend at bottom of figure
-# fig.legend(*ax[-1].get_legend_handles_labels(), loc='lower center', ncol=3)
-plt.savefig(os.path.join(
-    coupling_analysis_plot_dir, 'sig_filter_pca.png'),
-            bbox_inches = 'tight')
-plt.close()
+# # Plot PCA
+# fig, ax = plt.subplots(len(cxn_type_names),1,
+#                        sharex=True, sharey=True,
+#                        figsize = (5,10))
+# for ind, (cxn_type, cxn_pca) in enumerate(zip(cxn_type_names, cxn_type_pca)):
+#     for i, cxn in enumerate(cxn_pca.T):
+#         ax[ind].plot(cxn, 
+#                      label = f'PC{i+1}:{np.round(var_explained[ind][i],2)}',
+#                      alpha = 0.7, linewidth = 2)
+#     ax[ind].set_title(cxn_type)
+#     ax[ind].set_ylabel('PCA Magnitude')
+#     # Put legend on right of each plot
+#     ax[ind].legend(loc='center left', bbox_to_anchor=(1, 0.5))
+#     ax[ind].set_xscale('log')
+#     # Plot all coup filter peaks
+#     for coup_peak in coup_filter_peaks:
+#         ax[ind].axvline(coup_peak, color = 'k', linestyle = '--', 
+#                         alpha = 0.3, zorder = -1)
+# ax[-1].set_xlabel('Time (ms)')
+# plt.suptitle('PCA of Significant Filters')
+# # Put legend at bottom of figure
+# # fig.legend(*ax[-1].get_legend_handles_labels(), loc='lower center', ncol=3)
+# plt.savefig(os.path.join(
+#     coupling_analysis_plot_dir, 'sig_filter_pca.png'),
+#             bbox_inches = 'tight')
+# plt.close()
 
 
 ############################################################
@@ -375,24 +375,24 @@ cxn_type_names = [x[0] for x in cxn_type_group]
 cxn_type_frames = [x[1] for x in cxn_type_group]
 cxn_type_energies = [x['filter_energy'].values for x in cxn_type_frames]
 
-# Plot histograms
-fig, ax = plt.subplots(len(cxn_type_names),1,
-                       sharex=True, sharey=True,
-                       figsize = (5,10))
-for ind, (cxn_type, cxn_energies) in \
-        enumerate(zip(cxn_type_names, cxn_type_energies)):
-    ax[ind].hist(cxn_energies, bins = 10)
-    ax[ind].set_title(cxn_type)
-    ax[ind].set_ylabel('Count')
-    ax[ind].set_yscale('log')
-ax[-1].set_xlabel('Filter Energy')
-# Plot zero line
-for a in ax:
-    a.axvline(0, color = 'k', linestyle = '--')
-plt.suptitle('Filter Significant Energy per Connection Type')
-plt.savefig(os.path.join(
-    coupling_analysis_plot_dir, 'sig_filter_energy_per_cxn_type.png'))
-plt.close()
+# # Plot histograms
+# fig, ax = plt.subplots(len(cxn_type_names),1,
+#                        sharex=True, sharey=True,
+#                        figsize = (5,10))
+# for ind, (cxn_type, cxn_energies) in \
+#         enumerate(zip(cxn_type_names, cxn_type_energies)):
+#     ax[ind].hist(cxn_energies, bins = 10)
+#     ax[ind].set_title(cxn_type)
+#     ax[ind].set_ylabel('Count')
+#     ax[ind].set_yscale('log')
+# ax[-1].set_xlabel('Filter Energy')
+# # Plot zero line
+# for a in ax:
+#     a.axvline(0, color = 'k', linestyle = '--')
+# plt.suptitle('Filter Significant Energy per Connection Type')
+# plt.savefig(os.path.join(
+#     coupling_analysis_plot_dir, 'sig_filter_energy_per_cxn_type.png'))
+# plt.close()
 
 ############################################################
 # 5) Filter magnitude across filter length 
@@ -413,56 +413,56 @@ cxn_type_nmf_obj = [NMF(n_components = 3).fit(x.T) for x in cxn_type_filters]
 cxn_type_nmf = [x.transform(data.T) for x, data in \
         zip(cxn_type_nmf_obj, cxn_type_filters)]
 
-# Plot NMF
-fig, ax = plt.subplots(len(cxn_type_names),1,
-                       sharex=True, sharey=True,
-                       figsize = (5,10))
-for ind, (cxn_type, cxn_nmf) in enumerate(zip(cxn_type_names, cxn_type_nmf)):
-    for i, cxn in enumerate(cxn_nmf.T):
-        ax[ind].plot(cxn, label = f'NMF{i+1}', alpha = 0.7, linewidth = 2)
-    ax[ind].set_title(cxn_type)
-    ax[ind].set_ylabel('NMF Magnitude')
-    # Put legend on right of each plot
-    ax[ind].legend(loc='center left', bbox_to_anchor=(1, 0.5))
-    ax[ind].set_xscale('log')
-    # Plot all coup filter peaks
-    for coup_peak in coup_filter_peaks:
-        ax[ind].axvline(coup_peak, color = 'k', linestyle = '--', 
-                        alpha = 0.3, zorder = -1)
-ax[-1].set_xlabel('Time (ms)')
-plt.suptitle('NMF of ABSOLUTE Significant Filters')
-plt.savefig(os.path.join(
-    coupling_analysis_plot_dir, 'abs_sig_filter_nmf.png'),
-            bbox_inches = 'tight')
-plt.close()
+# # Plot NMF
+# fig, ax = plt.subplots(len(cxn_type_names),1,
+#                        sharex=True, sharey=True,
+#                        figsize = (5,10))
+# for ind, (cxn_type, cxn_nmf) in enumerate(zip(cxn_type_names, cxn_type_nmf)):
+#     for i, cxn in enumerate(cxn_nmf.T):
+#         ax[ind].plot(cxn, label = f'NMF{i+1}', alpha = 0.7, linewidth = 2)
+#     ax[ind].set_title(cxn_type)
+#     ax[ind].set_ylabel('NMF Magnitude')
+#     # Put legend on right of each plot
+#     ax[ind].legend(loc='center left', bbox_to_anchor=(1, 0.5))
+#     ax[ind].set_xscale('log')
+#     # Plot all coup filter peaks
+#     for coup_peak in coup_filter_peaks:
+#         ax[ind].axvline(coup_peak, color = 'k', linestyle = '--', 
+#                         alpha = 0.3, zorder = -1)
+# ax[-1].set_xlabel('Time (ms)')
+# plt.suptitle('NMF of ABSOLUTE Significant Filters')
+# plt.savefig(os.path.join(
+#     coupling_analysis_plot_dir, 'abs_sig_filter_nmf.png'),
+#             bbox_inches = 'tight')
+# plt.close()
 
 # Also plot mean_abs_filter across cxn types
 mean_abs_filter = [np.mean(x, axis = 0) for x in cxn_type_filters]
 sd_abs_filter = [np.std(x, axis = 0) for x in cxn_type_filters]
 
-fig, ax = plt.subplots(len(cxn_type_names),1,
-                       sharex=True, sharey=True,
-                       figsize = (5,10))
-for ind, (cxn_type, cxn_mean, cxn_sd) in \
-        enumerate(zip(cxn_type_names, mean_abs_filter, sd_abs_filter)):
-    ax[ind].plot(cxn_mean, label = 'Mean')
-    ax[ind].fill_between(np.arange(len(cxn_mean)),
-                         y1 = cxn_mean - cxn_sd,
-                         y2 = cxn_mean + cxn_sd,
-                         alpha = 0.5, label = 'SD')
-    ax[ind].set_title(cxn_type)
-    ax[ind].set_ylabel('Mean Filter Magnitude')
-    ax[ind].set_xscale('log')
-    # Plot all coup filter peaks
-    for coup_peak in coup_filter_peaks:
-        ax[ind].axvline(coup_peak, color = 'k', linestyle = '--', 
-                        alpha = 0.3, zorder = -1)
-ax[-1].set_xlabel('Time (ms)')
-plt.suptitle('Mean ABSOLUTE Significant Filters')
-plt.savefig(os.path.join(
-    coupling_analysis_plot_dir, 'mean_abs_sig_filter.png'),
-            bbox_inches = 'tight')
-plt.close()
+# fig, ax = plt.subplots(len(cxn_type_names),1,
+#                        sharex=True, sharey=True,
+#                        figsize = (5,10))
+# for ind, (cxn_type, cxn_mean, cxn_sd) in \
+#         enumerate(zip(cxn_type_names, mean_abs_filter, sd_abs_filter)):
+#     ax[ind].plot(cxn_mean, label = 'Mean')
+#     ax[ind].fill_between(np.arange(len(cxn_mean)),
+#                          y1 = cxn_mean - cxn_sd,
+#                          y2 = cxn_mean + cxn_sd,
+#                          alpha = 0.5, label = 'SD')
+#     ax[ind].set_title(cxn_type)
+#     ax[ind].set_ylabel('Mean Filter Magnitude')
+#     ax[ind].set_xscale('log')
+#     # Plot all coup filter peaks
+#     for coup_peak in coup_filter_peaks:
+#         ax[ind].axvline(coup_peak, color = 'k', linestyle = '--', 
+#                         alpha = 0.3, zorder = -1)
+# ax[-1].set_xlabel('Time (ms)')
+# plt.suptitle('Mean ABSOLUTE Significant Filters')
+# plt.savefig(os.path.join(
+#     coupling_analysis_plot_dir, 'mean_abs_sig_filter.png'),
+#             bbox_inches = 'tight')
+# plt.close()
 
 ############################################################
 # 6) Summed effect distribution of signfiicant filters 
@@ -475,24 +475,24 @@ cxn_type_names = [x[0] for x in cxn_type_group]
 cxn_type_frames = [x[1] for x in cxn_type_group]
 cxn_type_energies = [x['summed_filter'].values for x in cxn_type_frames]
 
-# Plot histograms
-fig, ax = plt.subplots(len(cxn_type_names),1,
-                       sharex=True, sharey=True,
-                       figsize = (5,10))
-for ind, (cxn_type, cxn_energies) in \
-        enumerate(zip(cxn_type_names, cxn_type_energies)):
-    ax[ind].hist(cxn_energies, bins = 10)
-    ax[ind].set_title(cxn_type)
-    ax[ind].set_ylabel('Count')
-    ax[ind].set_yscale('log')
-ax[-1].set_xlabel('Summed Filter')
-# Plot zero line
-for a in ax:
-    a.axvline(0, color = 'k', linestyle = '--')
-plt.suptitle('Summed Significant Filter per Connection Type')
-plt.savefig(os.path.join(
-    coupling_analysis_plot_dir, 'sig_filter_sum_per_cxn_type.png'))
-plt.close()
+# # Plot histograms
+# fig, ax = plt.subplots(len(cxn_type_names),1,
+#                        sharex=True, sharey=True,
+#                        figsize = (5,10))
+# for ind, (cxn_type, cxn_energies) in \
+#         enumerate(zip(cxn_type_names, cxn_type_energies)):
+#     ax[ind].hist(cxn_energies, bins = 10)
+#     ax[ind].set_title(cxn_type)
+#     ax[ind].set_ylabel('Count')
+#     ax[ind].set_yscale('log')
+# ax[-1].set_xlabel('Summed Filter')
+# # Plot zero line
+# for a in ax:
+#     a.axvline(0, color = 'k', linestyle = '--')
+# plt.suptitle('Summed Significant Filter per Connection Type')
+# plt.savefig(os.path.join(
+#     coupling_analysis_plot_dir, 'sig_filter_sum_per_cxn_type.png'))
+# plt.close()
 
 ############################################################
 # 7) Coefficient distrubution of significant inds 
@@ -512,32 +512,32 @@ cxn_type_sig_coeffs = [x['sig_coeffs'].values for x in cxn_type_frames]
 cxn_type_summed_sig_coeffs = [x['summed_sig_coeffs'].values \
         for x in cxn_type_frames]
 
-# Plot histograms
-# Left column is summed, right column is unsummed
-fig, ax = plt.subplots(len(cxn_type_names),2,
-                       sharex=True, sharey=True,
-                       figsize = (5,10))
-for ind, (cxn_type, cxn_sig_coeffs, cxn_summed_sig_coeffs) in \
-        enumerate(zip(cxn_type_names, cxn_type_sig_coeffs,
-            cxn_type_summed_sig_coeffs)):
-    ax[ind][0].hist(cxn_summed_sig_coeffs)
-    ax[ind][0].set_title(cxn_type)
-    ax[ind][0].set_ylabel('Count')
-    ax[ind][0].set_yscale('log')
-    ax[ind][1].hist(np.concatenate(cxn_sig_coeffs))
-    ax[ind][1].set_title(cxn_type)
-    ax[ind][1].set_ylabel('Count')
-    ax[ind][1].set_yscale('log')
-ax[-1][0].set_xlabel('Summed Significant Coefficients')
-ax[-1][1].set_xlabel('Significant Coefficients')
-# Plot 0 line
-for this_ax in ax.flatten():
-    this_ax.axvline(0, color = 'k', linestyle = '--')
-plt.suptitle('Significant Coefficients per Connection Type')
-plt.savefig(os.path.join(
-    coupling_analysis_plot_dir, 'sig_coeffs_per_cxn_type.png'),
-            bbox_inches='tight')
-plt.close()
+# # Plot histograms
+# # Left column is summed, right column is unsummed
+# fig, ax = plt.subplots(len(cxn_type_names),2,
+#                        sharex=True, sharey=True,
+#                        figsize = (5,10))
+# for ind, (cxn_type, cxn_sig_coeffs, cxn_summed_sig_coeffs) in \
+#         enumerate(zip(cxn_type_names, cxn_type_sig_coeffs,
+#             cxn_type_summed_sig_coeffs)):
+#     ax[ind][0].hist(cxn_summed_sig_coeffs)
+#     ax[ind][0].set_title(cxn_type)
+#     ax[ind][0].set_ylabel('Count')
+#     ax[ind][0].set_yscale('log')
+#     ax[ind][1].hist(np.concatenate(cxn_sig_coeffs))
+#     ax[ind][1].set_title(cxn_type)
+#     ax[ind][1].set_ylabel('Count')
+#     ax[ind][1].set_yscale('log')
+# ax[-1][0].set_xlabel('Summed Significant Coefficients')
+# ax[-1][1].set_xlabel('Significant Coefficients')
+# # Plot 0 line
+# for this_ax in ax.flatten():
+#     this_ax.axvline(0, color = 'k', linestyle = '--')
+# plt.suptitle('Significant Coefficients per Connection Type')
+# plt.savefig(os.path.join(
+#     coupling_analysis_plot_dir, 'sig_coeffs_per_cxn_type.png'),
+#             bbox_inches='tight')
+# plt.close()
 
 ############################################################
 ############################################################
@@ -547,39 +547,144 @@ plt.close()
 
 # Generate frame containing all neurons with significant connections
 wanted_cols = ['session','taste','neuron', 'region', 'neuron_input',
-               'region_input','connection_type','inter_region']
-sig_receive_neurons = sig_filter_frame[wanted_cols]
-sig_receive_neurons['nrn_type'] = 'receive'
-sig_receive_neurons.drop(columns = ['neuron_input','region_input'], 
-                         inplace = True)
+               'region_input','connection_type','inter_region', 'sig']
+receive_neurons = list_coupling_frame[wanted_cols]
+receive_neurons['nrn_type'] = 'receive'
+receive_neurons.drop(columns = ['neuron_input','region_input'], 
+                     inplace = True)
 
-sig_send_neurons = sig_filter_frame[wanted_cols]
-sig_send_neurons.drop(columns = ['neuron','region'], inplace = True)
-sig_send_neurons.rename(columns = {'neuron_input':'neuron',
-                                   'region_input':'region'},
-                        inplace = True)
-sig_send_neurons['nrn_type'] = 'send'
+send_neurons = list_coupling_frame[wanted_cols]
+send_neurons.drop(columns = ['neuron','region'], inplace = True)
+send_neurons.rename(columns = {'neuron_input':'neuron',
+                               'region_input':'region'},
+                    inplace = True)
+send_neurons['nrn_type'] = 'send'
 
-sig_cxn_neurons = pd.concat([sig_receive_neurons, sig_send_neurons],
+cxn_neurons = pd.concat([receive_neurons, send_neurons],
                             ignore_index = True)
 # Replace true/false in inter_region column with inter/intra
-sig_cxn_neurons['inter_region'] = \
-        sig_cxn_neurons['inter_region'].replace(
-                {True:'inter', False:'intra'})
+cxn_neurons['inter_region'] = \
+    cxn_neurons['inter_region'].replace(
+            {True:'inter', False:'intra'})
 
-sig_cxn_neurons['fin_cxn_type'] = \
-        sig_cxn_neurons['region'] + '_' + \
-        sig_cxn_neurons['inter_region'] + '_' + \
-        sig_cxn_neurons['nrn_type']
+cxn_neurons['fin_cxn_type'] = \
+    cxn_neurons['region'] + '_' + \
+    cxn_neurons['inter_region'] + '_' + \
+    cxn_neurons['nrn_type']
 
-sig_cxn_neurons['nrn_id'] = \
-        sig_cxn_neurons['session'].astype('str') + '_' + \
-        sig_cxn_neurons['neuron'].astype('str')   
+cxn_neurons['nrn_id'] = \
+    cxn_neurons['session'].astype('str') + '_' + \
+    cxn_neurons['neuron'].astype('str')   
+
+############################################################
+############################################################
+
+# # Generate frame containing all neurons with significant connections
+# wanted_cols = ['session','taste','neuron', 'region', 'neuron_input',
+#                'region_input','connection_type','inter_region']
+# sig_receive_neurons = sig_filter_frame[wanted_cols]
+# sig_receive_neurons['nrn_type'] = 'receive'
+# sig_receive_neurons.drop(columns = ['neuron_input','region_input'], 
+#                          inplace = True)
+# 
+# sig_send_neurons = sig_filter_frame[wanted_cols]
+# sig_send_neurons.drop(columns = ['neuron','region'], inplace = True)
+# sig_send_neurons.rename(columns = {'neuron_input':'neuron',
+#                                    'region_input':'region'},
+#                         inplace = True)
+# sig_send_neurons['nrn_type'] = 'send'
+# 
+# sig_cxn_neurons = pd.concat([sig_receive_neurons, sig_send_neurons],
+#                             ignore_index = True)
+# # Replace true/false in inter_region column with inter/intra
+# sig_cxn_neurons['inter_region'] = \
+#         sig_cxn_neurons['inter_region'].replace(
+#                 {True:'inter', False:'intra'})
+# 
+# sig_cxn_neurons['fin_cxn_type'] = \
+#         sig_cxn_neurons['region'] + '_' + \
+#         sig_cxn_neurons['inter_region'] + '_' + \
+#         sig_cxn_neurons['nrn_type']
+# 
+# sig_cxn_neurons['nrn_id'] = \
+#         sig_cxn_neurons['session'].astype('str') + '_' + \
+#         sig_cxn_neurons['neuron'].astype('str')   
 
 ############################################################
 # Venn diagrams of each connection type
 ############################################################
-# Only iner-region connections
+# Only inter-region connections
+
+# Pull out, inter-send, inter-receive, and
+# non-inter-region connections 
+
+# list_coupling_frame = list_coupling_frame[wanted_cols]
+# 
+# region_names = list_coupling_frame['region'].unique()
+# region_neurons = [list_coupling_frame.loc[list_coupling_frame['region'] == x] \
+#         for x in region_names]
+
+sig_cxn_neurons = cxn_neurons[cxn_neurons['sig']]
+
+###############
+def pop_selector(region, inter_region = None, nrn_type = None):
+    region_bool = sig_cxn_neurons['region'] == region
+    if inter_region is not None:
+        inter_bool = sig_cxn_neurons['inter_region'] == inter_region
+    else:
+        inter_bool = True
+    if nrn_type is not None:
+        type_bool = sig_cxn_neurons['nrn_type'] == nrn_type
+    else:
+        type_bool = True
+    bool_frame = sig_cxn_neurons.loc[region_bool & inter_bool & type_bool]
+    return set(bool_frame['nrn_id'].unique())
+
+# Inter-region connections
+gc_inter_send = pop_selector('gc','inter','send')
+gc_inter_receive = pop_selector('gc','inter','receive')
+bla_inter_send = pop_selector('bla','inter','send')
+bla_inter_receive = pop_selector('bla','inter','receive')
+
+gc_inter_send_receive = list(gc_inter_send & gc_inter_receive)
+bla_inter_send_receive = list(bla_inter_send & bla_inter_receive)
+
+gc_inter_send_only = list(set(gc_inter_send) - set(gc_inter_receive))
+gc_inter_receive_only = list(set(gc_inter_receive) - set(gc_inter_send))
+bla_inter_send_only = list(set(bla_inter_send) - set(bla_inter_receive))
+bla_inter_receive_only = list(set(bla_inter_receive) - set(bla_inter_send))
+
+
+# Intra only
+gc_inter_all = list(gc_inter_send | gc_inter_receive)
+bla_inter_all = list(bla_inter_send | bla_inter_receive)
+
+gc_intra = pop_selector('gc', 'intra')
+bla_intra = pop_selector('bla', 'intra')
+
+gc_intra_only = list(set(gc_intra) - set(gc_inter_all))
+bla_intra_only = list(set(bla_intra) - set(bla_inter_all))
+
+fig, ax = plt.subplots(2,1, figsize = (10,10))
+venn.venn3([set(gc_inter_send),
+            set(gc_inter_receive),
+            set(gc_intra)],
+           set_labels = ['GC Inter Send', 'GC Inter Receive', 'GC Intra'],
+           ax = ax[0])
+ax[0].set_title('GC Connection Types')
+venn.venn3([set(bla_inter_send),
+            set(bla_inter_receive),
+            set(bla_intra)],
+           set_labels = ['BLA Inter Send', 'BLA Inter Receive', 'BLA Intra'],
+           ax = ax[1])
+ax[1].set_title('BLA Connection Types')
+plt.savefig(os.path.join(
+    coupling_analysis_plot_dir, 'gc_bla_cxn_types_venn.png'),
+            bbox_inches='tight')
+plt.close()
+
+###############
+
 cxn_groups = list(
         sig_cxn_neurons.loc[sig_cxn_neurons['inter_region'] == 'inter']\
                 .groupby('fin_cxn_type'))
@@ -744,6 +849,89 @@ encoding_frame = encoding_frame.merge(pal_iden_frame,
                                       how = 'outer',
                                       left_on = ['session','neuron'],
                                       right_on = ['session','neuron'])
+encoding_frame['nrn_id'] = encoding_frame['session'].astype('str') + '_' + \
+        encoding_frame['neuron'].astype('str')
+
+############################################################
+nrn_groups = [
+        gc_inter_send_only, gc_inter_receive_only, gc_inter_send_receive,
+        bla_inter_send_only, bla_inter_receive_only, bla_inter_send_receive,
+        gc_intra_only, bla_intra_only]
+nrn_group_names = [
+        'gc_inter_send_only', 'gc_inter_receive_only', 'gc_inter_send_receive',
+        'bla_inter_send_only', 'bla_inter_receive_only', 'bla_inter_send_receive',
+        'gc_intra_only', 'bla_intra_only']
+
+# For each group, add labels to encoding frame
+# First check that no neuron has already been labeled
+encoding_frame['group_label'] = None
+for group_name, group in zip(nrn_group_names, nrn_groups):
+    wanted_rows = encoding_frame.loc[encoding_frame['nrn_id'].isin(group)]
+    assert all(wanted_rows['group_label'].isna())
+    encoding_frame.loc[encoding_frame['nrn_id'].isin(group), 'group_label'] = group_name
+
+# Melt encoding_frame by encoding metric
+metric_list = ['mean_post_stim_rates','responsiveness',
+               'mean_discrim_stat','mean_pal_rho']
+encoding_frame_melt = pd.melt(encoding_frame,
+                              id_vars = ['session','neuron','nrn_id',
+                                         'group_label'],
+                              value_vars = metric_list,
+                              var_name = 'metric',
+                              value_name = 'value')
+encoding_frame_melt.dropna(inplace = True)
+encoding_frame_melt['region'] = \
+        encoding_frame_melt['group_label'].apply(lambda x: x.split('_')[0])
+
+# Plot boxen plots using sns
+wanted_metrics = ['mean_post_stim_rates',
+                  'mean_discrim_stat','mean_pal_rho']
+for this_region in ['gc','bla']:
+    wanted_frame = encoding_frame_melt.loc[
+            encoding_frame_melt['region'] == this_region]
+    wanted_frame = wanted_frame.loc[
+            wanted_frame['metric'].isin(wanted_metrics)]
+    g = sns.catplot(data = wanted_frame, 
+                x = 'group_label', y = 'value',
+                palette = ['red','orange','green','blue'],
+                order = [
+                    'gc_inter_receive_only',
+                    'gc_inter_send_receive',
+                    'gc_inter_send_only',
+                    'gc_intra_only',
+                    ],
+                hue_order = [
+                    'gc_inter_receive_only',
+                    'gc_inter_send_receive',
+                    'gc_inter_send_only',
+                    'gc_intra_only',
+                    ],
+                kind = 'boxen', hue = 'group_label',
+                col = 'metric', 
+                aspect = 2, sharey = False, showfliers = False,
+                    )
+    g.fig.set_size_inches(8,4)
+    for ax in g.axes.flatten():
+        plt.sca(ax)
+        plt.xticks(rotation = 45, ha = 'right')
+        this_title = ax.get_title()
+        y_label = this_title.split('=')[1].strip()
+        plt.ylabel(y_label)
+        plt.title(None)
+    g.fig.suptitle(f'{this_region.upper()}' + \
+            '\nEncoding Metrics by Group')
+    plt.tight_layout()
+    plt.savefig(os.path.join(
+        coupling_analysis_plot_dir, 
+        f'encoding_metrics_by_group_{this_region}.png'),
+                bbox_inches = 'tight')
+    plt.close()
+
+
+############################################################
+############################################################
+############################################################
+############################################################
 
 ##############################
 # Now merge wth sig_cxn_neurons
