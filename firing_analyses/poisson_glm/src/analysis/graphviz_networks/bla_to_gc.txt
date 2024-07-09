@@ -1,0 +1,91 @@
+// graphviz digraph newtork
+
+digraph G {
+
+        rankdir=LR
+	splines=line
+        
+        node [fixedsize=true, label=""];
+
+    subgraph cluster_0 {
+        color=white;
+        node [style=filled,color=blue4, shape=circle];
+        x1 x2 x3 x4 x5 x6 x7 x8;
+        label = "GC";
+    }
+
+    subgraph cluster_1 {
+        color=white;
+        node [style=filled,color=red2, shape=circle];
+        a1 a2 a3 a4 a5 a6 a7 a8;
+        label = "BLA";
+    }
+
+        // all to all x->a
+        a1 -> x1;
+        a2 -> x1;
+        a3 -> x1;
+        a4 -> x1;
+        a5 -> x1;
+        a6 -> x1;
+        a7 -> x1;
+        a8 -> x1;
+        a1 -> x2;
+        a2 -> x2;
+        a3 -> x2;
+        a4 -> x2;
+        a5 -> x2;
+        a6 -> x2;
+        a7 -> x2;
+        a8 -> x2;
+        a1 -> x3;
+        a2 -> x3;
+        a3 -> x3;
+        a4 -> x3;
+        a5 -> x3;
+        a6 -> x3;
+        a7 -> x3;
+        a8 -> x3;
+        a1 -> x4;
+        a2 -> x4;
+        a3 -> x4;
+        a4 -> x4;
+        a5 -> x4;
+        a6 -> x4;
+        a7 -> x4;
+        a8 -> x4;
+        a1 -> x5;
+        a2 -> x5;
+        a3 -> x5;
+        a4 -> x5;
+        a5 -> x5;
+        a6 -> x5;
+        a7 -> x5;
+        a8 -> x5;
+        a1 -> x6;
+        a2 -> x6;
+        a3 -> x6;
+        a4 -> x6;
+        a5 -> x6;
+        a6 -> x6;
+        a7 -> x6;
+        a8 -> x6;
+        a1 -> x7;
+        a2 -> x7;
+        a3 -> x7;
+        a4 -> x7;
+        a5 -> x7;
+        a6 -> x7;
+        a7 -> x7;
+        a8 -> x7;
+        a1 -> x8;
+        a2 -> x8;
+        a3 -> x8;
+        a4 -> x8;
+        a5 -> x8;
+        a6 -> x8;
+        a7 -> x8;
+        a8 -> x8;
+    
+
+}

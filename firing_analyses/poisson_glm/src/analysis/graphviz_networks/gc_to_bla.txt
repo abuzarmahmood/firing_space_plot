@@ -1,0 +1,51 @@
+// graphviz digraph newtork
+
+digraph G {
+
+        rankdir=LR
+	splines=line
+        
+        node [fixedsize=true, label=""];
+
+    subgraph cluster_0 {
+        color=white;
+        node [style=filled,color=blue4, shape=circle];
+        x1 x2 x3 x4 x5 x6 x7 x8;
+        label = "GC";
+    }
+
+    subgraph cluster_1 {
+        color=white;
+        node [style=filled,color=red2, shape=circle];
+        a1 a2 a3 a4 a5 a6 a7 a8;
+        label = "BLA";
+    }
+
+        // all to all x->a
+        x1 -> a4;
+        x1 -> a5;
+        x1 -> a6;
+        x2 -> a4;
+        x2 -> a5;
+        x2 -> a6;
+        x3 -> a4;
+        x3 -> a5;
+        x3 -> a6;
+        x4 -> a4;
+        x4 -> a5;
+        x4 -> a6;
+        x5 -> a4;
+        x5 -> a5;
+        x5 -> a6;
+        x6 -> a4;
+        x6 -> a5;
+        x6 -> a6;
+        x7 -> a4;
+        x7 -> a5;
+        x7 -> a6;
+        x8 -> a4;
+        x8 -> a5;
+        x8 -> a6;
+    
+
+}

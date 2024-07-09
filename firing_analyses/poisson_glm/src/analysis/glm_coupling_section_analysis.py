@@ -548,11 +548,14 @@ cxn_type_summed_sig_coeffs = [x['summed_sig_coeffs'].values \
 # Generate frame containing all neurons with significant connections
 wanted_cols = ['session','taste','neuron', 'region', 'neuron_input',
                'region_input','connection_type','inter_region', 'sig']
+
+# Primary index are receiving neurons
 receive_neurons = list_coupling_frame[wanted_cols]
 receive_neurons['nrn_type'] = 'receive'
 receive_neurons.drop(columns = ['neuron_input','region_input'], 
                      inplace = True)
 
+# neuron_input and region_input are sending neurons
 send_neurons = list_coupling_frame[wanted_cols]
 send_neurons.drop(columns = ['neuron','region'], inplace = True)
 send_neurons.rename(columns = {'neuron_input':'neuron',
@@ -895,22 +898,22 @@ for this_region in ['gc','bla']:
                 x = 'group_label', y = 'value',
                 palette = ['red','orange','green','blue'],
                 order = [
-                    'gc_inter_receive_only',
-                    'gc_inter_send_receive',
-                    'gc_inter_send_only',
-                    'gc_intra_only',
+                    f'{this_region}_inter_receive_only',
+                    f'{this_region}_inter_send_receive',
+                    f'{this_region}_inter_send_only',
+                    f'{this_region}_intra_only',
                     ],
                 hue_order = [
-                    'gc_inter_receive_only',
-                    'gc_inter_send_receive',
-                    'gc_inter_send_only',
-                    'gc_intra_only',
+                    f'{this_region}_inter_receive_only',
+                    f'{this_region}_inter_send_receive',
+                    f'{this_region}_inter_send_only',
+                    f'{this_region}_intra_only',
                     ],
                 kind = 'boxen', hue = 'group_label',
                 col = 'metric', 
                 aspect = 2, sharey = False, showfliers = False,
                     )
-    g.fig.set_size_inches(8,4)
+    g.fig.set_size_inches(8,5)
     for ax in g.axes.flatten():
         plt.sca(ax)
         plt.xticks(rotation = 45, ha = 'right')
@@ -918,14 +921,263 @@ for this_region in ['gc','bla']:
         y_label = this_title.split('=')[1].strip()
         plt.ylabel(y_label)
         plt.title(None)
-    g.fig.suptitle(f'{this_region.upper()}' + \
-            '\nEncoding Metrics by Group')
+    temp_frame = wanted_frame.loc[wanted_frame.metric == 'mean_post_stim_rates']
+    g.fig.suptitle(f'{this_region.upper()} Encoding Metrics by Group' +\
+            f'\n{temp_frame.group_label.value_counts().reset_index().values}')
     plt.tight_layout()
     plt.savefig(os.path.join(
         coupling_analysis_plot_dir, 
         f'encoding_metrics_by_group_{this_region}.png'),
                 bbox_inches = 'tight')
     plt.close()
+
+
+############################################################
+# Convergence/Divergence of inter-region connections
+############################################################
+# Distribution of:
+# 1) # of outgoing connections
+# 2) # of incoming connections
+
+# Only focus on inter-region connections
+# inter_sig_cxn_neurons = sig_cxn_neurons[sig_cxn_neurons['inter_region'] == 'inter']
+inter_region_couplings = list_coupling_frame[
+        list_coupling_frame['inter_region'] == True]
+sig_inter_region_couplings = inter_region_couplings[
+        inter_region_couplings['sig']]
+
+sig_inter_region_couplings['send_nrn_id'] = \
+        sig_inter_region_couplings['session'].astype('str') + '_' + \
+        sig_inter_region_couplings['neuron_input'].astype('str')
+sig_inter_region_couplings['receive_nrn_id'] = \
+        sig_inter_region_couplings['session'].astype('str') + '_' + \
+        sig_inter_region_couplings['neuron'].astype('str')
+sig_inter_region_couplings.drop(columns = ['inter_region','sig', 'connection_type'],
+                                inplace = True)
+
+# Also get total number of bla and gc neurons in each session
+region_counts = unit_region_frame.groupby('session')['region'].value_counts().reset_index()
+
+# Get index for each region
+unit_region_frame['region_nrn_ind'] = unit_region_frame.groupby(
+        ['session','region']).cumcount()
+
+# Collapse across taste
+sig_inter_region_couplings = sig_inter_region_couplings.groupby(
+        ['session','send_nrn_id','receive_nrn_id']).first()
+sig_inter_region_couplings.reset_index(inplace = True)
+sig_inter_region_couplings.drop(
+        columns = ['taste'], inplace = True)
+        # columns = ['taste', 'neuron', 'neuron_input'], inplace = True)
+sig_inter_region_couplings.rename(
+        columns = {'region' : 'receive_region',
+                   'region_input' : 'send_region',
+                   'neuron' : 'receive_nrn',
+                   'neuron_input' : 'send_nrn',
+                   },
+        inplace = True)
+
+# # Send neurons
+# send_nrn_counts = sig_inter_region_couplings.groupby(
+#         ['session', 'send_region', 'send_nrn_id'])['receive_nrn_id'].count()
+# send_nrn_counts = send_nrn_counts.reset_index()
+# send_nrn_counts.rename(columns = {'receive_nrn_id':'send_count'}, inplace = True)
+# send_nrn_counts = send_nrn_counts.merge(region_counts,
+#                                         how = 'left',
+#                                         left_on = ['session','send_region'],
+#                                         right_on = ['session','region'])
+# send_nrn_counts.drop(columns = ['region'], inplace = True)
+# send_nrn_counts.rename(columns = {'count':'region_total_count'}, inplace = True)
+
+# Generate adjacency matrices for each session
+region_matrix_list = {}
+for session in sig_inter_region_couplings['session'].unique():
+    this_frame = region_counts[
+            region_counts['session'] == session]
+    gc_count = this_frame.loc[this_frame['region'] == 'gc']['count'].values[0]
+    bla_count = this_frame.loc[this_frame['region'] == 'bla']['count'].values[0]
+    blank_matrix = np.zeros((gc_count, bla_count))
+    region_matrix_list[session] = blank_matrix
+
+# Fill in adjacency matrices
+region_val_map = {'gc':1, 'bla':2}
+for i, row in sig_inter_region_couplings.iterrows():
+    session = row['session']
+    send_region = row['send_region']
+    receive_region = row['receive_region']
+    send_nrn = row['send_nrn']
+    receive_nrn = row['receive_nrn']
+
+    # Reference absolute indices against region_nrn_ind in unit_region_frame
+    send_nrn_region_ind = unit_region_frame[
+            (unit_region_frame['session'] == session) & \
+            (unit_region_frame['neuron'] == send_nrn)
+            ]['region_nrn_ind'].values[0]
+    receive_nrn_region_ind = unit_region_frame[
+            (unit_region_frame['session'] == session) & \
+            (unit_region_frame['neuron'] == receive_nrn)
+            ]['region_nrn_ind'].values[0]
+
+
+    cxn_val = region_val_map[send_region]
+    coupling_tuple = (send_nrn_region_ind, receive_nrn_region_ind)
+    # Since adjacency matrix is gc x bla, we need to switch the order
+    # of the tuple if the connection is from bla to gc
+    if cxn_val == 2:
+        coupling_tuple = (receive_nrn_region_ind, send_nrn_region_ind)
+    this_matrix = region_matrix_list[session]
+    this_matrix[coupling_tuple] += cxn_val
+
+# Plot adjacency matrices
+adj_mat_plot_dir = os.path.join(coupling_analysis_plot_dir, 'adjacency_matrices')
+if not os.path.exists(adj_mat_plot_dir):
+    os.makedirs(adj_mat_plot_dir)
+
+# Make colormap
+# -1 = blue, 0 = white, 1 = red
+from matplotlib import colors
+import matplotlib.patches as mpatches
+cmap = colors.ListedColormap(['white','red','blue','purple'])
+
+for session, adj_mat in region_matrix_list.items():
+    fig, ax = plt.subplots()
+    im = ax.matshow(adj_mat, cmap =cmap, alpha = 0.7,
+               vmin = 0, vmax = 3)
+    # Create legend
+    # legend_obj = [mpatches.Patch(color = 'blue', label = 'BLA send'),
+    #               mpatches.Patch(color = 'white', label = 'No connection'),
+    #               mpatches.Patch(color = 'red', label = 'GC send')]
+    legend_obj = [mpatches.Patch(color = 'white', label = 'No connection'),
+                  mpatches.Patch(color = 'red', label = 'GC send'),
+                  mpatches.Patch(color = 'blue', label = 'BLA send'),
+                  mpatches.Patch(color = 'purple', label = 'Bidirectional')]
+    ax.legend(handles = legend_obj, loc = 'center left',
+              bbox_to_anchor = (1,0.5))
+    ax.set_xticks(np.arange(adj_mat.shape[1]))
+    ax.set_yticks(np.arange(adj_mat.shape[0]))
+    # Draw gridlines
+    ax.grid(which='major', axis='both', linestyle='-', color='k', linewidth=1)
+    ax.grid(which='minor', axis='both', linestyle='-', color='k', linewidth=1)
+    ax.set_title(f'{session} adjacency matrix')
+    ax.set_xlabel('BLA Neurons')
+    ax.set_ylabel('GC Neurons')
+    plt.tight_layout()
+    plt.savefig(os.path.join(adj_mat_plot_dir, f'{session}_adjacency_matrix.png'),
+                bbox_inches = 'tight')
+    plt.close()
+
+##############################
+# Analysis of adjacency matrices
+
+
+# 1) Fraction of neurons in other region a single neuron projects to
+send_frame_list = []
+for session, adj_mat in region_matrix_list.items():
+    bla_send = np.mean(adj_mat == 2, axis = 0)
+    gc_send = np.mean(adj_mat == 1, axis = 1)
+    bla_frame = pd.DataFrame(
+            {
+                'session':session,
+                'type':'send',
+                'region':'bla',
+                'values':bla_send
+                }
+            )
+    gc_frame = pd.DataFrame(
+            {
+                'session':session,
+                'type':'send',
+                'region':'gc',
+                'values':gc_send
+                }
+            )
+    this_send_frame = pd.concat([bla_frame, gc_frame], ignore_index = True)
+    send_frame_list.append(this_send_frame)
+
+send_frame = pd.concat(send_frame_list, ignore_index = True)
+
+# 2) Fraction of neurons in other region a single neuron receives from
+receive_frame_list = []
+for session, adj_mat in region_matrix_list.items():
+    bla_receive = np.mean(adj_mat == 1, axis = 0)
+    gc_receive = np.mean(adj_mat == 2, axis = 1)
+    bla_frame = pd.DataFrame(
+            {
+                'session':session,
+                'type':'receive',
+                'region':'bla',
+                'values':bla_receive
+                }
+            )
+    gc_frame = pd.DataFrame(
+            {
+                'session':session,
+                'type':'receive',
+                'region':'gc',
+                'values':gc_receive
+                }
+            )
+    this_receive_frame = pd.concat([bla_frame, gc_frame], ignore_index = True)
+    receive_frame_list.append(this_receive_frame)
+
+receive_frame = pd.concat(receive_frame_list, ignore_index = True)
+
+fin_adj_frame = pd.concat([send_frame, receive_frame], ignore_index = True)
+
+# make plots
+g = sns.catplot(data = fin_adj_frame,
+                x = 'region', y = 'values',
+                hue = 'type', row = 'type',
+                kind = 'box', sharey = False)
+g.axes[0,0].set_title('Fraction of Neurons in Other \nRegion a Single Neuron Projects to')
+g.axes[1,0].set_title('Fraction of Neurons in Other \nRegion a Single Neuron Receives from')
+# Turn legend off
+g._legend.remove()
+g.fig.set_size_inches(3,5)
+plt.tight_layout()
+g.savefig(os.path.join(
+    coupling_analysis_plot_dir, 'fraction_neuron_connections.png'),
+            bbox_inches = 'tight')
+plt.close()
+
+# also plot other way
+g = sns.catplot(data = fin_adj_frame,
+                x = 'type', y = 'values',
+                hue = 'region', row = 'region',
+                kind = 'box', sharey = False)
+# g.axes[0,0].set_title('Fraction of Neurons in Other Region a Single Neuron Projects to')
+# g.axes[1,0].set_title('Fraction of Neurons in Other Region a Single Neuron Receives from')
+# Move legend out
+g._legend.set_bbox_to_anchor([1,0.5])
+g._legend.set_loc('center left')
+g.axes[1,0].set_xticklabels([
+    'Fraction of other region neurons\na single neuron projects to',
+    'Fraction of other region neurons\na single neuron receives from'],
+                            rotation = 45, ha = 'right')
+g.fig.set_size_inches(3,5)
+plt.tight_layout()
+g.savefig(os.path.join(
+    coupling_analysis_plot_dir, 'fraction_neuron_connections_other_way.png'),
+            bbox_inches = 'tight')
+plt.close()
+
+###############
+# Plot schematizing each projection
+# from graphviz import Digraph
+
+# Make 2 vertical layers
+# 1) GC neurons
+# 2) BLA neurons
+
+
+
+##############################
+# Density of connections between input and output populations in GC
+##############################
+# First calculate probability of connection between two random neurons
+# in GC
+
+
 
 
 ############################################################
@@ -936,8 +1188,6 @@ for this_region in ['gc','bla']:
 ##############################
 # Now merge wth sig_cxn_neurons
 
-# Only focus on inter-region connections
-inter_sig_cxn_neurons = sig_cxn_neurons[sig_cxn_neurons['inter_region'] == 'inter']
 
 # But first, aggregate 'fin_cxn_type' in sig_cxn_neurons
 inter_sig_cxn_neurons_agg = \
