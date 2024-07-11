@@ -41,6 +41,8 @@ from sklearn.decomposition import PCA
 from sklearn.metrics import confusion_matrix
 from sklearn.linear_model import LogisticRegression
 import matplotlib as mpl
+from matplotlib import colors
+import matplotlib.patches as mpatches
 
 def calc_firing_rates(spike_array, kern):
     """
@@ -643,6 +645,61 @@ for this_base_alpha in base_alpha_vec:
                 bbox_inches='tight')
     plt.close()
 
+    # Calculate probability of overlap b/w send and receive populations per region 
+    gc_all = set(cxn_neurons.loc[cxn_neurons['region'] == 'gc']['nrn_id'])
+    bla_all = set(cxn_neurons.loc[cxn_neurons['region'] == 'bla']['nrn_id'])
+
+    gc_all_len = len(gc_all)
+    gc_send_frac = len(gc_inter_send) / gc_all_len
+    gc_receive_frac = len(gc_inter_receive) / gc_all_len
+    gc_bi_frac = len(gc_inter_send_receive) / gc_all_len
+
+    bla_all_len = len(bla_all)
+    bla_send_frac = len(bla_inter_send) / bla_all_len
+    bla_receive_frac = len(bla_inter_receive) / bla_all_len
+    bla_bi_frac = len(bla_inter_send_receive) / bla_all_len
+
+    n_samples = 10000
+
+    gc_send_boot = np.random.random(size = (n_samples, gc_all_len)) < gc_send_frac
+    gc_receive_boot = np.random.random(size = (n_samples, gc_all_len)) < gc_receive_frac
+    gc_bi_boot = np.logical_and(gc_send_boot, gc_receive_boot) 
+    gc_bi_boot_frac = np.mean(gc_bi_boot, axis = 1)
+
+    bla_send_boot = np.random.random(size = (n_samples, bla_all_len)) < bla_send_frac
+    bla_receive_boot = np.random.random(size = (n_samples, bla_all_len)) < bla_receive_frac
+    bla_bi_boot = np.logical_and(bla_send_boot, bla_receive_boot)
+    bla_bi_boot_frac = np.mean(bla_bi_boot, axis = 1)
+
+    gc_bi_perc = percentileofscore(gc_bi_boot_frac, gc_bi_frac)
+    bla_bi_perc = percentileofscore(bla_bi_boot_frac, bla_bi_frac)
+
+    gc_bi_pval = ((100 - gc_bi_perc) / 100)*2
+    bla_bi_pval = ((100 - bla_bi_perc) / 100)*2
+
+    gc_bi_boot_ci = np.percentile(gc_bi_boot_frac, [2.5, 97.5])
+    bla_bi_boot_ci = np.percentile(bla_bi_boot_frac, [2.5, 97.5])
+
+    # Plot results
+    fig, ax = plt.subplots(figsize = (3,5))
+    ax.errorbar(['gc', 'bla'], [gc_bi_frac, bla_bi_frac],
+                yerr = [[gc_bi_frac - gc_bi_boot_ci[0], bla_bi_frac - bla_bi_boot_ci[0]],
+                        [gc_bi_boot_ci[1] - gc_bi_frac, bla_bi_boot_ci[1] - bla_bi_frac]],
+                fmt = 'o', linestyle = '--', linewidth = 5,
+                label = 'Shuffle 95% CI')
+    ax.scatter(['gc', 'bla'], [gc_bi_frac, bla_bi_frac], color = 'r', s = 100,
+               zorder = 10, label = 'Observed Bi-directional Fraction')
+    ax.legend(loc = 'lower center', bbox_to_anchor = (0.5, -0.3))
+    ax.set_ylabel('Fraction of Bi-directional Connections')
+    ax.set_title('Bi-directional Connection Fraction\n' +\
+            f'GC: p = {gc_bi_pval:.3f}, BLA: p = {bla_bi_pval:.3f}' + \
+            '\n' + f'Base Alpha: {this_base_alpha}, Corrected Alpha: {bonf_alpha}')
+    plt.savefig(os.path.join(
+        coupling_analysis_plot_dir, f'bi_directional_frac_{this_base_alpha}.png'),
+                bbox_inches='tight')
+    plt.close()
+
+
     ###############
 
     cxn_groups = list(
@@ -651,6 +708,7 @@ for this_base_alpha in base_alpha_vec:
     cxn_type_names = [x[0] for x in cxn_groups]
     cxn_type_frames = [x[1] for x in cxn_groups]
     cxn_type_neurons = [x['nrn_id'].unique() for x in cxn_type_frames]
+
 
     # Plot venn diagrams
     fig,ax = plt.subplots(2,1)
@@ -666,6 +724,7 @@ for this_base_alpha in base_alpha_vec:
         coupling_analysis_plot_dir, f'inter_region_cxn_types_venn_{this_base_alpha}.png'),
                 bbox_inches='tight')
     plt.close()
+
 
     # Inter-region vs intra-region connections
     cxn_groups = list(sig_cxn_neurons.groupby(['region','inter_region']))
@@ -687,6 +746,7 @@ for this_base_alpha in base_alpha_vec:
         coupling_analysis_plot_dir, 'inter_vs_intra_region_cxn_types_venn.png'),
                 bbox_inches='tight')
     plt.close()
+
 
 
 ############################################################
@@ -937,17 +997,6 @@ sig_inter_region_couplings.rename(
         inplace = True)
 
 # # Send neurons
-# send_nrn_counts = sig_inter_region_couplings.groupby(
-#         ['session', 'send_region', 'send_nrn_id'])['receive_nrn_id'].count()
-# send_nrn_counts = send_nrn_counts.reset_index()
-# send_nrn_counts.rename(columns = {'receive_nrn_id':'send_count'}, inplace = True)
-# send_nrn_counts = send_nrn_counts.merge(region_counts,
-#                                         how = 'left',
-#                                         left_on = ['session','send_region'],
-#                                         right_on = ['session','region'])
-# send_nrn_counts.drop(columns = ['region'], inplace = True)
-# send_nrn_counts.rename(columns = {'count':'region_total_count'}, inplace = True)
-
 # Generate adjacency matrices for each session
 region_matrix_list = {}
 for session in sig_inter_region_couplings['session'].unique():
@@ -994,8 +1043,6 @@ if not os.path.exists(adj_mat_plot_dir):
 
 # Make colormap
 # -1 = blue, 0 = white, 1 = red
-from matplotlib import colors
-import matplotlib.patches as mpatches
 cmap = colors.ListedColormap(['white','red','blue','purple'])
 
 for session, adj_mat in region_matrix_list.items():
@@ -1003,9 +1050,6 @@ for session, adj_mat in region_matrix_list.items():
     im = ax.matshow(adj_mat, cmap =cmap, alpha = 0.7,
                vmin = 0, vmax = 3)
     # Create legend
-    # legend_obj = [mpatches.Patch(color = 'blue', label = 'BLA send'),
-    #               mpatches.Patch(color = 'white', label = 'No connection'),
-    #               mpatches.Patch(color = 'red', label = 'GC send')]
     legend_obj = [mpatches.Patch(color = 'white', label = 'No connection'),
                   mpatches.Patch(color = 'red', label = 'GC send'),
                   mpatches.Patch(color = 'blue', label = 'BLA send'),
@@ -1087,7 +1131,7 @@ fin_adj_frame = pd.concat([send_frame, receive_frame], ignore_index = True)
 g = sns.catplot(data = fin_adj_frame,
                 x = 'region', y = 'values',
                 hue = 'type', row = 'type',
-                kind = 'box', sharey = False)
+                kind = 'box', sharey = True)
 g.axes[0,0].set_title('Fraction of Neurons in Other \nRegion a Single Neuron Projects to')
 g.axes[1,0].set_title('Fraction of Neurons in Other \nRegion a Single Neuron Receives from')
 # Turn legend off
@@ -1103,7 +1147,7 @@ plt.close()
 g = sns.catplot(data = fin_adj_frame,
                 x = 'type', y = 'values',
                 hue = 'region', row = 'region',
-                kind = 'box', sharey = False)
+                kind = 'box', sharey = True)
 # g.axes[0,0].set_title('Fraction of Neurons in Other Region a Single Neuron Projects to')
 # g.axes[1,0].set_title('Fraction of Neurons in Other Region a Single Neuron Receives from')
 # Move legend out
@@ -1133,8 +1177,8 @@ plt.close()
 ##############################
 # Density of connections between input and output populations in GC
 ##############################
-# First calculate probability of connection between two random neurons
-# in GC
+# First calculate probability of connection between intra-only
+# GC neurons
 
 
 
