@@ -512,42 +512,21 @@ cxn_type_sig_coeffs = [x['sig_coeffs'].values for x in cxn_type_frames]
 cxn_type_summed_sig_coeffs = [x['summed_sig_coeffs'].values \
         for x in cxn_type_frames]
 
-# # Plot histograms
-# # Left column is summed, right column is unsummed
-# fig, ax = plt.subplots(len(cxn_type_names),2,
-#                        sharex=True, sharey=True,
-#                        figsize = (5,10))
-# for ind, (cxn_type, cxn_sig_coeffs, cxn_summed_sig_coeffs) in \
-#         enumerate(zip(cxn_type_names, cxn_type_sig_coeffs,
-#             cxn_type_summed_sig_coeffs)):
-#     ax[ind][0].hist(cxn_summed_sig_coeffs)
-#     ax[ind][0].set_title(cxn_type)
-#     ax[ind][0].set_ylabel('Count')
-#     ax[ind][0].set_yscale('log')
-#     ax[ind][1].hist(np.concatenate(cxn_sig_coeffs))
-#     ax[ind][1].set_title(cxn_type)
-#     ax[ind][1].set_ylabel('Count')
-#     ax[ind][1].set_yscale('log')
-# ax[-1][0].set_xlabel('Summed Significant Coefficients')
-# ax[-1][1].set_xlabel('Significant Coefficients')
-# # Plot 0 line
-# for this_ax in ax.flatten():
-#     this_ax.axvline(0, color = 'k', linestyle = '--')
-# plt.suptitle('Significant Coefficients per Connection Type')
-# plt.savefig(os.path.join(
-#     coupling_analysis_plot_dir, 'sig_coeffs_per_cxn_type.png'),
-#             bbox_inches='tight')
-# plt.close()
-
 ############################################################
 ############################################################
 ## Neuron Properties
 ############################################################
 ############################################################
 
+# Add min p-value to list_coupling_frame so signficance can easily
+# be evaluated
+list_coupling_frame['min_p_val'] = \
+        [np.min(x) for x in list_coupling_frame['p_vals']]
+
 # Generate frame containing all neurons with significant connections
 wanted_cols = ['session','taste','neuron', 'region', 'neuron_input',
-               'region_input','connection_type','inter_region', 'sig']
+               'region_input','connection_type','inter_region', 'sig',
+               'min_p_val']
 
 # Primary index are receiving neurons
 receive_neurons = list_coupling_frame[wanted_cols]
@@ -579,57 +558,26 @@ cxn_neurons['nrn_id'] = \
     cxn_neurons['session'].astype('str') + '_' + \
     cxn_neurons['neuron'].astype('str')   
 
-############################################################
-############################################################
+###############
+plt.scatter(
+        np.log10(cxn_neurons['min_p_val']),
+        1*cxn_neurons['sig'],
+        alpha = 0.5)
+plt.axvline(np.log10(bonferroni_alpha), color = 'k', linestyle = '--')
+plt.xlabel('Log10 Min P-Value')
+plt.ylabel('Significance')
+plt.show()
 
-# # Generate frame containing all neurons with significant connections
-# wanted_cols = ['session','taste','neuron', 'region', 'neuron_input',
-#                'region_input','connection_type','inter_region']
-# sig_receive_neurons = sig_filter_frame[wanted_cols]
-# sig_receive_neurons['nrn_type'] = 'receive'
-# sig_receive_neurons.drop(columns = ['neuron_input','region_input'], 
-#                          inplace = True)
-# 
-# sig_send_neurons = sig_filter_frame[wanted_cols]
-# sig_send_neurons.drop(columns = ['neuron','region'], inplace = True)
-# sig_send_neurons.rename(columns = {'neuron_input':'neuron',
-#                                    'region_input':'region'},
-#                         inplace = True)
-# sig_send_neurons['nrn_type'] = 'send'
-# 
-# sig_cxn_neurons = pd.concat([sig_receive_neurons, sig_send_neurons],
-#                             ignore_index = True)
-# # Replace true/false in inter_region column with inter/intra
-# sig_cxn_neurons['inter_region'] = \
-#         sig_cxn_neurons['inter_region'].replace(
-#                 {True:'inter', False:'intra'})
-# 
-# sig_cxn_neurons['fin_cxn_type'] = \
-#         sig_cxn_neurons['region'] + '_' + \
-#         sig_cxn_neurons['inter_region'] + '_' + \
-#         sig_cxn_neurons['nrn_type']
-# 
-# sig_cxn_neurons['nrn_id'] = \
-#         sig_cxn_neurons['session'].astype('str') + '_' + \
-#         sig_cxn_neurons['neuron'].astype('str')   
+############################################################
+############################################################
 
 ############################################################
 # Venn diagrams of each connection type
 ############################################################
-# Only inter-region connections
+n_comparisons = np.unique(list_coupling_frame.p_vals.apply(len))[0]
+# Put 0.05 at the end so downstream analyses work with 0.05
+base_alpha_vec = [0.01, 0.005, 0.05]
 
-# Pull out, inter-send, inter-receive, and
-# non-inter-region connections 
-
-# list_coupling_frame = list_coupling_frame[wanted_cols]
-# 
-# region_names = list_coupling_frame['region'].unique()
-# region_neurons = [list_coupling_frame.loc[list_coupling_frame['region'] == x] \
-#         for x in region_names]
-
-sig_cxn_neurons = cxn_neurons[cxn_neurons['sig']]
-
-###############
 def pop_selector(region, inter_region = None, nrn_type = None):
     region_bool = sig_cxn_neurons['region'] == region
     if inter_region is not None:
@@ -643,91 +591,102 @@ def pop_selector(region, inter_region = None, nrn_type = None):
     bool_frame = sig_cxn_neurons.loc[region_bool & inter_bool & type_bool]
     return set(bool_frame['nrn_id'].unique())
 
-# Inter-region connections
-gc_inter_send = pop_selector('gc','inter','send')
-gc_inter_receive = pop_selector('gc','inter','receive')
-bla_inter_send = pop_selector('bla','inter','send')
-bla_inter_receive = pop_selector('bla','inter','receive')
+for this_base_alpha in base_alpha_vec:
+    bonf_alpha = this_base_alpha / n_comparisons
 
-gc_inter_send_receive = list(gc_inter_send & gc_inter_receive)
-bla_inter_send_receive = list(bla_inter_send & bla_inter_receive)
+    cxn_neurons['sig'] = cxn_neurons['min_p_val'] < bonf_alpha
 
-gc_inter_send_only = list(set(gc_inter_send) - set(gc_inter_receive))
-gc_inter_receive_only = list(set(gc_inter_receive) - set(gc_inter_send))
-bla_inter_send_only = list(set(bla_inter_send) - set(bla_inter_receive))
-bla_inter_receive_only = list(set(bla_inter_receive) - set(bla_inter_send))
+    sig_cxn_neurons = cxn_neurons[cxn_neurons['sig']]
+
+    ###############
+    # Inter-region connections
+    gc_inter_send = pop_selector('gc','inter','send')
+    gc_inter_receive = pop_selector('gc','inter','receive')
+    bla_inter_send = pop_selector('bla','inter','send')
+    bla_inter_receive = pop_selector('bla','inter','receive')
+
+    gc_inter_send_receive = list(gc_inter_send & gc_inter_receive)
+    bla_inter_send_receive = list(bla_inter_send & bla_inter_receive)
+
+    gc_inter_send_only = list(set(gc_inter_send) - set(gc_inter_receive))
+    gc_inter_receive_only = list(set(gc_inter_receive) - set(gc_inter_send))
+    bla_inter_send_only = list(set(bla_inter_send) - set(bla_inter_receive))
+    bla_inter_receive_only = list(set(bla_inter_receive) - set(bla_inter_send))
 
 
-# Intra only
-gc_inter_all = list(gc_inter_send | gc_inter_receive)
-bla_inter_all = list(bla_inter_send | bla_inter_receive)
+    # Intra only
+    gc_inter_all = list(gc_inter_send | gc_inter_receive)
+    bla_inter_all = list(bla_inter_send | bla_inter_receive)
 
-gc_intra = pop_selector('gc', 'intra')
-bla_intra = pop_selector('bla', 'intra')
+    gc_intra = pop_selector('gc', 'intra')
+    bla_intra = pop_selector('bla', 'intra')
 
-gc_intra_only = list(set(gc_intra) - set(gc_inter_all))
-bla_intra_only = list(set(bla_intra) - set(bla_inter_all))
+    gc_intra_only = list(set(gc_intra) - set(gc_inter_all))
+    bla_intra_only = list(set(bla_intra) - set(bla_inter_all))
 
-fig, ax = plt.subplots(2,1, figsize = (10,10))
-venn.venn3([set(gc_inter_send),
-            set(gc_inter_receive),
-            set(gc_intra)],
-           set_labels = ['GC Inter Send', 'GC Inter Receive', 'GC Intra'],
-           ax = ax[0])
-ax[0].set_title('GC Connection Types')
-venn.venn3([set(bla_inter_send),
-            set(bla_inter_receive),
-            set(bla_intra)],
-           set_labels = ['BLA Inter Send', 'BLA Inter Receive', 'BLA Intra'],
-           ax = ax[1])
-ax[1].set_title('BLA Connection Types')
-plt.savefig(os.path.join(
-    coupling_analysis_plot_dir, 'gc_bla_cxn_types_venn.png'),
-            bbox_inches='tight')
-plt.close()
+    fig, ax = plt.subplots(2,1, figsize = (10,10))
+    venn.venn3([set(gc_inter_send),
+                set(gc_inter_receive),
+                set(gc_intra)],
+               set_labels = ['GC Inter Send', 'GC Inter Receive', 'GC Intra'],
+               ax = ax[0])
+    ax[0].set_title('GC Connection Types')
+    venn.venn3([set(bla_inter_send),
+                set(bla_inter_receive),
+                set(bla_intra)],
+               set_labels = ['BLA Inter Send', 'BLA Inter Receive', 'BLA Intra'],
+               ax = ax[1])
+    ax[1].set_title('BLA Connection Types\n' +\
+            f'Base Alpha: {this_base_alpha}, Corrected Alpha: {bonf_alpha}')
+    plt.savefig(os.path.join(
+        coupling_analysis_plot_dir, f'gc_bla_cxn_types_venn_{this_base_alpha}.png'),
+                bbox_inches='tight')
+    plt.close()
 
-###############
+    ###############
 
-cxn_groups = list(
-        sig_cxn_neurons.loc[sig_cxn_neurons['inter_region'] == 'inter']\
-                .groupby('fin_cxn_type'))
-cxn_type_names = [x[0] for x in cxn_groups]
-cxn_type_frames = [x[1] for x in cxn_groups]
-cxn_type_neurons = [x['nrn_id'].unique() for x in cxn_type_frames]
+    cxn_groups = list(
+            sig_cxn_neurons.loc[sig_cxn_neurons['inter_region'] == 'inter']\
+                    .groupby('fin_cxn_type'))
+    cxn_type_names = [x[0] for x in cxn_groups]
+    cxn_type_frames = [x[1] for x in cxn_groups]
+    cxn_type_neurons = [x['nrn_id'].unique() for x in cxn_type_frames]
 
-# Plot venn diagrams
-fig,ax = plt.subplots(2,1)
-venn.venn2([set(cxn_type_neurons[0]), set(cxn_type_neurons[1])],
-           set_labels = cxn_type_names[0:2],
-           ax = ax[0])
-venn.venn2([set(cxn_type_neurons[2]), set(cxn_type_neurons[3])],
-           set_labels = cxn_type_names[2:4],
-           ax = ax[1])
-plt.suptitle('Inter-region Connection Types')
-plt.savefig(os.path.join(
-    coupling_analysis_plot_dir, 'inter_region_cxn_types_venn.png'),
-            bbox_inches='tight')
-plt.close()
+    # Plot venn diagrams
+    fig,ax = plt.subplots(2,1)
+    venn.venn2([set(cxn_type_neurons[0]), set(cxn_type_neurons[1])],
+               set_labels = cxn_type_names[0:2],
+               ax = ax[0])
+    venn.venn2([set(cxn_type_neurons[2]), set(cxn_type_neurons[3])],
+               set_labels = cxn_type_names[2:4],
+               ax = ax[1])
+    plt.suptitle('Inter-region Connection Types\n' +\
+            f'Base Alpha: {this_base_alpha}, Corrected Alpha: {bonf_alpha}')
+    plt.savefig(os.path.join(
+        coupling_analysis_plot_dir, f'inter_region_cxn_types_venn_{this_base_alpha}.png'),
+                bbox_inches='tight')
+    plt.close()
 
-# Inter-region vs intra-region connections
-cxn_groups = list(sig_cxn_neurons.groupby(['region','inter_region']))
-cxn_type_names = [x[0] for x in cxn_groups]
-cxn_type_frames = [x[1] for x in cxn_groups]
-cxn_type_neurons = [x['nrn_id'].unique() for x in cxn_type_frames]
+    # Inter-region vs intra-region connections
+    cxn_groups = list(sig_cxn_neurons.groupby(['region','inter_region']))
+    cxn_type_names = [x[0] for x in cxn_groups]
+    cxn_type_frames = [x[1] for x in cxn_groups]
+    cxn_type_neurons = [x['nrn_id'].unique() for x in cxn_type_frames]
 
-# Plot venn diagrams
-fig,ax = plt.subplots(2,1)
-venn.venn2([set(cxn_type_neurons[0]), set(cxn_type_neurons[1])],
-           set_labels = cxn_type_names[0:2],
-           ax = ax[0])
-venn.venn2([set(cxn_type_neurons[2]), set(cxn_type_neurons[3])],
-           set_labels = cxn_type_names[2:4],
-           ax = ax[1])
-plt.suptitle('Inter vs Intra-region Connection Types')
-plt.savefig(os.path.join(
-    coupling_analysis_plot_dir, 'inter_vs_intra_region_cxn_types_venn.png'),
-            bbox_inches='tight')
-plt.close()
+    # Plot venn diagrams
+    fig,ax = plt.subplots(2,1)
+    venn.venn2([set(cxn_type_neurons[0]), set(cxn_type_neurons[1])],
+               set_labels = cxn_type_names[0:2],
+               ax = ax[0])
+    venn.venn2([set(cxn_type_neurons[2]), set(cxn_type_neurons[3])],
+               set_labels = cxn_type_names[2:4],
+               ax = ax[1])
+    plt.suptitle('Inter vs Intra-region Connection Types\n' +\
+            f'Base Alpha: {this_base_alpha}, Corrected Alpha: {bonf_alpha}')
+    plt.savefig(os.path.join(
+        coupling_analysis_plot_dir, 'inter_vs_intra_region_cxn_types_venn.png'),
+                bbox_inches='tight')
+    plt.close()
 
 
 ############################################################
