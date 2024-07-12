@@ -1047,7 +1047,7 @@ cmap = colors.ListedColormap(['white','red','blue','purple'])
 
 for session, adj_mat in region_matrix_list.items():
     fig, ax = plt.subplots()
-    im = ax.matshow(adj_mat, cmap =cmap, alpha = 0.7,
+    im = ax.matshow(adj_mat, cmap =cmap,
                vmin = 0, vmax = 3)
     # Create legend
     legend_obj = [mpatches.Patch(color = 'white', label = 'No connection'),
@@ -1179,9 +1179,210 @@ plt.close()
 ##############################
 # First calculate probability of connection between intra-only
 # GC neurons
+sig_intra_gc_couplings = list_coupling_frame[
+        (list_coupling_frame['region'] == 'gc') & \
+        (list_coupling_frame['region_input'] == 'gc') & \
+        (list_coupling_frame['sig'] == True)
+        ]
+
+sig_intra_gc_couplings['send_nrn_id'] = \
+        sig_intra_gc_couplings['session'].astype('str') + '_' + \
+        sig_intra_gc_couplings['neuron_input'].astype('str')
+sig_intra_gc_couplings['receive_nrn_id'] = \
+        sig_intra_gc_couplings['session'].astype('str') + '_' + \
+        sig_intra_gc_couplings['neuron'].astype('str')
+sig_intra_gc_couplings.drop(columns = ['inter_region','sig', 'connection_type'],
+                                inplace = True)
+
+# Collapse across taste
+sig_intra_gc_couplings = sig_intra_gc_couplings.groupby(
+        ['session','send_nrn_id','receive_nrn_id']).first()
+sig_intra_gc_couplings.reset_index(inplace = True)
+sig_intra_gc_couplings.drop(
+        columns = ['taste'], inplace = True)
+        # columns = ['taste', 'neuron', 'neuron_input'], inplace = True)
+sig_intra_gc_couplings.rename(
+        columns = {'region' : 'receive_region',
+                   'region_input' : 'send_region',
+                   'neuron' : 'receive_nrn',
+                   'neuron_input' : 'send_nrn',
+                   },
+        inplace = True)
+
+# # Send neurons
+# Generate adjacency matrices for each session
+gc_matrix_list = {}
+for session in sig_inter_region_couplings['session'].unique():
+    this_frame = region_counts[
+            region_counts['session'] == session]
+    gc_count = this_frame.loc[this_frame['region'] == 'gc']['count'].values[0]
+    blank_matrix = np.zeros((gc_count, gc_count))
+    gc_matrix_list[session] = blank_matrix
+
+# Fill in adjacency matrices
+for i, row in sig_intra_gc_couplings.iterrows():
+    session = row['session']
+    send_region = row['send_region']
+    receive_region = row['receive_region']
+    send_nrn = row['send_nrn']
+    receive_nrn = row['receive_nrn']
+
+    # Reference absolute indices against region_nrn_ind in unit_region_frame
+    send_nrn_region_ind = unit_region_frame[
+            (unit_region_frame['session'] == session) & \
+            (unit_region_frame['neuron'] == send_nrn)
+            ]['region_nrn_ind'].values[0]
+    receive_nrn_region_ind = unit_region_frame[
+            (unit_region_frame['session'] == session) & \
+            (unit_region_frame['neuron'] == receive_nrn)
+            ]['region_nrn_ind'].values[0]
 
 
+    cxn_val = region_val_map[send_region]
+    coupling_tuple = (send_nrn_region_ind, receive_nrn_region_ind)
+    this_matrix = gc_matrix_list[session]
+    this_matrix[coupling_tuple] += cxn_val
 
+# Break these matrices down into connections between
+# intra-only and send_only-receive_only neurons
+gc_intra_only_nrn_frame = pd.DataFrame(
+        dict(
+            session = [int(x.split('_')[0]) for x in gc_intra_only],
+            abs_nrn_id = [int(x.split('_')[1]) for x in gc_intra_only],
+            )
+        )
+gc_intra_only_nrn_frame['gc_nrn_ind'] = [unit_region_frame[
+                            (unit_region_frame['session'] == x) & \
+                            (unit_region_frame['neuron'] == y)
+                            ]['region_nrn_ind'].values[0] for x,y in \
+                        zip(gc_intra_only_nrn_frame['session'],
+                            gc_intra_only_nrn_frame['abs_nrn_id'])]
+gc_intra_only_nrn_frame.sort_values(by = ['session','gc_nrn_ind'],
+                                    inplace = True)
+gc_intra_only_nrn_frame.reset_index(drop = True, inplace = True)
+
+gc_rec_only_plus_send_only = list(set(gc_inter_send_only) | set(gc_inter_receive_only))
+gc_rec_only_plus_send_only_nrn_frame = pd.DataFrame(
+        dict(
+            session = [int(x.split('_')[0]) for x in gc_rec_only_plus_send_only],
+            abs_nrn_id = [int(x.split('_')[1]) for x in gc_rec_only_plus_send_only],
+            )
+        )
+gc_rec_only_plus_send_only_nrn_frame['gc_nrn_ind'] = [unit_region_frame[
+    (unit_region_frame['session'] == x) & \
+    (unit_region_frame['neuron'] == y)
+    ]['region_nrn_ind'].values[0] for x,y in \
+    zip(gc_rec_only_plus_send_only_nrn_frame['session'],
+        gc_rec_only_plus_send_only_nrn_frame['abs_nrn_id'])]
+gc_rec_only_plus_send_only_nrn_frame.sort_values(by = ['session','gc_nrn_ind'],
+                                                   inplace = True)
+gc_rec_only_plus_send_only_nrn_frame.reset_index(drop = True, inplace = True)
+
+gc_intra_only_mat_list = []
+gc_send_receive_mat_list = []
+for session, adj_mat in gc_matrix_list.items():
+
+    intra_nrn_inds = gc_intra_only_nrn_frame[
+            gc_intra_only_nrn_frame['session'] == session]['gc_nrn_ind'].values
+    send_receive_nrn_inds = gc_rec_only_plus_send_only_nrn_frame[
+            gc_rec_only_plus_send_only_nrn_frame['session'] == session]['gc_nrn_ind'].values
+
+    this_intra_mat = adj_mat[np.ix_(intra_nrn_inds, intra_nrn_inds)]
+    this_send_receive_mat = adj_mat[np.ix_(send_receive_nrn_inds, send_receive_nrn_inds)]
+
+    gc_intra_only_mat_list.append(this_intra_mat)
+    gc_send_receive_mat_list.append(this_send_receive_mat)
+
+
+# Calculate probability of non-self intra-region connection
+gc_intra_cxn_prob = []
+for adj_mat in gc_intra_only_mat_list:
+    temp_mat = adj_mat.copy()
+    # Set diagonal to nan
+    np.fill_diagonal(temp_mat, np.nan)
+    mean_prob = np.nanmean(temp_mat, axis = 0)
+    gc_intra_cxn_prob.extend(mean_prob)
+
+gc_send_receive_cxn_prob = []
+for adj_mat in gc_send_receive_mat_list:
+    temp_mat = adj_mat.copy()
+    # Set diagonal to nan
+    np.fill_diagonal(temp_mat, np.nan)
+    mean_prob = np.nanmean(temp_mat, axis = 0)
+    gc_send_receive_cxn_prob.extend(mean_prob)
+
+# Make plots
+fig, ax = plt.subplots(2,1,sharex = True)
+ax[0].hist(gc_intra_cxn_prob, bins = np.linspace(0,1,20)) 
+ax[0].set_title('GC Intra-only Connection Probability')
+ax[0].set_ylabel('Density')
+ax[1].hist(gc_send_receive_cxn_prob, bins = np.linspace(0,1,20))
+ax[1].set_title('GC Send-Receive Connection Probability')
+ax[1].set_xlabel('Connection Probability')
+ax[1].set_ylabel('Density')
+plt.tight_layout()
+plt.savefig(os.path.join(
+    coupling_analysis_plot_dir, 'gc_connection_probabilities.png'),
+            bbox_inches = 'tight')
+plt.close()
+
+# Calculate bootstrapped distributions of means for each set
+n_boot = 10000
+gc_intra_cxn_prob_boot = [
+        np.random.choice(gc_intra_cxn_prob, size = len(gc_intra_cxn_prob), replace = True) \
+        for _ in range(n_boot)]
+gc_send_receive_cxn_prob_boot = [
+        np.random.choice(gc_send_receive_cxn_prob, size = len(gc_send_receive_cxn_prob), replace = True) \
+        for _ in range(n_boot)]
+
+gc_intra_cxn_prob_boot_means = np.mean(gc_intra_cxn_prob_boot, axis = 1)
+gc_send_receive_cxn_prob_boot_means = np.mean(gc_send_receive_cxn_prob_boot, axis = 1)
+
+# Plot bootstrapped distributions
+fig, ax = plt.subplots()
+ax.hist(gc_intra_cxn_prob_boot_means, bins = np.linspace(0,1,50), log = False, density = True,
+        alpha = 0.5, label = 'Intra-only')
+ax.hist(gc_send_receive_cxn_prob_boot_means, bins = np.linspace(0,1,50), log = False, density = True,
+        alpha = 0.5, label = 'Send-Receive')
+ax.set_title('GC Connection Probability Bootstrapped Means')
+ax.set_xlabel('Connection Probability')
+ax.set_ylabel('Density')
+ax.legend()
+plt.tight_layout()
+plt.savefig(os.path.join(
+    coupling_analysis_plot_dir, 'gc_connection_probabilities_bootstrapped_means.png'),
+            bbox_inches = 'tight')
+plt.close()
+
+
+# Plot adjacency matrices
+gc_adj_mat_plot_dir = os.path.join(coupling_analysis_plot_dir, 'gc_adjacency_matrices')
+if not os.path.exists(gc_adj_mat_plot_dir):
+    os.makedirs(gc_adj_mat_plot_dir)
+
+# Make colormap
+for session, adj_mat in gc_matrix_list.items():
+    fig, ax = plt.subplots()
+    im = ax.matshow(adj_mat, cmap = 'binary',
+                vmin = 0, vmax = 1)
+    ax.plot([0,adj_mat.shape[1]],[0,adj_mat.shape[0]], color = 'black',
+            linewidth = 1, linestyle = '--')
+    # Create legend
+    legend_obj = [mpatches.Patch(color = 'black', label = 'connection')]
+    ax.legend(handles = legend_obj, loc = 'center left',
+              bbox_to_anchor = (1,0.5))
+    ax.set_xticks(np.arange(adj_mat.shape[1]))
+    ax.set_yticks(np.arange(adj_mat.shape[0]))
+    # Draw gridlines
+    ax.grid(which='major', axis='both', linestyle='-', color='k', linewidth=1)
+    ax.grid(which='minor', axis='both', linestyle='-', color='k', linewidth=1)
+    ax.set_title(f'{session} adjacency matrix')
+    ax.set_xlabel('BLA Neurons')
+    ax.set_ylabel('GC Neurons')
+    plt.tight_layout()
+    plt.savefig(os.path.join(gc_adj_mat_plot_dir, f'{session}_adjacency_matrix.png'),
+                bbox_inches = 'tight')
+    plt.close()
 
 ############################################################
 ############################################################
