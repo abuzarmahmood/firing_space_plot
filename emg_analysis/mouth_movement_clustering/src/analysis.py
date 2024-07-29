@@ -11,6 +11,7 @@ import os
 import sys
 from glob import glob
 from pickle import dump, load
+import json
 
 import numpy as np
 import tables
@@ -364,6 +365,53 @@ scored_df['event_codes'] = scored_df['event_type'].astype('category').cat.codes
 scored_df['is_gape'] = (scored_df['event_type'] == 'gape')*1
 
 scored_df.dropna(subset=['event_type'], inplace=True)
+
+##############################
+# Output copy for MTM clustering analysis
+out_copy = scored_df.copy()
+out_copy.drop(columns = 'session', inplace=True)
+out_copy.reset_index(drop=True, inplace=True)
+
+# Output frame to pickle and output json with description of each column
+out_copy.to_pickle(os.path.join(artifact_dir, 'mtm_clustering_df.pkl'))
+out_cols = out_copy.columns
+
+out_dict = {
+        'taste': 'Taste of the trial',
+        'trial': 'Trial number given taste',
+        'features': 'Features of the segment (with normalized amplitude)',
+        'segment_raw': 'Raw segment',
+        'segment_bounds': 'Start and end of segment',
+        'segment_num': 'Segment number within trial',
+        'classifier': 'Classification of segment using Jenn Li algorithm (1 = gape)',
+        'segment_center': 'Center of segment within trial',
+        'scored': 'Whether segment was scored',
+        'event_type': 'Type of event',
+        'session_ind': 'Session number',
+        'animal_num': 'Animal number',
+        'basename': 'Basename of the session',
+        'taste_name': 'Name of the taste',
+        'pal': 'Palatability of the taste',
+        'baseline_mean': 'Mean of baseline amplitude (for normalization of amplitudes)',
+        'raw_features': 'Features of the segment (without amplitude normalization)',
+        'baseline_scaled_segments': 'Segments with amplitude normalized by baseline',
+        'event_codes': 'Event type as a code',
+        'is_gape': 'Whether event is a gape (1 = gape)',
+        }
+
+json.dump(
+        out_dict, open(os.path.join(artifact_dir, 'mtm_clustering_df_description.json'), 
+                       'w'),
+        indent=4)
+
+# Write out feature names as txt
+with open(os.path.join(artifact_dir, 'mtm_clustering_feature_names.txt'), 'w') as f:
+    for item in feature_names:
+        f.write("%s\n" % item)
+
+
+
+##############################
 
 print(scored_df.event_type.value_counts())
 
