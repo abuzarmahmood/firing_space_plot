@@ -105,7 +105,9 @@ sig_alpha = 0.05
 # was better or not
 data_inds_frame = pd.read_csv(os.path.join(fin_save_path, 'data_inds_frame.csv'),
                               index_col = 0)
-# Only keep rows where cross-validated prediction was better
+
+# Remove for now
+# # Only keep rows where cross-validated prediction was better
 data_inds_frame = data_inds_frame.loc[data_inds_frame['pred_corr_greater']]
 
 ############################################################
@@ -231,7 +233,6 @@ coupling_pivoted_pvals = [x.pivot(index = 'other_nrn', columns = 'lag', values =
 # Count each filter as significant if a value is below alpha
 # Note, these are the neuron inds as per the array of each session
 base_alpha = 0.05
-#alpha = 0.001
 alpha = base_alpha / len(coupling_frame['lag'].unique()) # Bonferroni Correction 
 coupling_pivoted_raw_inds = [np.where((x < alpha).sum(axis=1))[0] \
         for x in coupling_pivoted_pvals]
@@ -323,6 +324,8 @@ plt.close()
 
 ##############################
 # Segregation of projecting populations
+tuple_frame.dropna(inplace = True)
+
 tuple_frame['neuron_idx'] = ["_".join([str(y) for y in x]) for x in tuple_frame[ind_names].values] 
 tuple_frame['input_neuron_idx'] = ["_".join([str(y) for y in x]) \
         for x in tuple_frame[['session','taste','input_neuron']].values] 

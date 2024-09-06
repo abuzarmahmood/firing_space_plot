@@ -59,7 +59,7 @@ run_list = sorted(glob(os.path.join(save_path, 'run*')))
 run_basenames = sorted([os.path.basename(x) for x in run_list])
 print(f'Present runs : {run_basenames}')
 # input_run_ind = int(input('Please specify current run (integer) :'))
-input_run_ind = 6
+input_run_ind = 7
 run_str = f'run_{input_run_ind:03d}'
 plot_dir=  f'/media/bigdata/firing_space_plot/firing_analyses/poisson_glm/plots/{run_str}'
 
@@ -88,7 +88,9 @@ sig_alpha = 0.05
     design_spikes_list, 
     ind_frame,
     session_taste_inds,
-     all_taste_inds,
+    all_taste_inds,
+    test_dat_list,
+    data_inds,
     ) = aggregate_utils.return_data(save_path, run_str)
 
 
@@ -125,6 +127,7 @@ fin_ll_frame['actual>shuffle'] = \
 # Process inferred filters 
 ############################################################
 # Only take fit_num with highest likelihood
+ind_names = ['session','taste', 'neuron']
 max_ll_frame = fin_ll_frame[['fit_num','actual',*ind_names]]
 max_inds = max_ll_frame.groupby(ind_names).actual.idxmax().reset_index().actual
 max_vals = max_ll_frame.loc[max_inds].drop(columns = 'actual') 
@@ -160,6 +163,7 @@ for i in range(len(dat_list)):
     x = np.arange(this_dat.shape[1])*bin_width
     this_ax.plot(x, this_dat.T, '-x')
     this_ax.set_ylabel(dat_names[i] + '\n' + f'n={len(this_dat)}')
+    this_ax.set_xscale('log')
 ax[-1].set_xlabel('Time (ms)')
 fig.suptitle('Cosine basis filters')
 plt.savefig(os.path.join(filter_plot_dir, 'cosine_basis_filters.png'), dpi = 300, bbox_inches = 'tight')

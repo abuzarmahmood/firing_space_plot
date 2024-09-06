@@ -43,6 +43,7 @@ from sklearn.linear_model import LogisticRegression
 import matplotlib as mpl
 from matplotlib import colors
 import matplotlib.patches as mpatches
+import tables
 
 def calc_firing_rates(spike_array, kern):
     """
@@ -950,6 +951,361 @@ for this_region in ['gc','bla']:
                 bbox_inches = 'tight')
     plt.close()
 
+##############################
+# Close look at GC inter-receive + GC inter-send-receive
+# for mean_discrim and mean_pal_rho
+wanted_metrics = ['mean_discrim_stat','mean_pal_rho']
+wanted_groups = ['gc_inter_receive_only','gc_inter_send_receive']
+wanted_region = 'gc'
+wanted_frame = encoding_frame_melt.loc[
+        (encoding_frame_melt['region'] == wanted_region) & \
+        (encoding_frame_melt['metric'].isin(wanted_metrics)) & \
+        (encoding_frame_melt['group_label'].isin(wanted_groups))]
+
+fig, ax = plt.subplots(1, len(wanted_metrics), figsize = (5,5))
+for ind, this_metric in enumerate(wanted_metrics):
+    plot_frame = wanted_frame.loc[wanted_frame['metric'] == this_metric]
+    sns.boxenplot(data = plot_frame,
+                  x = 'group_label', y = 'value',
+                  showfliers = False,
+                  ax = ax[ind])
+    sns.stripplot(data = plot_frame,
+                  x = 'group_label', y = 'value',
+                  dodge = True,
+                  ax = ax[ind])
+    # Perform test between groups for each metric
+    group_vals = [plot_frame.loc[plot_frame['group_label'] == x]['value'] for x in wanted_groups]
+    t_stat, p_val = ttest_ind(*group_vals)
+    ax[ind].set_title(this_metric + '\n' + f'p = {p_val:.3f}')
+    ax[ind].set_ylabel(None)
+    ax[ind].set_xlabel(None)
+    if ind == 0:
+        ax[ind].set_ylim([0, 40])
+    ax[ind].set_xticklabels(['Inter-Receive','Inter-Send-Receive'],
+                            rotation = 45, ha = 'right')
+plt.suptitle('GC Inter-Receive vs Inter-Send-Receive\n' +\
+        f'{wanted_metrics}')
+plt.tight_layout()
+plt.savefig(os.path.join(
+    coupling_analysis_plot_dir, f'encoding_metrics_by_group_{wanted_region}_close.png'),
+            bbox_inches = 'tight')
+plt.close()
+
+# Make 2D plot with each metric on the axis, and color by group
+# Remove outlier
+wanted_frame = wanted_frame.loc[wanted_frame['value'] < 40]
+
+
+discrim_frame = wanted_frame.loc[wanted_frame['metric'] == 'mean_discrim_stat']
+pal_frame = wanted_frame.loc[wanted_frame['metric'] == 'mean_pal_rho']
+merged_frame = discrim_frame.merge(pal_frame,
+                                   how = 'outer',
+                                   on = ['session','neuron','nrn_id','group_label'])
+merged_frame.rename(columns = {'value_x':'mean_discrim_stat',
+                               'value_y':'mean_pal_rho'},
+                    inplace = True)
+merged_frame['norm_mean_discrim_stat'] = \
+        MinMaxScaler().fit_transform(merged_frame['mean_discrim_stat'].values.reshape(-1,1))
+merged_frame['norm_mean_pal_rho'] = \
+        MinMaxScaler().fit_transform(merged_frame['mean_pal_rho'].values.reshape(-1,1))
+merged_frame['norm_tastiness'] = \
+    np.linalg.norm(merged_frame[['norm_mean_discrim_stat',
+                                 'norm_mean_pal_rho']].values, axis = 1)
+norm_tastiness_group = [merged_frame.loc[merged_frame['group_label'] == x]['norm_tastiness'] 
+                        for x in wanted_groups]
+# Remove nan
+norm_tastiness_group = [x.dropna() for x in norm_tastiness_group]
+# Test for difference between groups
+t_stat, p_val = ttest_ind(*norm_tastiness_group)
+
+fig, ax = plt.subplots(1,2, figsize = (7,5))
+# sns.scatterplot(data = merged_frame,
+#                 x = 'mean_discrim_stat', y = 'mean_pal_rho',
+#                 hue = 'group_label', ax = ax[0])
+ax[0].set_xlabel('Normalized Mean Discrimination Statistic')
+ax[0].set_ylabel('Normalized Mean Palatability Rho')
+sns.scatterplot(data = merged_frame,
+                x = 'norm_mean_discrim_stat', y = 'norm_mean_pal_rho',
+                hue = 'group_label', ax = ax[0],
+                s = 50,
+                alpha = 0.7)
+sns.boxplot(data = merged_frame,
+            x = 'group_label', y = 'norm_tastiness',
+            ax = ax[1],
+            hue = 'group_label')
+ax[1].set_title(f'T-Test p-value: {p_val:.3f}')
+# Put legend on bottom
+ax[0].legend(loc = 'lower center', bbox_to_anchor = (0.5, -0.3))
+ax[1].set_xticklabels(['Inter-Receive','Inter-Send-Receive'],
+                      rotation = 45, ha = 'right')
+plt.suptitle('GC Inter-Receive vs Inter-Send-Receive\nWithout Outlier')
+plt.savefig(os.path.join(
+    coupling_analysis_plot_dir, f'encoding_metrics_by_group_{wanted_region}_scatter.png'),
+            bbox_inches = 'tight')
+plt.close()
+
+############################################################
+# Check enrichment of putative neuron type in GC subpopulations
+############################################################
+# Confirm:
+# 1) Each HDF5 file has waveforms
+# 2) Each HDF5 has epected number of neurons as per data_inds_frame
+
+# Get number of gc_rec neurons in each session
+gc_bool = encoding_frame['group_label'].str.contains('gc')
+gc_bool.fillna(False, inplace = True)
+
+rec_bool = encoding_frame['group_label'].str.contains('rec')
+
+# gc_rec_neurons = encoding_frame.loc[gc_bool & rec_bool]
+# gc_rec_neurons = gc_rec_neurons.groupby('session')['neuron'].count().reset_index()
+# gc_rec_neurons.sort_values('neuron', ascending = False, inplace = True)
+
+wanted_cols = ['session','neuron','group_label']
+gc_neurons = encoding_frame.loc[gc_bool]
+gc_neurons = gc_neurons[wanted_cols]
+
+# Cross match with old-new neuron ids
+old_new_map_path = '/media/bigdata/firing_space_plot/firing_analyses/poisson_glm/artifacts/single_neuron_match.csv'
+old_new_map = pd.read_csv(old_new_map_path, index_col = 0)
+
+# Add session_name using unit_region_frame
+gc_neurons = gc_neurons.merge(unit_region_frame[['session','neuron','basename']],
+                              how = 'left',
+                              on = ['session','neuron'])
+gc_neurons['nrn_id'] = gc_neurons['basename'].astype('str') + '_' + \
+        gc_neurons['neuron'].astype('str')
+
+old_new_map['nrn_id'] = old_new_map['session'].astype('str') + '_' + \
+        old_new_map['unit_number_old'].astype('str')
+
+gc_neurons = gc_neurons.merge(
+        old_new_map[['session','unit_number_old','unit_number_new', 'nrn_id']],
+        how = 'left',
+        on = 'nrn_id')
+
+gc_neurons.dropna(inplace = True)
+gc_neurons.drop(columns = ['session_y','nrn_id','unit_number_old'], inplace = True)
+gc_neurons['unit_number_new'] = gc_neurons['unit_number_new'].astype(int)
+
+# For remaining neurons, pull out mean waveforms
+new_data_list_path = '/media/storage/for_transfer/bla_gc/data_dir_list.txt' 
+new_data_list = [x.strip() for x in open(new_data_list_path,'r').readlines()] 
+
+sys.path.append('/media/bigdata/firing_space_plot/ephys_data')
+from ephys_data import ephys_data
+import tables
+
+session_list = []
+unit_list = []
+mean_waveform_list = []
+median_waveform_list = []
+waveform_counts_list = []
+for this_session in tqdm(gc_neurons['basename'].unique()):
+    this_data_path = [x for x in new_data_list if this_session in x][0]
+    this_data = ephys_data(this_data_path)
+    this_hdf_path = this_data.hdf5_path
+    this_gc_frame = gc_neurons.loc[gc_neurons['basename'] == this_session]
+    wanted_units = this_gc_frame['unit_number_new'].values
+    # Convert to unit_strs
+    wanted_unit_str_list = [f'unit{i:03}' for i in wanted_units]
+    with tables.open_file(this_hdf_path, 'r') as h5_file:
+        for this_unit, this_unit_str in zip(wanted_units, wanted_unit_str_list): 
+            this_waveforms = h5_file.get_node(f'/sorted_units/{this_unit_str}/waveforms')[:]
+            mean_waveform = np.mean(this_waveforms, axis = 0)
+            median_waveform = np.median(this_waveforms, axis = 0)
+            waveform_counts = this_waveforms.shape[0]
+            session_list.append(this_session)
+            unit_list.append(this_unit)
+            mean_waveform_list.append(mean_waveform)
+            median_waveform_list.append(median_waveform)
+            waveform_counts_list.append(waveform_counts)
+
+# Normalize waveforms using
+# 1) Mean of first 10 samples == 0
+# 2) Trough == -1
+norm_mean_waveforms_list = []
+for this_mean_waveform in mean_waveform_list:
+    this_mean_waveform -= np.mean(this_mean_waveform[:10])
+    this_mean_waveform /= -np.min(this_mean_waveform)
+    norm_mean_waveforms_list.append(this_mean_waveform)
+
+# Plot mean and median waveforms
+waveform_plot_dir = os.path.join(plot_dir, 'waveforms')
+if not os.path.exists(waveform_plot_dir):
+    os.makedirs(waveform_plot_dir)
+
+# Extract PC1 from waveforms
+from sklearn.decomposition import PCA
+pca = PCA(n_components = 1)
+pca.fit(mean_waveform_list)
+pc1_waveforms = pca.transform(mean_waveform_list)
+
+# Plot overlay of normalized waveforms
+fig, ax = plt.subplots(2,1, figsize = (7,10))
+for this_waveform in norm_mean_waveforms_list:
+    ax[0].plot(this_waveform, alpha = 0.5, c='k')
+ax[0].set_title('Normalized Mean Waveforms')
+ax[0].set_xlabel('Sample')
+ax[0].set_ylabel('Normalized Amplitude')
+ax[1].hist(pc1_waveforms, bins = 20)
+ax[1].set_title('PC1 of Mean Waveforms')
+ax[1].set_xlabel('PC1')
+ax[1].set_ylabel('Count')
+plt.tight_layout()
+plt.savefig(os.path.join(
+    waveform_plot_dir, 'norm_mean_waveforms.png'),
+            bbox_inches = 'tight')
+plt.close()
+
+# For each mean_waveform, calculate trough-to-next-peak time
+trough_times = []
+next_peak_times = []
+trough_peak_times = []
+for this_mean_waveform in mean_waveform_list:
+    trough_ind = np.argmin(this_mean_waveform)
+    next_peak_ind = np.argmax(this_mean_waveform[trough_ind:]) + trough_ind
+    trough_times.append(trough_ind)
+    next_peak_times.append(next_peak_ind)
+    trough_peak_times.append(next_peak_ind - trough_ind)
+
+# Sampling rate is 30 kHz
+sampling_rate = 30000
+trough_to_peak_ms = [x/sampling_rate*1000 for x in trough_peak_times]
+unit_labels = np.array(trough_to_peak_ms) < 0.4
+
+gc_neurons['trough_peak_time'] = trough_to_peak_ms
+gc_neurons['unit_label'] = unit_labels
+
+gc_group_frac = gc_neurons.groupby('group_label')['unit_label'].count()
+frac_inter = gc_neurons.groupby('group_label')['unit_label'].mean()
+gc_group_frac = pd.DataFrame(gc_group_frac)
+gc_group_frac['frac_inter'] = frac_inter
+gc_group_frac.reset_index(inplace = True)
+gc_group_frac.rename(columns = {'unit_label':'unit_count'}, inplace = True)
+gc_group_frac['count_inter'] = gc_group_frac['unit_count'] * gc_group_frac['frac_inter']
+gc_group_frac['count_inter'] = gc_group_frac['count_inter'].astype(int)
+gc_group_frac.to_csv(os.path.join(
+    waveform_plot_dir, 'gc_group_neuron_types.csv'), index = False)
+
+for i in range(len(mean_waveform_list)):
+    fig, ax = plt.subplots()
+    ax.plot(mean_waveform_list[i], label = 'Mean')
+    ax.plot(median_waveform_list[i], label = 'Median')
+    ax.axvline(trough_times[i], color = 'r', linestyle = '--', label = 'Trough')
+    ax.axvline(next_peak_times[i], color = 'g', linestyle = '--', label = 'Next Peak')
+    ax.legend()
+    ax.set_title(f'{session_list[i]}: Unit {unit_list[i]}')
+    plt.savefig(os.path.join(
+        waveform_plot_dir, f'{session_list[i]}_unit_{unit_list[i]}_waveforms.png'),
+                bbox_inches = 'tight')
+    plt.close()
+
+# Average +/- SD waveform per cluster
+group_mean_waveforms = []
+group_std_waveforms = []
+norm_mean_waveform_array = np.array(norm_mean_waveforms_list) 
+for label in np.unique(unit_labels):
+    wanted_inds = np.where(unit_labels == label)[0]
+    this_mean_waveform = np.mean(norm_mean_waveform_array[wanted_inds], axis = 0)
+    this_std_waveform = np.std(mean_waveform_array[wanted_inds], axis = 0)
+    group_mean_waveforms.append(this_mean_waveform)
+    group_std_waveforms.append(this_std_waveform)
+
+# Plot group waveforms
+fig, ax = plt.subplots()
+for i, (this_mean_waveform, this_std_waveform) \
+        in enumerate(zip(group_mean_waveforms, group_std_waveforms)):
+    ax.plot(this_mean_waveform, label = f'Group {i}')
+    ax.fill_between(np.arange(len(this_mean_waveform)),
+                    this_mean_waveform - this_std_waveform,
+                    this_mean_waveform + this_std_waveform,
+                    alpha = 0.5) 
+ax.legend()
+ax.set_xlabel('Sample')
+ax.set_ylabel('Amplitude')
+fig.suptitle('Group Waveforms\nMean +/- SD')
+plt.tight_layout()
+plt.savefig(os.path.join(
+    waveform_plot_dir, 'group_waveforms.png'),
+            bbox_inches = 'tight')
+plt.close()
+
+# Make scatter plot of trough_peak_times vs waveform_counts
+fig, ax = plt.subplots()
+ax.scatter(trough_to_peak_ms, waveform_counts_list)
+ax.set_xlabel('Trough-to-Peak Time (ms)')
+ax.set_ylabel('Waveform Counts')
+plt.savefig(os.path.join(
+    waveform_plot_dir, 'waveform_counts_vs_trough_peak_time.png'),
+            bbox_inches = 'tight')
+plt.close()
+
+###############
+# Get waveform for all gc neurons for comparison
+new_data_basenames = [x.split('/')[-1] for x in new_data_list]
+
+all_gc_waveforms = []
+for this_dir in tqdm(new_data_list):
+    try:
+        this_ephys_data = ephys_data(this_dir)
+        this_ephys_data.get_region_units()
+        gc_ind = np.where([x == 'gc' for x in this_ephys_data.region_names])[0][0]
+        gc_nrn_inds = this_ephys_data.region_units[gc_ind]
+        gc_nrn_strs = [f'unit{i:03}' for i in gc_nrn_inds]
+        h5_path = this_ephys_data.hdf5_path
+        with tables.open_file(h5_path, 'r') as h5_file:
+            for this_nrn_str in gc_nrn_strs:
+                this_waveform = h5_file.get_node(f'/sorted_units/{this_nrn_str}/waveforms')[:]
+                mean_waveform = np.mean(this_waveform, axis = 0)
+                all_gc_waveforms.append(mean_waveform)
+    except:
+        continue
+
+# get trough_peak_times
+trough_times = []
+next_peak_times = []
+all_gc_trough_peak_times = []
+for this_mean_waveform in all_gc_waveforms:
+    trough_ind = np.argmin(this_mean_waveform)
+    next_peak_ind = np.argmax(this_mean_waveform[trough_ind:]) + trough_ind
+    trough_times.append(trough_ind)
+    next_peak_times.append(next_peak_ind)
+    all_gc_trough_peak_times.append(next_peak_ind - trough_ind)
+
+# Sampling rate is 30 kHz
+sampling_rate = 30000
+all_gc_trough_peak_ms = [x/sampling_rate*1000 for x in all_gc_trough_peak_times]
+
+# Plot histograms for wanted_gc_neurons and all_gc_neurons
+fig, ax = plt.subplots(2,1, sharex=True)
+ax[0].hist(trough_to_peak_ms, bins = 20)
+ax[0].set_title(f'Wanted GC Neurons (n = {len(trough_to_peak_ms)})')
+ax[1].hist(all_gc_trough_peak_ms, bins = 20)
+ax[1].set_title(f'All GC Neurons, n = {len(all_gc_trough_peak_ms)}')
+plt.xlabel('Trough-to-Peak Time (ms)')
+plt.savefig(os.path.join(
+    waveform_plot_dir, 'trough_peak_time_comparison.png'),
+            bbox_inches = 'tight')
+plt.close()
+
+
+############################################################
+# GC<-BLA neurons privileged transitions 
+############################################################
+# Are GC neurons receiving input from BLA privileged in 
+# transition timing or coherence?
+gc_neurons_all = encoding_frame.loc[gc_bool]
+gc_neurons_all = gc_neurons_all[wanted_cols]
+gc_neurons_all = gc_neurons_all.merge(
+        unit_region_frame[['session','neuron','region','basename']],
+        how = 'left',
+        on = ['session','neuron'])
+
+# Save to artifact_dir and continue analysis in new file
+artifact_dir = '/media/bigdata/firing_space_plot/firing_analyses/poisson_glm/artifacts'
+gc_neurons_all.to_csv(os.path.join(
+    artifact_dir, 'gc_neurons_all.csv'), index = False)
 
 ############################################################
 # Convergence/Divergence of inter-region connections

@@ -102,62 +102,66 @@ def obj_func(
 
     return mean_aic
 
-# keyword arguments will be passed to `skopt.dump`
-optim_out_dir = os.path.join(save_path, 'optimization_out')
-if not os.path.exists(optim_out_dir):
-    os.mkdir(optim_out_dir)
+# https://github.com/scikit-optimize/scikit-optimize/issues/388#issuecomment-307483219
+# Have to keep n_calls > n_random_starts for partial dependence plots
 
-checkpoint_path = os.path.join(optim_out_dir, 'checkpoint.pkl')
-checkpoint_saver = CheckpointSaver(checkpoint_path, compress=9) 
-log_path = os.path.join(optim_out_dir, 'log.txt')
+if __name__ == '__main__':
+    # keyword arguments will be passed to `skopt.dump`
+    optim_out_dir = os.path.join(save_path, 'optimization_out')
+    if not os.path.exists(optim_out_dir):
+        os.mkdir(optim_out_dir)
 
-dim_ranges = [
-        (50, 400), # hist_filter_len
-        (50, 400), # stim_filter_len
-        (50, 400), # coupling_filter_len
-        (5, 20), # n_basis_funcs
-        ]
+    checkpoint_path = os.path.join(optim_out_dir, 'checkpoint.pkl')
+    checkpoint_saver = CheckpointSaver(checkpoint_path, compress=9) 
+    log_path = os.path.join(optim_out_dir, 'log.txt')
 
-total_calls = 10
-for call in range(total_calls):
-    if os.path.exists(checkpoint_path):
-        res = load(checkpoint_path)
-        x0 = res.x_iters
-        y0 = res.func_vals
-        
-        # Write out updates to log file
-        iters = len(y0)
-        with open(log_path, 'w') as f:
-            f.write(f'Last save time: {datetime.now()}\n')
-            f.write(f'Iteration {iters} complete\n')
-            f.write(f'x: {x0}\n')
-            f.write(f'y: {y0}\n')
+    dim_ranges = [
+            (50, 400), # hist_filter_len
+            (50, 400), # stim_filter_len
+            (50, 400), # coupling_filter_len
+            (5, 20), # n_basis_funcs
+            ]
 
-        gp_minimize(
-                    obj_func,            # the function to minimize
-                    dim_ranges,    # the bounds on each dimension of x
-                    x0= x0,          # the starting point
-                    y0= y0,          # the starting point
-                    acq_func="LCB",     # the acquisition function (optional)
-                    n_calls=2,         # number of evaluations of f including at x0
-                    n_initial_points=1,  # the number of random initial points
-                    callback=[checkpoint_saver],
-                    # a list of callbacks including the checkpoint saver
-                    random_state=777,
-                    n_jobs = 1)
-    else:
-        x0 = [200, 200, 200, 15]
-        gp_minimize(
-                    obj_func,            # the function to minimize
-                    dim_ranges,    # the bounds on each dimension of x
-                    x0= x0,          # the starting point
-                    acq_func="LCB",     # the acquisition function (optional)
-                    n_calls=2,         # number of evaluations of f including at x0
-                    n_initial_points=1,  # the number of random initial points
-                    callback=[checkpoint_saver],
-                    # a list of callbacks including the checkpoint saver
-                    random_state=777,
-                    n_jobs = 1)
+    total_calls = 10
+    for call in range(total_calls):
+        if os.path.exists(checkpoint_path):
+            res = load(checkpoint_path)
+            x0 = res.x_iters
+            y0 = res.func_vals
+            
+            # Write out updates to log file
+            iters = len(y0)
+            with open(log_path, 'w') as f:
+                f.write(f'Last save time: {datetime.now()}\n')
+                f.write(f'Iteration {iters} complete\n')
+                f.write(f'x: {x0}\n')
+                f.write(f'y: {y0}\n')
 
-    # res = load('./checkpoint.pkl')
-    # res.fun
+            gp_minimize(
+                        obj_func,            # the function to minimize
+                        dim_ranges,    # the bounds on each dimension of x
+                        x0= x0,          # the starting point
+                        y0= y0,          # the starting point
+                        acq_func="LCB",     # the acquisition function (optional)
+                        n_calls=2,         # number of evaluations of f including at x0
+                        n_initial_points=1,  # the number of random initial points
+                        callback=[checkpoint_saver],
+                        # a list of callbacks including the checkpoint saver
+                        random_state=777,
+                        n_jobs = 1)
+        else:
+            x0 = [200, 200, 200, 15]
+            gp_minimize(
+                        obj_func,            # the function to minimize
+                        dim_ranges,    # the bounds on each dimension of x
+                        x0= x0,          # the starting point
+                        acq_func="LCB",     # the acquisition function (optional)
+                        n_calls=2,         # number of evaluations of f including at x0
+                        n_initial_points=1,  # the number of random initial points
+                        callback=[checkpoint_saver],
+                        # a list of callbacks including the checkpoint saver
+                        random_state=777,
+                        n_jobs = 1)
+
+        # res = load('./checkpoint.pkl')
+        # res.fun
