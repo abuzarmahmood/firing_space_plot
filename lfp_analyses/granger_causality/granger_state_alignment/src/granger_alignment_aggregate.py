@@ -46,20 +46,79 @@ tau_frame = pd.read_pickle(tau_frame_path)
 tau_frame.dropna(inplace=True)
 
 tau_array = np.stack(tau_frame.tau)
-mean_tau = tau_array.mean(axis=(0,1))
+tau_std_array = np.stack(tau_frame.tau_std)
 
 # Plot tau distributions
-fig, ax = plt.subplots()
+cmap = plt.cm.get_cmap('tab10')
+fig, ax = plt.subplots(1,3, figsize=(15,5))
 for this_tau in tau_array.T:
-    ax.hist(this_tau.flatten(), bins=25, alpha=0.5)
-    ax.axvline(this_tau.mean(), color='k', linestyle='--')
-    ylims = ax.get_ylim()
-    ax.text(int(this_tau.mean()), ylims[1]*0.1, f'Mean: {int(this_tau.mean())}', rotation=90)
-ax.set_title('Tau Distributions')
-ax.set_xlabel('Tau (ms)')
-ax.set_ylabel('Count')
+    ax[0].hist(this_tau.flatten(), bins=25, alpha=0.5)
+    ax[0].axvline(this_tau.mean(), color='k', linestyle='--')
+    ylims = ax[0].get_ylim()
+    ax[0].text(int(this_tau.mean()), ylims[1]*0.1, f'Mean: {int(this_tau.mean())}', rotation=90)
+for this_tau_std in tau_std_array.T:
+    ax[1].hist(this_tau_std.flatten(), bins=25, alpha=0.5)
+    ax[1].axvline(this_tau_std.mean(), color='k', linestyle='--')
+    ylims = ax[1].get_ylim()
+    ax[1].text(int(this_tau_std.mean()), ylims[1]*0.1, f'Mean: {int(this_tau_std.mean())}', rotation=90)
+for i, (this_tau, this_tau_std) in enumerate(zip(tau_array.T, tau_std_array.T)):
+    ax[2].scatter(this_tau.flatten(), this_tau_std.flatten(), alpha=0.1, color=cmap(i))
+    ax[2].scatter(this_tau.flatten()[0], this_tau_std.flatten()[0], label=f'Transition {i}', alpha=1,
+                  color=cmap(i))
+ax[2].legend()
+ax[0].set_title('Tau Distributions')
+ax[0].set_xlabel('Tau (ms)')
+ax[0].set_ylabel('Count')
+ax[1].set_title('Tau STD Distributions')
+ax[1].set_xlabel('Tau STD (ms)')
+ax[1].set_ylabel('Count')
+ax[2].set_title('Tau vs Tau STD')
+ax[2].set_xlabel('Tau (ms)')
+ax[2].set_ylabel('Tau STD (ms)')
 fig.savefig(os.path.join(plot_dir,'tau_distributions.png'))
 plt.close(fig)
+
+############################################################
+# Only take data with more confident transitions
+
+mean_tau_frame = tau_frame.copy()
+tau_array = np.stack(mean_tau_frame.tau)
+mean_tau_array = np.nanmean(tau_array, axis=1)
+tau_std_array = np.stack(mean_tau_frame.tau_std)
+mean_tau_std_array = np.nanmean(tau_std_array, axis=1)
+transition_num = np.arange(mean_tau_array.shape[1])
+
+mean_tau_frame['tau'] = list(mean_tau_array)
+mean_tau_frame['tau_std'] = list(mean_tau_std_array)
+mean_tau_frame['transition'] = [transition_num]*len(mean_tau_frame)
+mean_tau_frame.drop(columns=['pkl_path','present'], inplace=True)
+mean_tau_frame = mean_tau_frame.explode(['tau','tau_std','transition'])
+mean_tau_frame.rename(columns = {'basename':'dir_name'}, inplace=True)
+
+merge_cols = ['dir_name','taste_num','transition']
+merge_col_types = [granger_frame[x].dtype for x in merge_cols]
+for i, col in enumerate(merge_cols): 
+    mean_tau_frame[col] = mean_tau_frame[col].astype(merge_col_types[i])
+
+granger_frame = granger_frame.merge(
+    mean_tau_frame, 
+    on=merge_cols,
+    )
+
+# Convert ['tau','tau_std'] to float
+granger_frame['tau'] = granger_frame['tau'].astype(float)
+granger_frame['tau_std'] = granger_frame['tau_std'].astype(float)
+
+# sns.swarmplot(data=granger_frame, x='transition', y='tau_std')
+sns.lmplot(data=granger_frame, x='tau', y='tau_std', hue = 'transition')
+plt.title('Tau STD vs Transition')
+plt.savefig(os.path.join(plot_dir,'mean_tau_std_vs_transition.png'),
+            bbox_inches='tight')
+plt.close()
+
+###############
+std_thresh = 100
+granger_frame = granger_frame[granger_frame.tau_std < std_thresh]
 
 ############################################################
 grouped_granger = list(granger_frame.groupby(['transition', 'aligned']))
@@ -91,9 +150,9 @@ mean_granger_per_group = [np.swapaxes(x, 2, 1) for x in mean_granger_per_group]
 mean_mask_per_group = [np.swapaxes(x, 2, 1) for x in mean_mask_per_group]
 mean_mask_per_group = [1-x for x in mean_mask_per_group]
 
-# Zscore
-mean_granger_per_group = [zscore(x, axis=-1) for x in mean_granger_per_group]
-mean_mask_per_group = [zscore(x, axis=-1) for x in mean_mask_per_group]
+# # Zscore
+zscore_mean_granger_per_group = [zscore(x, axis=-1) for x in mean_granger_per_group]
+zscore_mean_mask_per_group = [zscore(x, axis=-1) for x in mean_mask_per_group]
 
 ##############################
 # Cross-correlation
@@ -105,13 +164,15 @@ xcorr_kern = xcorr_kern / xcorr_kern.sum()
 # Perform cross-correlation on non-meaned data
 granger_xcorr_per_group = [
         [
-            [np.abs(correlate(x.T, xcorr_kern, mode='valid')) for x in y] for y in z \
+            [np.abs(correlate(zscore(x.T,axis=-1), xcorr_kern, mode='valid')) \
+                    for x in y] for y in z \
             ] for z in grouped_mean_granger
         ]
 
 mask_xcorr_per_group = [
         [
-            [np.abs(correlate(x.T, xcorr_kern, mode='valid')) for x in y] for y in z \
+            [np.abs(correlate(zscore(x.T,axis=-1), xcorr_kern, mode='valid')) \
+                    for x in y] for y in z \
             ] for z in grouped_mask
         ]
 
@@ -153,7 +214,7 @@ for i in range(len(transition_inds)):
                             transition=transition_inds[i],
                             aligned=aligned_inds[i],
                             granger_xcorr=granger_xcorr_per_group[i][k][j].flatten(),
-                            mask_xcorr=mask_xcorr_per_group[i][k][j].flatten(),
+                            # mask_xcorr=mask_xcorr_per_group[i][k][j].flatten(),
                             time = xcorr_time_vec,
                             region = j, 
                             )
@@ -196,34 +257,25 @@ sns.catplot(
 plt.savefig(os.path.join(plot_dir, 'granger_xcorr_1.png'))
 plt.close()
 
-sns.boxenplot(
-        data=xcorr_frame_1,
-        x = 'aligned',
-        y = 'granger_xcorr',
-        )
-plt.savefig(os.path.join(plot_dir, 'granger_xcorr_1_aligned.png'))
-plt.close()
-
-sns.ecdfplot(
-        data=xcorr_frame_1,
-        x='granger_xcorr',
-        hue='aligned',
-        linewidth=5,
-        alpha=0.7,
-        )
-plt.savefig(os.path.join(plot_dir, 'granger_xcorr_1_aligned_ecdf.png'))
-plt.close()
-
-pg.mwu(
+aligned_mwu_test = pg.mwu(
         x=xcorr_frame_1.granger_xcorr[xcorr_frame_1.aligned==True],
         y=xcorr_frame_1.granger_xcorr[xcorr_frame_1.aligned==False],
         alternative='two-sided',
         )
 
-ks_2samp(
+aligned_ks_test = ks_2samp(
         xcorr_frame_1.granger_xcorr[xcorr_frame_1.aligned==True],
         xcorr_frame_1.granger_xcorr[xcorr_frame_1.aligned==False],
         )
+
+sns.boxenplot(
+        data=xcorr_frame_1,
+        x = 'aligned',
+        y = 'granger_xcorr',
+        )
+plt.title(f'Mann-Whitney U p-value: {aligned_mwu_test["p-val"].values[0]:.3f}')
+plt.savefig(os.path.join(plot_dir, 'granger_xcorr_1_aligned.png'))
+plt.close()
 
 # Generate ecdf and linearly interpolate 
 # to have them both on the same x-axis
@@ -244,8 +296,27 @@ ax.plot(x, y_unaligned, '-o', label='Unaligned', linewidth=5, alpha=0.7)
 ax.legend()
 ax.set_xlabel('Granger Step Function XCorr')
 ax.set_ylabel('ECDF')
+fig.suptitle(f'KS Test p-value: {aligned_ks_test.pvalue:.3e}')
 fig.savefig(os.path.join(plot_dir, 'granger_xcorr_1_aligned_ecdf_interp.png'))
 plt.close(fig)
+
+##############################
+# Matched xcorr
+xcorr_frame_1.reset_index(drop=True, inplace=True)
+aligned_frame = xcorr_frame_1[xcorr_frame_1.aligned==True]
+unaligned_frame = xcorr_frame_1[xcorr_frame_1.aligned==False]
+aligned_frame.drop(columns=['aligned', 'time'], inplace=True)
+unaligned_frame.drop(columns=['aligned', 'time'], inplace=True)
+merge_frame = pd.merge(
+        aligned_frame,
+        unaligned_frame,
+        on=['transition', 'region'],
+        suffixes=('_aligned', '_unaligned'),
+        )
+merge_frame['granger_xcorr_diff'] = merge_frame.granger_xcorr_aligned - merge_frame.granger_xcorr_unaligned
+
+plt.hist(merge_frame.granger_xcorr_diff, bins=20)
+plt.show()
 
 ##############################
 # Scaled XCorr at center point
@@ -353,12 +424,12 @@ pca_mask = np.stack(
 # Plot heatmaps 
 
 granger_lims = [
-        np.min([np.nanmin(x) for x in mean_granger_per_group]),
-        np.max([np.nanmax(x) for x in mean_granger_per_group]),
+        np.min([np.nanmin(x) for x in zscore_mean_granger_per_group]),
+        np.max([np.nanmax(x) for x in zscore_mean_granger_per_group]),
         ]
 mask_lim = [
-        np.min([np.nanmin(x) for x in mean_mask_per_group]),
-        np.max([np.nanmax(x) for x in mean_mask_per_group]),
+        np.min([np.nanmin(x) for x in zscore_mean_mask_per_group]),
+        np.max([np.nanmax(x) for x in zscore_mean_mask_per_group]),
         ]
 
 fig, ax = plt.subplots(
@@ -370,7 +441,7 @@ for i, (this_trans, this_align_bool) in enumerate(zip(transition_inds, aligned_i
     this_ax = ax[this_trans, this_align]
     this_ax.pcolormesh(
             time_vec, freq_vec[1:],
-            mean_granger_per_group[i][0][1:],
+            zscore_mean_granger_per_group[i][0][1:],
             cmap='viridis',
             vmin=granger_lims[0],
             vmax=granger_lims[1],
@@ -393,7 +464,7 @@ for i, (this_trans, this_align_bool) in enumerate(zip(transition_inds, aligned_i
     this_ax = ax[this_trans, this_align]
     this_ax.pcolormesh(
             time_vec, freq_vec[1:],
-            mean_granger_per_group[i][1][1:],
+            zscore_mean_granger_per_group[i][1][1:],
             cmap='viridis',
             vmin=granger_lims[0],
             vmax=granger_lims[1],
@@ -415,7 +486,7 @@ for i, (this_trans, this_align_bool) in enumerate(zip(transition_inds, aligned_i
     this_ax = ax[this_trans, this_align]
     this_ax.pcolormesh(
             time_vec, freq_vec[1:],
-            mean_mask_per_group[i][0][1:], 
+            zscore_mean_mask_per_group[i][0][1:], 
             cmap='viridis',
             vmin=mask_lim[0],
             vmax=mask_lim[1],
@@ -437,7 +508,7 @@ for i, (this_trans, this_align_bool) in enumerate(zip(transition_inds, aligned_i
     this_ax = ax[this_trans, this_align]
     this_ax.pcolormesh(
             time_vec, freq_vec[1:],
-            mean_mask_per_group[i][1][1:], 
+            zscore_mean_mask_per_group[i][1][1:], 
             cmap='viridis',
             vmin=mask_lim[0],
             vmax=mask_lim[1],

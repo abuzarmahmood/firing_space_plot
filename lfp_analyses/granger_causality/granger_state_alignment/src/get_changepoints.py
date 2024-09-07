@@ -2,6 +2,11 @@ from glob import glob
 import os
 import numpy as np
 from tqdm import tqdm
+base_dir = '/media/bigdata/projects/pytau'
+import sys
+sys.path.append(base_dir)
+from pytau.changepoint_analysis import PklHandler
+import pandas as pd
 
 ############################################################
 # Get dataset paths
@@ -15,11 +20,7 @@ basename_list = [os.path.basename(d) for d in dir_list]
 ############################################################
 # Get saved models
 ############################################################
-base_dir = '/media/bigdata/projects/pytau'
-import sys
-sys.path.append(base_dir)
 
-import pandas as pd
 model_database_path = '/media/bigdata/firing_space_plot/changepoint_mcmc/saved_models/model_database.csv'
 model_database = pd.read_csv(model_database_path, index_col=0)
 model_database.dropna(inplace=True)
@@ -42,7 +43,6 @@ wanted_database = wanted_database[\
 ############################################################
 # Get changepoint positions
 ############################################################
-from pytau.changepoint_analysis import PklHandler
 
 taste_nums = sorted(wanted_database['data.taste_num'].unique())
 fin_basename_list = []
@@ -65,6 +65,7 @@ pkl_frame = pd.DataFrame({'basename':fin_basename_list,
                           'pkl_path':pkl_path_list})
 
 tau_list = []
+std_tau_list = []
 present_bool_list = []
 for idx, row in tqdm(pkl_frame.iterrows()):
     try:
@@ -72,13 +73,17 @@ for idx, row in tqdm(pkl_frame.iterrows()):
         pkl_path = row['pkl_path']
         this_handler = PklHandler(pkl_path)
         scaled_mode_tau = this_handler.tau.scaled_mode_tau
+        std_tau = this_handler.tau.scaled_int_tau.std(axis=0)
         tau_list.append(scaled_mode_tau)
+        std_tau_list.append(std_tau)
         present_bool_list.append(True)
     except:
         tau_list.append(np.nan)
+        std_tau_list.append(np.nan)
         present_bool_list.append(False)
 
 pkl_frame['tau'] = tau_list
+pkl_frame['tau_std'] = std_tau_list
 pkl_frame['present'] = present_bool_list
 
 artifact_path = '/media/bigdata/firing_space_plot/lfp_analyses/granger_causality/granger_state_alignment/artifacts'

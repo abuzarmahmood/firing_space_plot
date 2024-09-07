@@ -27,6 +27,7 @@ from tqdm import tqdm, trange
 from joblib import Parallel, delayed
 from spectral_connectivity import Multitaper
 from spectral_connectivity import Connectivity
+from scipy.stats import percentileofscore 
 
 
 def parallelize(func, arg_list, n_jobs=10):
@@ -279,10 +280,66 @@ class granger_handler():
             self.calc_shuffle_threshold()
         if not hasattr(self, 'granger_actual'):
             self.calc_granger_actual()
-        mean_granger_actual = np.mean(self.granger_actual, axis=0)
+        mean_granger_actual = np.nanmean(self.granger_actual, axis=0)
         self.masked_granger = np.ma.masked_where(
             mean_granger_actual < self.percentile_granger, mean_granger_actual)
         self.mask_array = np.ma.getmask(self.masked_granger)
+
+    def get_granger_summed_sig(self):
+        """
+        Return summed significance across all frequencies
+        """
+        mean_granger_actual = np.nanmean(self.granger_actual, axis= (0,2))
+        mean_granger_shuffle = np.nanmean(self.shuffle_outs, axis= (2))
+        n_comparisons = mean_granger_actual.shape[0] 
+        corrected_alpha = self.alpha / n_comparisons
+
+        data_inds = [
+                tuple([0,1]),
+                tuple([1,0])
+                ]
+
+        # Calculate p-values for each direction
+        p_val_list = []
+        sig_list = []
+        freq_summed_actual_list = []
+        freq_summed_shuffle_list = []
+        for data_ind in data_inds:
+            this_actual = mean_granger_actual[..., data_ind[0], data_ind[1]]
+            this_shuffle = mean_granger_shuffle[..., data_ind[0], data_ind[1]]
+            this_percentile = np.array(
+                    [
+                        percentileofscore(this_shuffle[x], this_actual[x]) \
+                                for x in range(this_actual.shape[0])
+                                ]
+                    )
+            this_p_val = 1 - this_percentile / 100
+            this_sig = this_p_val < corrected_alpha
+            p_val_list.append(this_p_val)
+            sig_list.append(this_sig)
+            freq_summed_actual_list.append(this_actual)
+            freq_summed_shuffle_list.append(this_shuffle)
+
+        self.freq_summed_pvals = p_val_list
+        self.freq_summed_sig = sig_list
+        self.freq_summed_actual_list = freq_summed_actual_list
+        self.freq_summed_shuffle_list = freq_summed_shuffle_list
+
+            # mean_shuffle = np.nanmean(this_shuffle, axis=0)
+            # std_shuffle = np.nanstd(this_shuffle, axis=0)
+
+            # stim_time_vec = self.time_vec - 0.5
+            # plt.plot(stim_time_vec, mean_shuffle, label='shuffle')
+            # plt.fill_between(
+            #         stim_time_vec,
+            #         mean_shuffle - std_shuffle,
+            #         mean_shuffle + std_shuffle,
+            #         alpha=0.5
+            #         )
+            # plt.plot(stim_time_vec, this_actual, label='actual')
+            # plt.legend()
+            # plt.show()
+
 
     #def calc_granger_single_trial(self):
     #    """

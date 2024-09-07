@@ -27,7 +27,7 @@ import numpy as np
 import sys
 ephys_data_dir = '/media/bigdata/firing_space_plot/ephys_data'
 granger_causality_path = \
-    '/media/bigdata/firing_space_plot/lfp_analyses/granger_causality'
+    '/media/bigdata/firing_space_plot/lfp_analyses/granger_causality/process_scripts'
 sys.path.append(ephys_data_dir)
 sys.path.append(granger_causality_path)
 import granger_utils as gu
@@ -65,6 +65,8 @@ for dir_name in dir_list:
         # Region lfps shape : (n_tastes, n_channels, n_trials, n_timepoints)
         lfp_channel_inds, region_lfps, region_names = \
             dat.return_representative_lfp_channels()
+
+        print(region_lfps.shape)
 
         taste_lfps = [x for x in region_lfps.swapaxes(0,1)]
 
@@ -128,9 +130,11 @@ for dir_name in dir_list:
                                       this_dat,
                                       multitaper_time_halfbandwidth_product=1,
                                       preprocess=False,
-                                      wanted_window = [8000, 12500],
+                                      # wanted_window = [8000, 12500],
+                                      wanted_window = [1500, 3500], 
                                       )
             this_granger.get_granger_sig_mask()
+            this_granger.get_granger_summed_sig()
 
             ############################################################
             # Save Results to HDF5
@@ -140,20 +144,26 @@ for dir_name in dir_list:
             with tables.open_file(h5_path, 'r+') as h5:
                 h5.create_group(save_path, this_taste_name)
                 fin_save_path = os.path.join(save_path, this_taste_name)
-                vals = [this_granger.granger_actual,
+                vals = [
+                        this_granger.granger_actual,
                         this_granger.masked_granger,
                         this_granger.mask_array,
                         this_granger.wanted_window,
                         this_granger.time_vec,
                         this_granger.freq_vec,
-                        region_names]
+                        region_names,
+                        this_granger.freq_summed_pvals,
+                        this_granger.freq_summed_sig
+                        ]
                 names = ['granger_actual',
                          'masked_granger',
                          'mask_array',
                          'wanted_window',
                          'time_vec',
                          'freq_vec',
-                         'region_names']
+                         'region_names',
+                         'freq_summed_pvals',
+                         'freq_summed_sig']
                 for val, name in zip(vals, names):
                     h5.create_array(fin_save_path, name, val)
             del this_granger

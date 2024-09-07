@@ -7,7 +7,7 @@ import os
 import numpy as np
 from glob import glob
 import matplotlib.pyplot as plt
-from tqdm import trange
+from tqdm import trange, tqdm
 from scipy import stats
 import pymc3 as pm
 from sklearn.cluster import KMeans
@@ -37,6 +37,7 @@ animal_count = np.unique(animal_name, return_counts=True)
 session_count = len(basename_list)
 
 n_string = f'N = {session_count} sessions, {len(animal_count[0])} animals'
+print(n_string)
 
 # Write out basenames to plot_dir
 name_frame = pd.DataFrame(
@@ -60,12 +61,16 @@ names = ['granger_actual',
          'freq_vec']
 
 loaded_dat_list = []
-for this_dir in dir_list:
-    h5_path = glob(os.path.join(this_dir, '*.h5'))[0]
-    with tables.open_file(h5_path, 'r') as h5:
-        loaded_dat = [h5.get_node(save_path, this_name)[:]
-                      for this_name in names]
-        loaded_dat_list.append(loaded_dat)
+for this_dir in tqdm(dir_list):
+    try:
+        h5_path = glob(os.path.join(this_dir, '*.h5'))[0]
+        with tables.open_file(h5_path, 'r') as h5:
+            loaded_dat = [h5.get_node(save_path, this_name)[:]
+                          for this_name in names]
+            loaded_dat_list.append(loaded_dat)
+    except:
+        print(f'Error loading {this_dir}')
+        continue
 
 zipped_dat = zip(*loaded_dat_list)
 zipped_dat = [np.stack(this_dat) for this_dat in zipped_dat]

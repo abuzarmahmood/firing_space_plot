@@ -8,12 +8,12 @@ import os
 import numpy as np
 from glob import glob
 import matplotlib.pyplot as plt
-from tqdm import trange
+from tqdm import trange, tqdm
 from scipy.stats import zscore, mode
 from sklearn.decomposition import PCA
 
-import sys
-sys.path.append('/media/bigdata/projects/pytau')
+# import sys
+# sys.path.append('/media/bigdata/projects/pytau')
 # import pytau.changepoint_model as models
 
 ############################################################
@@ -30,17 +30,24 @@ animal_count = np.unique(animal_name, return_counts=True)
 session_count = len(basename_list)
 
 n_string = f'N = {session_count} sessions, {len(animal_count[0])} animals'
+print(n_string)
 
 save_path = '/ancillary_analysis/granger_causality/all'
-names = ['granger_actual',
+names = [
+         'granger_actual',
          'masked_granger',
          'mask_array',
          'wanted_window',
          'time_vec',
-         'freq_vec']
+         'freq_vec',
+         'freq_summed_pvals',
+         'freq_summed_sig',
+         'freq_summed_actual_list',
+         'freq_summed_shuffle_list',
+         ]
 
 loaded_dat_list = []
-for this_dir in dir_list:
+for this_dir in tqdm(dir_list):
     h5_path = glob(os.path.join(this_dir, '*.h5'))[0]
     with tables.open_file(h5_path, 'r') as h5:
         if save_path not in h5:
@@ -59,7 +66,18 @@ zipped_dat = [np.stack(this_dat) for this_dat in zipped_dat]
     mask_array,
     wanted_window,
     time_vec,
-    freq_vec) = zipped_dat
+    freq_vec,
+    freq_summed_pvals,
+    freq_summed_sig,
+    freq_summed_actual_list,
+    freq_summed_shuffle_list,
+    ) = zipped_dat
+
+# Shape: session, shuffles, time, freq, dir1, dir2
+granger_actual_full = granger_actual.copy()
+# Shape: session, time, freq, dir1, dir2
+mask_array_full = mask_array.copy()
+freq_vec_full = freq_vec.copy()[0]
 
 # wanted_window = np.array(wanted_window[0])/1000
 # stim_t = 10
@@ -94,6 +112,147 @@ if not os.path.isdir(plot_dir):
 aggregate_plot_dir = os.path.join(plot_dir_base, 'aggregate_plots')
 if not os.path.isdir(aggregate_plot_dir):
     os.makedirs(aggregate_plot_dir)
+
+#######################################
+# # Plot of summed granger causality across all frequencies
+# # summed_granger = granger_actual_full.sum(axis=3).mean(axis=1)
+# summed_granger = np.nansum(granger_actual_full, axis=3)
+# summed_granger = np.nanmean(summed_granger, axis=1)
+# 
+# fig, ax = plt.subplots(2,2,sharex=True, sharey='col')
+# ax[0,0].plot(summed_granger[...,0,1].T, alpha = 0.5, color = 'k')
+# ax[1,0].plot(summed_granger[...,1,0].T, alpha = 0.5, color = 'k')
+# plt.show()
+
+#######################################
+# Plot summed granger causality across all frequencies
+
+mean_freq_sum_shuffle = np.nanmean(freq_summed_shuffle_list, axis=2)
+std_freq_sum_shuffle = np.nanstd(freq_summed_shuffle_list, axis=2)
+
+std_mult = 3
+fig, ax = plt.subplots(
+        len(freq_summed_sig), 4, figsize=(15, 15),
+        sharex=True, sharey='col')
+for num, this_sig in enumerate(freq_summed_sig):
+    ax[num, 0].plot(time_vec, freq_summed_actual_list[num, 0], color='black')
+    ax[num, 0].plot(time_vec, mean_freq_sum_shuffle[num, 0], color='red')
+    ax[num, 0].fill_between(
+        time_vec,
+        mean_freq_sum_shuffle[num, 0] - std_mult*std_freq_sum_shuffle[num, 0],
+        mean_freq_sum_shuffle[num, 0] + std_mult*std_freq_sum_shuffle[num, 0],
+        color='red', alpha=0.5)
+    ax[num, 1].plot(time_vec, freq_summed_sig[num, 0], color='black')
+    ax[num, 2].plot(time_vec, freq_summed_actual_list[num, 1], color='black')
+    ax[num, 2].plot(time_vec, mean_freq_sum_shuffle[num, 1], color='red')
+    ax[num, 2].fill_between(
+        time_vec,
+        mean_freq_sum_shuffle[num, 1] - std_mult*std_freq_sum_shuffle[num, 1],
+        mean_freq_sum_shuffle[num, 1] + std_mult*std_freq_sum_shuffle[num, 1],
+        color='red', alpha=0.5)
+    ax[num, 3].plot(time_vec, freq_summed_sig[num, 1], color='black')
+    for this_ax in ax[num, :]:
+        this_ax.axvline(0, color='red', linestyle='--', linewidth=2)
+for this_ax in ax[-1, :]:
+    this_ax.set_xlabel('Time post-stimulus (s)')
+ax[0, 0].set_title('P-Values GC-->BLA')
+ax[0, 1].set_title('Significance GC-->BLA')
+ax[0, 2].set_title('P-Values BLA-->GC')
+ax[0, 3].set_title('Significance BLA-->GC')
+fig.savefig(
+        os.path.join(aggregate_plot_dir, 'summed_pvals_sig.png'),
+        bbox_inches='tight')
+plt.close(fig)
+
+
+###############
+# Plot mean summed granger actual + shuffle, and mean sig
+mean_freq_sum_actual = np.nanmean(freq_summed_actual_list, axis=0)
+# std_freq_sum_actual = np.nanstd(freq_summed_actual_list, axis=0)
+std_freq_sum_actual = np.percentile(freq_summed_actual_list, [2.5, 97.5], axis=0)
+mean_freq_sum_shuffle = np.nanmean(freq_summed_shuffle_list, axis=(0,2))
+# std_freq_sum_shuffle = np.nanstd(freq_summed_shuffle_list, axis=(0,2))
+std_freq_sum_shuffle = np.percentile(freq_summed_shuffle_list, [2.5, 97.5], axis=(0,2))
+mean_freq_sum_sig = np.nanmean(freq_summed_sig, axis=0)
+# std_freq_sum_sig = np.nanstd(freq_summed_sig, axis=0)
+std_freq_sum_sig = np.percentile(freq_summed_sig*1, [2.5, 97.5], axis=0)
+
+
+time_lims = [-0.5, 1.7]
+time_vec_inds = np.where((time_vec >= time_lims[0]) & (time_vec <= time_lims[1]))[0]
+time_vec_cut = time_vec[time_vec_inds]
+mean_freq_sum_actual = mean_freq_sum_actual[..., time_vec_inds]
+std_freq_sum_actual = std_freq_sum_actual[..., time_vec_inds]
+mean_freq_sum_shuffle = mean_freq_sum_shuffle[..., time_vec_inds]
+std_freq_sum_shuffle = std_freq_sum_shuffle[..., time_vec_inds]
+mean_freq_sum_sig = mean_freq_sum_sig[..., time_vec_inds]
+std_freq_sum_sig = std_freq_sum_sig[..., time_vec_inds]
+
+# Smooth mean sig
+from scipy.signal import savgol_filter
+smooth_mean_freq_sum_sig = savgol_filter(mean_freq_sum_sig, 9, 3)
+
+std_mult = 3
+fig, ax = plt.subplots(2, 2, figsize=(10, 5), sharex=True, sharey='col') 
+ax[0, 0].plot(time_vec_cut, mean_freq_sum_actual[0], color='black')
+ax[0, 0].plot(time_vec_cut, mean_freq_sum_shuffle[0], color='red')
+ax[0, 0].fill_between(
+    time_vec_cut,
+    # mean_freq_sum_actual[0] - std_mult*std_freq_sum_actual[0],
+    # mean_freq_sum_actual[0] + std_mult*std_freq_sum_actual[0],
+    std_freq_sum_actual[0][0], std_freq_sum_actual[1][0],
+    color='black', alpha=0.5, label = 'Actual')
+ax[0, 0].fill_between(
+    time_vec_cut,
+    # mean_freq_sum_shuffle[0] - std_mult*std_freq_sum_shuffle[0],
+    # mean_freq_sum_shuffle[0] + std_mult*std_freq_sum_shuffle[0],
+    std_freq_sum_shuffle[0][0], std_freq_sum_shuffle[1][0],
+    color='red', alpha=0.5, label = 'Shuffled')
+ax[0,0].legend()
+ax[0, 1].plot(time_vec_cut, mean_freq_sum_sig[0], color='black', alpha=0.3)
+ax[0, 1].plot(time_vec_cut, smooth_mean_freq_sum_sig[0], color='black')
+# ax[0, 1].fill_between(
+#     time_vec_cut,
+#     mean_freq_sum_sig[0] - std_mult*std_freq_sum_sig[0],
+#     mean_freq_sum_sig[0] + std_mult*std_freq_sum_sig[0],
+#     color='black', alpha=0.5)
+ax[1, 0].plot(time_vec_cut, mean_freq_sum_actual[1], color='black')
+ax[1, 0].plot(time_vec_cut, mean_freq_sum_shuffle[1], color='red')
+ax[1, 0].fill_between(
+    time_vec_cut,
+    # mean_freq_sum_actual[1] - std_mult*std_freq_sum_actual[1],
+    # mean_freq_sum_actual[1] + std_mult*std_freq_sum_actual[1],
+    std_freq_sum_actual[0][1], std_freq_sum_actual[1][1],
+    color='black', alpha=0.5)
+ax[1, 0].fill_between(
+    time_vec_cut,
+    # mean_freq_sum_shuffle[1] - std_mult*std_freq_sum_shuffle[1],
+    # mean_freq_sum_shuffle[1] + std_mult*std_freq_sum_shuffle[1],
+    std_freq_sum_shuffle[0][1], std_freq_sum_shuffle[1][1],
+    color='red', alpha=0.5)
+ax[1, 1].plot(time_vec_cut, mean_freq_sum_sig[1], color='black', alpha=0.3)
+ax[1, 1].plot(time_vec_cut, smooth_mean_freq_sum_sig[1], color='black')
+# ax[1, 1].fill_between(
+#     time_vec_cut,
+#     mean_freq_sum_sig[1] - std_mult*std_freq_sum_sig[1],
+#     mean_freq_sum_sig[1] + std_mult*std_freq_sum_sig[1],
+#     color='black', alpha=0.5)
+for this_ax in ax.flatten():
+    this_ax.axvline(0, color='red', linestyle='--', linewidth=2)
+for this_ax in ax[-1, :]:
+    this_ax.set_xlabel('Time post-stimulus (s)')
+ax[1, 0].set_title('Mean Summed Granger GC-->BLA')
+ax[1, 1].set_title('Mean Summed Sig GC-->BLA')
+ax[0, 0].set_title('Mean Summed Granger BLA-->GC')
+ax[0, 1].set_title('Mean Summed Sig BLA-->GC')
+fig.suptitle('Mean +/- 95% percentile')
+fig.savefig(
+        os.path.join(aggregate_plot_dir, 'mean_summed_actual_shuffle_sig.png'),
+        bbox_inches='tight', dpi = 300)
+plt.close(fig)
+
+
+#######################################
 
 # Create plot with acrtual granger, masked granger and mask for both directions
 cmap = plt.cm.viridis
@@ -139,16 +298,27 @@ mesh_kwargs = dict(
 ############################################################
 # Create plots of mean granger, mean_masked_granger,
 # and summed mask for each direction
+
 mean_granger_actual = np.nanmean(granger_actual, axis=0)
 mean_granger_mask = np.nanmean(masked_granger, axis=0)
-mean_mask = np.nanmean(mask_array, axis=0)
+mean_mask = 1 - np.nanmean(mask_array, axis=0)
+
+mean_granger_c_lims = [
+                    np.nanmin(mean_granger_actual),
+                    np.nanmax(mean_granger_actual)]
+mean_mask_c_lims = [
+                    np.nanmin(mean_mask),
+                    np.nanmax(mean_mask)]
+
 
 fig, ax = plt.subplots(2, 4, figsize=(15, 7), sharex=True, sharey=True)
 fig.suptitle('Mean Granger and Mask' + '\n' + n_string)
 ax[0, 0].pcolormesh(time_vec, freq_vec,
-                    mean_granger_actual[:, :, 0, 1].T, **mesh_kwargs)
+                    mean_granger_actual[:, :, 0, 1].T, **mesh_kwargs,
+                    vmin=mean_granger_c_lims[0], vmax=mean_granger_c_lims[1])
 ax[1, 0].pcolormesh(time_vec, freq_vec,
-                    mean_granger_actual[:, :, 1, 0].T, **mesh_kwargs)
+                    mean_granger_actual[:, :, 1, 0].T, **mesh_kwargs,
+                    vmin=mean_granger_c_lims[0], vmax=mean_granger_c_lims[1])
 ax[0, 1].pcolormesh(time_vec, freq_vec,
                     zscore(mean_granger_actual[:, :, 0, 1].T, axis=-1),
                     **mesh_kwargs)
@@ -156,17 +326,21 @@ ax[1, 1].pcolormesh(time_vec, freq_vec,
                     zscore(mean_granger_actual[:, :, 1, 0].T, axis=-1),
                     **mesh_kwargs)
 ax[0, 2].pcolormesh(time_vec, freq_vec,
-                    zscore(1-mean_mask[:, :, 0, 1].T, axis=-1),
+                    zscore(mean_mask[:, :, 0, 1].T, axis=-1),
                     **mesh_kwargs)
 ax[1, 2].pcolormesh(time_vec, freq_vec,
-                    zscore(1-mean_mask[:, :, 1, 0].T, axis=-1),
+                    zscore(mean_mask[:, :, 1, 0].T, axis=-1),
                     **mesh_kwargs)
 im = ax[0, -1].pcolormesh(time_vec, freq_vec,
-                          1-mean_mask[:, :, 0, 1].T, **mesh_kwargs)
+                          mean_mask[:, :, 0, 1].T, **mesh_kwargs,
+                          vmin=mean_mask_c_lims[0], vmax=mean_mask_c_lims[1]
+                          )
 cbar_ax = fig.add_axes([0.92, 0.55, 0.02, 0.35])
 plt.colorbar(im, cax=cbar_ax)
 im = ax[1, -1].pcolormesh(time_vec, freq_vec,
-                          1-mean_mask[:, :, 1, 0].T, **mesh_kwargs)
+                          mean_mask[:, :, 1, 0].T, **mesh_kwargs,
+                          vmin=mean_mask_c_lims[0], vmax=mean_mask_c_lims[1],
+                          )
 cbar_ax = fig.add_axes([0.92, 0.15, 0.02, 0.35])
 plt.colorbar(im, cax=cbar_ax)
 for this_ax in ax[:, 0]:
@@ -187,6 +361,60 @@ for this_name, this_ax in zip(direction_names, ax[:,0]):
 fig.savefig(os.path.join(aggregate_plot_dir, 'mean_granger_mask.png'), dpi=300)
 plt.close(fig)
 # plt.show()
+
+##############################
+# Plot distribution of mean mask across frequencies
+
+wanted_freq_vec_inds = np.where((freq_vec > 0) & (freq_vec < 70))[0]
+wanted_freq_vec = freq_vec[wanted_freq_vec_inds]
+wanted_mean_mask = mean_mask[:, wanted_freq_vec_inds]
+
+# only take mean mask for post stimulus time
+wanted_mean_mask = wanted_mean_mask[time_vec > 0]
+
+mean_mask_sum = np.sum(wanted_mean_mask, axis=0)
+zscore_mean_mask_sum = zscore(mean_mask_sum, axis=0)
+
+fig, ax = plt.subplots(2, 2, figsize=(2.5, 7), sharex = 'row', sharey=True) 
+fig.suptitle('Summed Mean Mask' + '\n' + n_string)
+ax[0, 0].plot(mean_mask_sum[:, 0, 1], wanted_freq_vec, color='black')
+ax[0, 1].plot(mean_mask_sum[:, 1, 0], wanted_freq_vec, color='black')
+ax[1, 0].plot(zscore_mean_mask_sum[:, 0, 1], wanted_freq_vec, color='black')
+ax[1, 1].plot(zscore_mean_mask_sum[:, 1, 0], wanted_freq_vec, color='black')
+for this_ax in ax[:, 0]:
+    this_ax.set_ylabel('Freq. (Hz)')
+for this_ax in ax[-1, :]:
+    this_ax.set_xlabel('Summed Significant Bins')
+titles = ['GC-->BLA', 'BLA-->GC']
+for this_name, this_ax in zip(direction_names, ax[:, 0]):
+    this_ax.set_title(this_name)
+# Add ticks for [20, 40, 60] Hz
+for this_ax in ax.flatten():
+    this_ax.set_yticks([20, 40, 60])
+    this_ax.set_yticklabels(['20', '40', '60'])
+    this_ax.xaxis.set_visible(False)
+plt.tight_layout()
+fig.savefig(os.path.join(aggregate_plot_dir, 'summed_mean_mask.png'), dpi=300,
+            bbox_inches='tight')
+plt.close(fig)
+
+# Make one of mean_mask_sum as image
+fig, ax = plt.subplots(1, 2, figsize=(5, 7), sharey=True)
+fig.suptitle('Summed Mean Mask' + '\n' + n_string)
+ax[0].imshow(mean_mask_sum[:, 0, 1][np.newaxis, :].T, aspect='auto', origin='lower',)
+ax[1].imshow(mean_mask_sum[:, 1, 0][np.newaxis, :].T, aspect='auto', origin='lower',)
+# Correct y axis labels
+titles = ['GC-->BLA', 'BLA-->GC'][::-1]
+for this_name, this_ax in zip(direction_names, ax):
+    this_ax.set_title(this_name)
+    this_ax.xaxis.set_visible(False)
+    this_ax.yaxis.set_visible(False)
+plt.tight_layout()
+fig.savefig(os.path.join(aggregate_plot_dir, 'summed_mean_mask_image.png'), dpi=300,
+            bbox_inches='tight')
+plt.close(fig)
+
+##############################
 
 # Plot mean mask with inferred changepoints
 mean_mask_cp = np.copy(mean_mask)
