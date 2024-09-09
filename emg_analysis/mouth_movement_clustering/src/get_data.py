@@ -37,6 +37,8 @@ if not os.path.isdir(artifact_dir):
 ############################################################
 
 data_dir = '/media/fastdata/Natasha_classifier_data' 
+additional_data_dir = '/media/storage/ABU_GC-EMG_Data/emg_process_only'
+
 scored_data_paths = glob(os.path.join(data_dir, '**', '*scores.csv'), recursive = True)
 scored_data_basenames = [os.path.basename(x).lower().split('.')[0] for x in scored_data_paths]
 scored_data_basenames = ["_".join(x.split('_')[:-1]) for x in scored_data_basenames]
@@ -48,6 +50,9 @@ scores_path_df = pd.DataFrame({'path': scored_data_paths,
 ##############################
 
 emg_output_dirs = sorted(glob(os.path.join(data_dir,'*','*','*', 'emg_output')))
+# Also add dirs emg from GC data
+additional_emg_output_dirs = sorted(glob(os.path.join(additional_data_dir,'*', 'emg_output')))
+emg_output_dirs.extend(additional_emg_output_dirs)
 
 # For each day of experiment, load env and table files
 data_subdirs = [glob(os.path.join(x,'*')) for x in emg_output_dirs]
@@ -76,6 +81,8 @@ emg_path_df['bsa_results_path'] = bsa_results_dirs
 ##############################
 
 h5_files = glob(os.path.join(data_dir,'**','*','*', '*.h5'))
+additional_h5_files = glob(os.path.join(additional_data_dir,'*', '*.h5'))
+h5_files.extend(additional_h5_files)
 h5_files = sorted(h5_files)
 h5_basenames = [os.path.basename(x).split('.')[0].lower() for x in h5_files]
 
@@ -100,10 +107,99 @@ merge_df = merge_df.rename(columns = {'path':'path_h5'})
 
 merge_df[['basename','scores','emg','h5']]
 
+# Pull out emg only data
+emg_only_df = merge_df.loc[merge_df.scores.isna()]
+
+
+############################################################
+# Process emg only data
+
+# Load env files
+envs_list = []
+for ind, row in tqdm(emg_only_df.iterrows()):
+    env_path = glob(os.path.join(row.path_emg, '*env.npy'))[0]
+    env = np.load(env_path)
+    envs_list.append(env)
+
+emg_only_df['env'] = envs_list
+
+# Load taste orders
+taste_order_list = []
+for h5_file in tqdm(emg_only_df.path_h5):
+    try:
+        taste_orders = return_taste_orders([h5_file])
+    except:
+        taste_orders = None
+    taste_order_list.append(taste_orders)
+
+emg_only_df['taste_orders'] = taste_order_list
+
+# Load taste map
+taste_map_list = []
+for ind, row in tqdm(emg_only_df.iterrows()):
+    info_file_path = row.info_file_path
+    info_file = json.load(open(info_file_path, 'r'))
+    taste_names = info_file['taste_params']['tastes']
+    pal_rankings = info_file['taste_params']['pal_rankings']
+    taste_map = {taste:pal for taste, pal in zip(taste_names, pal_rankings)}
+    taste_map_list.append(taste_map)
+
+emg_only_df['taste_map'] = taste_map_list
+
+# Suppress UserWarning from scipy
+import warnings
+warnings.simplefilter(action='ignore', category=UserWarning)
+
+segment_dat_list_list = []
+for ind, row in tqdm(emg_only_df.iterrows()):
+    segment_dat_list = []
+    envs = row.env
+    inds = list(np.ndindex(envs.shape[:-1]))
+
+    for this_ind in inds:
+        try:
+            this_trial_dat = envs[this_ind]
+
+            start_time = time() 
+            (
+                segment_starts, 
+                segment_ends, 
+                segment_dat, 
+                filtered_segment_dat
+                ) = extract_movements(
+                this_trial_dat, size=200)
+
+            # Threshold movement lengths
+            segment_starts, segment_ends, segment_dat = threshold_movement_lengths(
+                segment_starts, segment_ends, filtered_segment_dat, 
+                min_len = 50, max_len= 500)
+
+            (feature_array,
+             feature_names,
+             segment_dat,
+             segment_starts,
+             segment_ends) = extract_features(
+                segment_dat, segment_starts, segment_ends)
+
+            segment_bounds = list(zip(segment_starts, segment_ends))
+            merged_dat = [feature_array, segment_dat, segment_bounds] 
+            segment_dat_list.append(merged_dat)
+        except:
+            print(f'Error in {row.basename} - {this_ind}')
+            segment_dat_list.append(None)
+
+    segment_dat_list_list.append(segment_dat_list)
+
+emg_only_df['segment_dat_list'] = segment_dat_list_list
+
+# Save to artifact dir
+emg_only_df.to_pickle(os.path.join(artifact_dir, 'emg_only_df.pkl'))
+
+############################################################
+
 merge_df.dropna(inplace = True)
 merge_df.reset_index(inplace = True, drop = True)
 
-############################################################
 cols_to_delete = [	
                     'Observation id', 'Observation date', 'Description', 
                     'Observation duration', 'Observation type',

@@ -97,6 +97,7 @@ plot_dir = os.path.join(base_dir, 'plots')
 all_data_pkl_path = os.path.join(artifact_dir, 'all_data_frame.pkl')
 all_data_frame = pd.read_pickle(all_data_pkl_path)
 
+pred_plot_dir = os.path.join(plot_dir, 'prediction_plots')
 
 
 ##############################
@@ -192,7 +193,6 @@ event_code_dict = {
 scored_df['event_codes'] = scored_df['event_type'].map(event_code_dict)
 
 # Plot histogram of segment centers for gape and MTMs
-pred_plot_dir = os.path.join(plot_dir, 'prediction_plots')
 
 # plot_df = scored_df[scored_df.event_type.isin(['gape','MTMs'])]
 

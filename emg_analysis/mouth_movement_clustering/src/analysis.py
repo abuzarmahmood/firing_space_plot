@@ -386,7 +386,8 @@ out_dict = {
         'classifier': 'Classification of segment using Jenn Li algorithm (1 = gape)',
         'segment_center': 'Center of segment within trial',
         'scored': 'Whether segment was scored',
-        'event_type': 'Type of event',
+        'event_type': 'Type of event according to scoring',
+        'event_codes': 'Event type as a code (from scoring)',
         'session_ind': 'Session number',
         'animal_num': 'Animal number',
         'basename': 'Basename of the session',
@@ -395,7 +396,6 @@ out_dict = {
         'baseline_mean': 'Mean of baseline amplitude (for normalization of amplitudes)',
         'raw_features': 'Features of the segment (without amplitude normalization)',
         'baseline_scaled_segments': 'Segments with amplitude normalized by baseline',
-        'event_codes': 'Event type as a code',
         'is_gape': 'Whether event is a gape (1 = gape)',
         }
 
