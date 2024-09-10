@@ -49,11 +49,11 @@ def threshold_movement_lengths(
 def normalize_segments(segment_dat):
     """
     Perform min-max normalization on each segment
-    And make length of each segment equal to the longest segment
+    And make length of each segment equal 100 
     """
     max_len = max([len(x) for x in segment_dat])
     interp_segment_dat = [np.interp(
-        np.linspace(0, 1, max_len),
+        np.linspace(0, 1, 100),
         np.linspace(0, 1, len(x)),
         x)
         for x in segment_dat]
@@ -66,7 +66,12 @@ def normalize_segments(segment_dat):
     return interp_segment_dat
 
 
-def extract_features(segment_dat, segment_starts, segment_ends):
+def extract_features(
+        segment_dat, 
+        segment_starts, 
+        segment_ends,
+        mean_prestim = None
+        ):
     """
     # Features to extract
     # 1. Duration of movement
@@ -76,6 +81,10 @@ def extract_features(segment_dat, segment_starts, segment_ends):
     # No need to calculate PCA of time-adjusted waveform at this stage
     # as it's better to do it over the entire dataset
     # 4. PCA of time-adjusted waveform
+
+    # 5. Normalized time-adjusted waveform
+
+    If mean_prestim is provided, also return normalized amplitude
     """
     peak_inds = [np.argmax(x) for x in segment_dat]
     peak_times = [x+y for x, y in zip(segment_starts, peak_inds)]
@@ -100,33 +109,37 @@ def extract_features(segment_dat, segment_starts, segment_ends):
 
     feature_list = [
         durations,
-        # amplitudes_rel,
         amplitude_abs,
         left_intervals,
         right_intervals,
-        # pca_segment_dat,
-        norm_interp_segment_dat,
         max_freq,
     ]
+    feature_names = [
+        'duration',
+        'amplitude_abs',
+        'left_interval',
+        'right_interval',
+        'max_freq',
+    ]
+
+    if mean_prestim is not None:
+        amplitude_norm = [x/mean_prestim for x in amplitude_abs]
+        feature_list.append(amplitude_norm)
+        feature_names.append('amplitude_norm')
+
     feature_list = [np.atleast_2d(x) for x in feature_list]
     feature_list = [x if len(x) == len(norm_interp_segment_dat) else x.T
                     for x in feature_list]
     feature_array = np.concatenate(feature_list, axis=-1)
-    # feature_array = np.vstack(feature_list).T
 
-    feature_names = [
-        'duration',
-        # 'amplitude_rel',
-        'amplitude_abs',
-        'left_interval',
-        'right_interval',
-        # 'pca_1',
-        # 'pca_2',
-        # 'pca_3',
-        'norm_interp_segment_dat',
-        'max_freq',
-    ]
-    return feature_array, feature_names, segment_dat, segment_starts, segment_ends
+    return (
+            feature_array, 
+            feature_names, 
+            segment_dat, 
+            segment_starts, 
+            segment_ends, 
+            norm_interp_segment_dat
+            )
 
 def find_segment(gape_locs, segment_starts, segment_ends):
     """
@@ -332,10 +345,11 @@ def parse_segment_dat_list(this_segment_dat_list):
     wanted_data = dict(
         features = [x[0] for x in this_segment_dat_list],
         segment_raw = [x[1] for x in this_segment_dat_list],
-        segment_bounds = [x[2] for x in this_segment_dat_list],
+        segment_norm_interp = [x[2] for x in this_segment_dat_list],
+        segment_bounds = [x[3] for x in this_segment_dat_list],
         )
     gape_frame = pd.DataFrame(wanted_data)
-    gape_frame = gape_frame.explode(['features','segment_raw','segment_bounds'])
+    gape_frame = gape_frame.explode(list(wanted_data.keys()))
     return gape_frame
 
 def parse_gapes_Li(gapes_Li, gape_frame):

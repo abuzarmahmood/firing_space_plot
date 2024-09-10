@@ -297,6 +297,7 @@ def run_AM_process(envs, pre_stim=2000):
         segment_dat_list (list): List of segment data
     """
     this_day_prestim_dat = envs[..., :pre_stim]
+    mean_prestim = np.mean(this_day_prestim_dat, axis=None)
 
     segment_dat_list = []
     inds = list(np.ndindex(envs.shape[:-1]))
@@ -324,14 +325,16 @@ def run_AM_process(envs, pre_stim=2000):
          feature_names,
          segment_dat,
          segment_starts,
-         segment_ends) = extract_features(
-            segment_dat, segment_starts, segment_ends)
+         segment_ends,
+         norm_interp_segment_dat,
+         ) = extract_features(
+            segment_dat, segment_starts, segment_ends, mean_prestim = mean_prestim)
 
         assert len(feature_array) == len(segment_dat) == len(segment_starts) == len(segment_ends), \
             'Mismatch in feature array lengths'
 
         segment_bounds = list(zip(segment_starts, segment_ends))
-        merged_dat = [feature_array, segment_dat, segment_bounds]
+        merged_dat = [feature_array, segment_dat, norm_interp_segment_dat, segment_bounds]
         segment_dat_list.append(merged_dat)
 
     return segment_dat_list, feature_names
@@ -463,9 +466,14 @@ session_data_df['gapes_Li'] = gapes_Li_list
 ###############
 # Run everything through AM Process
 
-# Note: We normalize by baseline later on, that can be done in this step
+# run_AM_process returns: 
+# segment_dat_list, feature_names, norm_interp_segment_dat
 segment_dat_list_raw = [run_AM_process(row.env) for ind, row in tqdm(session_data_df.iterrows())]
 feature_names = segment_dat_list_raw[0][1]
+# Segment_dat_list:
+# Sessions
+#  - Trials
+#    - feature_array, segment_dat, norm_interp_segment_dat, segment_bounds
 segment_dat_list = [x[0] for x in segment_dat_list_raw]
 session_data_df['segment_dat_list'] = segment_dat_list
 
@@ -578,7 +586,6 @@ for i, (_, this_row) in enumerate(session_data_df.iterrows()):
     fin_segment_frames.append(this_frame)
 cat_segment_frame = pd.concat(fin_segment_frames, axis=0).reset_index(drop=True)
 
-
 # Match gape frames with palatability
 pal_dicts = [{i: x for i, x in enumerate(this_dict.items())}
              for this_dict in session_data_df.taste_map.values]
@@ -595,59 +602,59 @@ for i, this_frame in enumerate(pal_frames):
     fin_pal_frames.append(this_frame)
 cat_pal_frame = pd.concat(fin_pal_frames, axis=0).reset_index(drop=True)
 
-merge_gape_pal = pd.merge(
+cat_segment_frame = pd.merge(
     cat_segment_frame,
     cat_pal_frame,
     on=['session_ind', 'taste', 'animal_num', 'basename'],
     how='inner')
 
-##############################
-# Baseline normalization
-##############################
-# Also get baseline values to normalize amplitude
-all_envs = np.stack(session_data_df.env)
-all_basenames = session_data_df.basename.values
-animal_nums = [x.split('_')[0] for x in all_basenames]
-session_nums = [x.split('_')[1] for x in all_basenames]
-
-baseline_lims = [0, 2000]
-baseline_envs = all_envs[:, baseline_lims[0]:baseline_lims[1]]
-
-mean_baseline = np.mean(baseline_envs, axis=-1)
-std_baseline = np.std(baseline_envs, axis=-1)
-inds = np.array(list(np.ndindex(mean_baseline.shape)))
-
-baseline_frame = pd.DataFrame(
-    data=np.concatenate(
-        [
-            inds,
-            mean_baseline.flatten()[:, None],
-            std_baseline.flatten()[:, None]
-        ],
-        axis=-1
-    ),
-    columns=['session', 'taste', 'trial', 'mean', 'std']
-)
-# Convert ['session','taste','trial'] to int
-baseline_frame = baseline_frame.astype(
-    {'session': 'int', 'taste': 'int', 'trial': 'int'})
-baseline_frame['animal'] = [animal_nums[i] for i in baseline_frame['session']]
-baseline_frame['session_day'] = [session_nums[i]
-                                 for i in baseline_frame['session']]
-baseline_frame['session_name'] = [animal + '\n' + day for
-                                  animal, day in zip(baseline_frame['animal'], baseline_frame['session_day'])]
-mean_baseline_frame = baseline_frame.groupby(
-    ['session_name', 'session_day', 'animal']).mean()
-mean_baseline_frame.reset_index(inplace=True)
-mean_baseline_frame = mean_baseline_frame.astype({'session': 'int'})
-mean_baseline_frame.rename(columns={'mean': 'baseline_mean'}, inplace=True)
-
-merge_gape_pal = pd.merge(
-    merge_gape_pal,
-    mean_baseline_frame[['session', 'baseline_mean']],
-    left_on=['session_ind'],
-    right_on=['session'],
-    how='left')
+# ##############################
+# # Baseline normalization
+# ##############################
+# # Also get baseline values to normalize amplitude
+# all_envs = np.stack(session_data_df.env)
+# all_basenames = session_data_df.basename.values
+# animal_nums = [x.split('_')[0] for x in all_basenames]
+# session_nums = [x.split('_')[1] for x in all_basenames]
+# 
+# baseline_lims = [0, 2000]
+# baseline_envs = all_envs[:, baseline_lims[0]:baseline_lims[1]]
+# 
+# mean_baseline = np.mean(baseline_envs, axis=-1)
+# std_baseline = np.std(baseline_envs, axis=-1)
+# inds = np.array(list(np.ndindex(mean_baseline.shape)))
+# 
+# baseline_frame = pd.DataFrame(
+#     data=np.concatenate(
+#         [
+#             inds,
+#             mean_baseline.flatten()[:, None],
+#             std_baseline.flatten()[:, None]
+#         ],
+#         axis=-1
+#     ),
+#     columns=['session', 'taste', 'trial', 'mean', 'std']
+# )
+# # Convert ['session','taste','trial'] to int
+# baseline_frame = baseline_frame.astype(
+#     {'session': 'int', 'taste': 'int', 'trial': 'int'})
+# baseline_frame['animal'] = [animal_nums[i] for i in baseline_frame['session']]
+# baseline_frame['session_day'] = [session_nums[i]
+#                                  for i in baseline_frame['session']]
+# baseline_frame['session_name'] = [animal + '\n' + day for
+#                                   animal, day in zip(baseline_frame['animal'], baseline_frame['session_day'])]
+# mean_baseline_frame = baseline_frame.groupby(
+#     ['session_name', 'session_day', 'animal']).mean()
+# mean_baseline_frame.reset_index(inplace=True)
+# mean_baseline_frame = mean_baseline_frame.astype({'session': 'int'})
+# mean_baseline_frame.rename(columns={'mean': 'baseline_mean'}, inplace=True)
+# 
+# cat_segment_frame = pd.merge(
+#     cat_segment_frame,
+#     mean_baseline_frame[['session', 'baseline_mean']],
+#     left_on=['session_ind'],
+#     right_on=['session'],
+#     how='left')
 
 ############################################################
 # Cross-validated classification accuracy
@@ -670,29 +677,34 @@ merge_gape_pal = pd.merge(
 #     'max_freq',
 # ]
 
-all_features = np.stack(merge_gape_pal.features.values)
+all_features = np.stack(cat_segment_frame.features.values)
+
+# Drop 'amplitude_abs' from features
+drop_inds = [i for i, x in enumerate(feature_names) if 'amplitude_abs' in x]
+all_features = np.delete(all_features, drop_inds, axis=1)
+feature_names = np.delete(feature_names, drop_inds)
 
 # # Drop amplitude_rel
 # drop_inds = [i for i, x in enumerate(feature_names) if 'amplitude_rel' in x]
 # all_features = np.delete(all_features, drop_inds, axis=1)
 # feature_names = np.delete(feature_names, drop_inds)
 
-# Normalize amplitude by baseline
-baseline_vec = merge_gape_pal.baseline_mean.values
-amplitude_inds = np.array(
-    [i for i, x in enumerate(feature_names) if 'amplitude' in x])
-all_features[:, amplitude_inds] = all_features[:, amplitude_inds] / \
-    baseline_vec[:, None]
+# # Normalize amplitude by baseline
+# baseline_vec = cat_segment_frame.baseline_mean.values
+# amplitude_inds = np.array(
+#     [i for i, x in enumerate(feature_names) if 'amplitude' in x])
+# all_features[:, amplitude_inds] = all_features[:, amplitude_inds] / \
+#     baseline_vec[:, None]
 
-# Drop PCA features
-# In future, we can re-calculate PCA features
-drop_inds = np.array(
-    [i for i, x in enumerate(feature_names) if 'pca' in x])
-all_features = np.delete(all_features, drop_inds, axis=1)
+# # Drop PCA features
+# # In future, we can re-calculate PCA features
+# drop_inds = np.array(
+#     [i for i, x in enumerate(feature_names) if 'pca' in x])
+# all_features = np.delete(all_features, drop_inds, axis=1)
 
 # # Recalculate PCA features
 # # First scale all segments by amplitude and length
-# all_segments = merge_gape_pal.segment_raw.values
+# all_segments = cat_segment_frame.segment_raw.values
 # 
 # # MinMax scale segments
 # min_max_segments = [x-np.min(x) for x in all_segments]
@@ -704,6 +716,8 @@ all_features = np.delete(all_features, drop_inds, axis=1)
 # #         for x in min_max_segments]
 # # scaled_segments = np.stack(scaled_segments)
 # scaled_segments = normalize_segments(min_max_segments)
+
+scaled_segments = np.stack(cat_segment_frame.segment_norm_interp.values)
 
 # Get PCA features
 pca_obj = PCA()
@@ -721,26 +735,16 @@ pca_feature_names = [feature_names[i] for i in drop_inds]
 feature_names = np.delete(feature_names, drop_inds)
 feature_names = np.concatenate([feature_names, pca_feature_names])
 
-np.save(os.path.join(artifact_dir, 'merge_gape_pal_feature_names.npy'),
-        feature_names)
-
 # Categorize animal_num
-animal_codes = merge_gape_pal.animal_num.astype('category').cat.codes.values
+animal_codes = cat_segment_frame.animal_num.astype('category').cat.codes.values
 
 ##############################
-merge_gape_pal['raw_features'] = list(all_features)
-merge_gape_pal['features'] = list(scaled_features)
+cat_segment_frame['raw_features'] = list(all_features)
+cat_segment_frame['features'] = list(scaled_features)
 
 ###############
 # Also scale amplitudes of semgents from later plotting
-baseline_scaled_segments = [x/y for x, y in
-                            tqdm(zip(all_segments, baseline_vec))]
-
-merge_gape_pal['baseline_scaled_segments'] = baseline_scaled_segments
-
-merge_gape_pal.to_pickle(os.path.join(artifact_dir, 'merge_gape_pal.pkl'))
-
-scored_df = merge_gape_pal[merge_gape_pal.scored == True]
+scored_df = cat_segment_frame[cat_segment_frame.scored == True]
 
 # Correct event_types
 types_to_drop = ['to discuss', 'other',
@@ -765,16 +769,7 @@ scored_df['is_gape'] = (scored_df['event_type'] == 'gape')*1
 
 scored_df.dropna(subset=['event_type'], inplace=True)
 
-##############################
-# Output copy for MTM clustering analysis
-out_copy = scored_df.copy()
-out_copy.drop(columns='session', inplace=True)
-out_copy.reset_index(drop=True, inplace=True)
-
-# Output frame to pickle and output json with description of each column
-out_copy.to_pickle(os.path.join(artifact_dir, 'mtm_clustering_df.pkl'))
-out_cols = out_copy.columns
-
+# Column descriptions
 out_dict = {
     'taste': 'Taste of the trial',
     'trial': 'Trial number given taste',
@@ -798,30 +793,13 @@ out_dict = {
     'is_gape': 'Whether event is a gape (1 = gape)',
 }
 
-json.dump(
-    out_dict, open(os.path.join(artifact_dir, 'mtm_clustering_df_description.json'),
-                   'w'),
-    indent=4)
-
-# Write out feature names as txt
-with open(os.path.join(artifact_dir, 'mtm_clustering_feature_names.txt'), 'w') as f:
-    for item in feature_names:
-        f.write("%s\n" % item)
-
-##############################
-
-event_type_counts = scored_df.event_type.value_counts().to_dict()
 
 ##############################
 # Feature clustering by event type
+
+# Why do they have to be sorted?
 features = np.stack(scored_df.features.values)
 event_codes = scored_df.event_codes.values
-sort_order = np.argsort(event_codes)
-sorted_features = features[sort_order]
-sorted_event_codes = event_codes[sort_order]
-
-sorted_features_df = pd.DataFrame(sorted_features, columns=feature_names)
-
 event_code_map = scored_df[['event_codes', 'event_type']].drop_duplicates()
 
 ##############################
@@ -856,7 +834,6 @@ updated_codes[mahal_dist < mahal_thresh] = no_movement_code
 scored_df['updated_codes'] = updated_codes
 scored_df['updated_event_type'] = scored_df.updated_codes.map(
     event_code_map.set_index('event_codes').event_type)
-scored_df.to_pickle(os.path.join(artifact_dir, 'scored_df.pkl'))
 
 ############################################################
 ############################################################
