@@ -15,83 +15,16 @@ from ast import literal_eval
 from sklearn.metrics import accuracy_score
 from scipy.stats import ttest_rel
 
-base_dir = '/media/bigdata/firing_space_plot/emg_analysis/mouth_movement_clustering'
-code_dir = os.path.join(base_dir, 'src')
-sys.path.append(code_dir)
-from utils.gape_clust_funcs import (extract_movements,
-                                            normalize_segments,
-                                            extract_features,
-                                            find_segment,
-                                            calc_peak_interval,
-                                            gen_gape_frame,
-                                            threshold_movement_lengths,
-                                            )
-
-artifact_dir = os.path.join(base_dir, 'artifacts')
+# artifact_dir = os.path.join(base_dir, 'artifacts')
+artifact_dir = '/media/bigdata/firing_space_plot/emg_analysis/mouth_movement_clustering/src/classifier_pipeline/artifacts'
 
 ############################################################
 # Load data
 ############################################################
-base_dir = '/media/bigdata/firing_space_plot/emg_analysis/mouth_movement_clustering'
-artifact_dir = os.path.join(base_dir, 'artifacts')
-plot_dir = os.path.join(base_dir, 'plots')
-all_data_pkl_path = os.path.join(artifact_dir, 'all_data_frame.pkl')
-all_data_frame = pd.read_pickle(all_data_pkl_path)
+scored_df = pd.read_pickle(os.path.join(artifact_dir, 'fin_training_dataset.pkl'))
+# all_data_frame = pd.read_pickle(os.path.join(artifact_dir, 'all_data_frame.pkl'))
+# merge_gape_pal = pd.read_pickle(os.path.join(artifact_dir, 'merge_gape_pal.pkl'))
 
-##############################
-# Specificitiy of annotations 
-##############################
-merge_gape_pal_path = os.path.join(artifact_dir, 'merge_gape_pal.pkl')
-merge_gape_pal = pd.read_pickle(merge_gape_pal_path)
-
-feature_names_path = os.path.join(artifact_dir, 'merge_gape_pal_feature_names.npy')
-feature_names = np.load(feature_names_path)
-
-# Load scored_df anew to have the updated codes and event_types
-# scored_df = merge_gape_pal[merge_gape_pal.scored == True]
-scored_df_path = os.path.join(artifact_dir, 'scored_df.pkl')
-scored_df = pd.read_pickle(scored_df_path)
-
-# Over-write with updated event coes and types
-scored_df['event_type'] = scored_df['updated_event_type']
-scored_df['event_codes'] = scored_df['updated_codes']
-
-# Correct event_types
-types_to_drop = ['to discuss', 'other', 'unknown mouth movement','out of view']
-scored_df = scored_df[~scored_df.event_type.isin(types_to_drop)]
-
-# Remap event_types
-event_type_map = {
-        'mouth movements' : 'mouth or tongue movement',
-        'tongue protrusion' : 'mouth or tongue movement',
-        'mouth or tongue movement' : 'mouth or tongue movement',
-        'lateral tongue movement' : 'lateral tongue protrusion',
-        'lateral tongue protrusion' : 'lateral tongue protrusion',
-        'gape' : 'gape',
-        'no movement' : 'no movement',
-        'nothing' : 'no movement',
-        }
-
-scored_df['event_type'] = scored_df['event_type'].map(event_type_map)
-scored_df['event_codes'] = scored_df['event_type'].astype('category').cat.codes
-scored_df['is_gape'] = (scored_df['event_type'] == 'gape')*1
-
-scored_df.dropna(subset=['event_type'], inplace=True)
-
-scored_df = scored_df[scored_df.event_type != 'lateral tongue protrusion']
-
-scored_df['event_type'] = scored_df['event_type'].replace(
-        ['mouth or tongue movement'],
-        'MTMs'
-        )
-
-event_code_dict = {
-        'gape' : 1,
-        'MTMs' : 2,
-        'no movement' : 0,
-        }
-
-scored_df['event_codes'] = scored_df['event_type'].map(event_code_dict)
 
 ############################################################
 # Train model
@@ -130,10 +63,10 @@ if not os.path.exists(save_dir):
     os.makedirs(save_dir)
 clf.save_model(os.path.join(save_dir, 'xgb_model.json'))
 
-############################################################
-# Data testing
-# Making sure the training data is loaded correctly
-############################################################
+# ############################################################
+# # Data testing
+# # Making sure the training data is loaded correctly
+# ############################################################
 # # Leave one-animal-out cross validation
 # unique_animals = scored_df.animal_num.unique()
 # 
@@ -199,7 +132,8 @@ clf.save_model(os.path.join(save_dir, 'xgb_model.json'))
 # xgb_pred_array_list = xgb_pred_array_list.astype('int')
 # 
 # # Plot
-# xgb_pred_plot_dir = os.path.join(plot_dir, 'pipeline_test_plots', 'xgb')
+# # xgb_pred_plot_dir = os.path.join(plot_dir, 'pipeline_test_plots', 'xgb')
+# xgb_pred_plot_dir = os.path.join(artifact_dir, 'pipeline_test_plots')
 # if not os.path.exists(xgb_pred_plot_dir):
 #     os.makedirs(xgb_pred_plot_dir)
 # 

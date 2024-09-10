@@ -318,13 +318,7 @@ def gen_gape_frame(segment_dat_list, gapes_Li):
     gape_frame['segment_bounds'] = [x[2] for x in segment_dat_list]
     gape_frame = gape_frame.explode(['features','segment_raw','segment_bounds'])
 
-    # # Standardize features
-    # raw_features = np.stack(gape_frame['features'].values)
-    # scaled_features = StandardScaler().fit_transform(raw_features)
-    # gape_frame['features'] = [x for x in scaled_features]
-
     # Add index for each segment
-    # gape_frame['segment_num'] = gape_frame.groupby(['channel', 'taste', 'trial']).cumcount()
     gape_frame['segment_num'] = gape_frame.groupby(['taste', 'trial']).cumcount()
     gape_frame = gape_frame.reset_index(drop=True)
 
