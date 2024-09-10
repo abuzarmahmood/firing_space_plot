@@ -11,18 +11,6 @@ import pandas as pd
 # os.chdir(os.path.expanduser('~/Desktop/blech_clust/emg/gape_QDA_classifier/_experimental/mouth_movement_clustering'))
 sys.path.append(os.path.expanduser('~/Desktop/'))
 # sys.path.append(os.path.expanduser('~/Desktop/blech_clust/emg/gape_QDA_classifier'))
-from blech_clust.utils.blech_utils import imp_metadata
-from utils.gape_clust_funcs import (extract_movements,
-                                            normalize_segments,
-                                            extract_features,
-                                            find_segment,
-                                            calc_peak_interval,
-                                            JL_process,
-                                            gen_gape_frame,
-                                            )
-
-import itertools
-from sklearn.cluster import KMeans, AgglomerativeClustering
 
 ############################################################
 ############################################################

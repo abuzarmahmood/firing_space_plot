@@ -72,6 +72,9 @@ def extract_features(segment_dat, segment_starts, segment_ends):
     # 1. Duration of movement
     # 2. Amplitude
     # 3. Left and Right intervals
+
+    # No need to calculate PCA of time-adjusted waveform at this stage
+    # as it's better to do it over the entire dataset
     # 4. PCA of time-adjusted waveform
     """
     peak_inds = [np.argmax(x) for x in segment_dat]
@@ -82,47 +85,61 @@ def extract_features(segment_dat, segment_starts, segment_ends):
     segment_ends = segment_ends[1:-1]
 
     durations = [len(x) for x in segment_dat]
-    amplitudes_rel = [np.max(x) - np.min(x) for x in segment_dat]
+    # amplitudes_rel = [np.max(x) - np.min(x) for x in segment_dat]
     amplitude_abs = [np.max(x) for x in segment_dat]
     left_intervals = [peak_times[i] - peak_times[i-1]
                       for i in range(1, len(peak_times))][:-1]
     right_intervals = [peak_times[i+1] - peak_times[i]
                        for i in range(len(peak_times)-1)][1:]
 
-    interp_segment_dat = normalize_segments(segment_dat)
-    pca_segment_dat = PCA(n_components=3).fit_transform(interp_segment_dat)
+    norm_interp_segment_dat = normalize_segments(segment_dat)
+    # pca_segment_dat = PCA(n_components=3).fit_transform(interp_segment_dat)
 
     welch_out = [welch(x, fs=1000, axis=-1) for x in segment_dat]
     max_freq = [x[0][np.argmax(x[1], axis=-1)] for x in welch_out]
 
     feature_list = [
         durations,
-        amplitudes_rel,
+        # amplitudes_rel,
         amplitude_abs,
         left_intervals,
         right_intervals,
-        pca_segment_dat,
+        # pca_segment_dat,
+        norm_interp_segment_dat,
         max_freq,
     ]
     feature_list = [np.atleast_2d(x) for x in feature_list]
-    feature_list = [x if len(x) == len(pca_segment_dat) else x.T
+    feature_list = [x if len(x) == len(norm_interp_segment_dat) else x.T
                     for x in feature_list]
     feature_array = np.concatenate(feature_list, axis=-1)
+    # feature_array = np.vstack(feature_list).T
 
     feature_names = [
         'duration',
-        'amplitude_rel',
+        # 'amplitude_rel',
         'amplitude_abs',
         'left_interval',
         'right_interval',
-        'pca_1',
-        'pca_2',
-        'pca_3',
+        # 'pca_1',
+        # 'pca_2',
+        # 'pca_3',
+        'norm_interp_segment_dat',
         'max_freq',
     ]
     return feature_array, feature_names, segment_dat, segment_starts, segment_ends
 
 def find_segment(gape_locs, segment_starts, segment_ends):
+    """
+    Find segments that contain gapes specificed by gape_locs
+
+    Inputs:
+        gape_locs : (num_gapes,)
+        segment_starts : (num_segments,)
+        segment_ends : (num_segments,)
+
+    Outputs:
+        all_segment_inds : (num_gapes,)
+    """
     segment_bounds = list(zip(segment_starts, segment_ends))
     all_segment_inds = []
     for this_gape in gape_locs:
@@ -295,28 +312,51 @@ def JL_process(
     return gape_peak_ind, time_list
 
 # Convert segment_dat and gapes_Li to pandas dataframe for easuer handling
-def gen_gape_frame(segment_dat_list, gapes_Li):
+def parse_segment_dat_list(this_segment_dat_list):
     """
-    Generate a dataframe with the following columns:
+    Generate a dataframe with the following columns from segment_dat_list:
     channel, taste, trial, segment_num, features, segment_raw, segment_bounds
 
     Inputs:
     segment_dat_list : list of lists
+        - Each entry in list is a single trial
 
     Returns:
     gape_frame : pandas dataframe
     """
 
+    # Standardize features
+    # gape_frame['features'] = [x[0] for x in segment_dat_list]
+    # gape_frame['segment_raw'] = [x[1] for x in segment_dat_list]
+    # gape_frame['segment_bounds'] = [x[2] for x in segment_dat_list]
+    wanted_data = dict(
+        features = [x[0] for x in this_segment_dat_list],
+        segment_raw = [x[1] for x in this_segment_dat_list],
+        segment_bounds = [x[2] for x in this_segment_dat_list],
+        )
+    gape_frame = pd.DataFrame(wanted_data)
+    gape_frame = gape_frame.explode(['features','segment_raw','segment_bounds'])
+    return gape_frame
+
+def parse_gapes_Li(gapes_Li, gape_frame):
+    """
+    Add Jenn Li classifier predictions to gape_frame
+
+    Inputs:
+        gapes_Li : numpy array, shape (num_tastes, num_trials, num_timepoints)
+        gape_frame : pandas dataframe
+
+    Returns:
+        gape_frame : pandas dataframe
+    """
     inds = list(np.ndindex(gapes_Li.shape[:-1]))
 
-    gape_frame = pd.DataFrame(data = inds, 
-                              columns = ['taste', 'trial'])
-                              # columns = ['channel', 'taste', 'trial'])
-    # Standardize features
-    gape_frame['features'] = [x[0] for x in segment_dat_list]
-    gape_frame['segment_raw'] = [x[1] for x in segment_dat_list]
-    gape_frame['segment_bounds'] = [x[2] for x in segment_dat_list]
-    gape_frame = gape_frame.explode(['features','segment_raw','segment_bounds'])
+    # gape_frame = pd.DataFrame(data = inds, 
+    #                           columns = ['taste', 'trial'])
+    #                           # columns = ['channel', 'taste', 'trial'])
+    gape_frame_index = gape_frame.index.values
+    gape_frame['taste'] = [inds[x][0] for x in gape_frame_index]
+    gape_frame['trial'] = [inds[x][1] for x in gape_frame_index]
 
     # Add index for each segment
     gape_frame['segment_num'] = gape_frame.groupby(['taste', 'trial']).cumcount()
@@ -333,4 +373,45 @@ def gen_gape_frame(segment_dat_list, gapes_Li):
     # Convert to int
     gape_frame['classifier'] = gape_frame['classifier'].astype(int)
 
-    return gape_frame# , scaled_features
+    return gape_frame
+
+
+# def gen_gape_frame(segment_dat_list, gapes_Li):
+#     """
+#     Generate a dataframe with the following columns:
+#     channel, taste, trial, segment_num, features, segment_raw, segment_bounds
+# 
+#     Inputs:
+#     segment_dat_list : list of lists
+# 
+#     Returns:
+#     gape_frame : pandas dataframe
+#     """
+# 
+#     inds = list(np.ndindex(gapes_Li.shape[:-1]))
+# 
+#     gape_frame = pd.DataFrame(data = inds, 
+#                               columns = ['taste', 'trial'])
+#                               # columns = ['channel', 'taste', 'trial'])
+#     # Standardize features
+#     gape_frame['features'] = [x[0] for x in segment_dat_list]
+#     gape_frame['segment_raw'] = [x[1] for x in segment_dat_list]
+#     gape_frame['segment_bounds'] = [x[2] for x in segment_dat_list]
+#     gape_frame = gape_frame.explode(['features','segment_raw','segment_bounds'])
+# 
+#     # Add index for each segment
+#     gape_frame['segment_num'] = gape_frame.groupby(['taste', 'trial']).cumcount()
+#     gape_frame = gape_frame.reset_index(drop=True)
+# 
+#     # Add classifier boolean
+#     for row_ind, this_row in gape_frame.iterrows():
+#         this_ind = (this_row['taste'], this_row['trial'])
+#         bounds = this_row['segment_bounds']
+#         if gapes_Li[this_ind][bounds[0]:bounds[1]].any():
+#             gape_frame.loc[row_ind, 'classifier'] = 1
+#         else:
+#             gape_frame.loc[row_ind, 'classifier'] = 0
+#     # Convert to int
+#     gape_frame['classifier'] = gape_frame['classifier'].astype(int)
+# 
+#     return gape_frame# , scaled_features
