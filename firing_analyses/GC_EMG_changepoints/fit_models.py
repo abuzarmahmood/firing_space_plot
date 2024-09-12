@@ -8,6 +8,8 @@ from pytau.utils import plotting
 from pytau.utils import ephys_data
 from tqdm import tqdm
 from pytau.changepoint_io import DatabaseHandler
+from pytau.changepoint_analysis import PklHandler
+import os
 
 fit_database = DatabaseHandler()
 fit_database.drop_duplicates()
@@ -19,10 +21,24 @@ data_dir_file = '/media/bigdata/firing_space_plot/firing_analyses/GC_EMG_changep
 with open(data_dir_file, 'r') as f:
     data_dir_list = f.read().splitlines()
 
+base_dir = os.path.dirname(data_dir_file)
+artifact_dir = os.path.join(base_dir, 'artifacts')
+if not os.path.exists(artifact_dir):
+    os.makedirs(artifact_dir)
+
 error_list = []
 for this_dir in tqdm(data_dir_list):
-    # this_ephys_data = ephys_data.EphysData(this_dir)
-    if this_dir not in fit_database.fit_database['data.data_dir'].values:
+    this_ephys_data = ephys_data.EphysData(this_dir)
+    this_ephys_data.get_spikes()
+    n_tastes = len(this_ephys_data.spikes)
+    for i in range(n_tastes):
+        this_taste = this_ephys_data.spikes[i]
+        # If no spikes, skip
+        if len(this_taste) == 0:
+            print(f"Empty spikes in {this_dir}")
+            error_list.append(this_dir)
+            continue
+        # Check if already fit
         try:
 
             # Specify params for fit
@@ -41,10 +57,10 @@ for this_dir in tqdm(data_dir_list):
 
             FitHandler_kwargs = dict(
                 data_dir=this_dir,
-                taste_num='all',
+                taste_num=i,
                 region_name='all',  # Should match specification in info file
                 laser_type=None,
-                experiment_name='GC_EMG_changepoints',
+                experiment_name='GC_EMG_changepoints_single_taste',
                 )
 
             ## Initialize handler, and feed paramters
@@ -68,7 +84,6 @@ for this_dir in tqdm(data_dir_list):
 ##############################
 # Access fit results
 # Directly from handler
-inference_outs = handler.inference_outs
 # infernece_outs contains following attributes
 # model : Model structure
 # approx : Fitted model
@@ -80,77 +95,33 @@ inference_outs = handler.inference_outs
 
 # Get fits for a particular experiment
 dframe = fit_database.fit_database
-wanted_exp_name = 'pytau_test'
+wanted_exp_name = 'GC_EMG_changepoints_single_taste'
 wanted_frame = dframe.loc[dframe['exp.exp_name'] == wanted_exp_name] 
 # Pull out a single data_directory
-pkl_path = wanted_frame['exp.save_path'].iloc[0]
 
-## Information saved in model database 
-# preprocess.time_lims
-# preprocess.bin_width
-# preprocess.data_transform
-# preprocess.preprocessor_name
-# model.states
-# model.fit
-# model.samples
-# model.model_kwargs
-# model.model_template_name
-# model.inference_func_name
-# data.data_dir
-# data.basename
-# data.animal_name
-# data.session_date
-# data.taste_num
-# data.laser_type
-# data.region_name
-# exp.exp_name
-# exp.model_id
-# exp.save_path
-# exp.fit_date
-# module.pymc3_version
-# module.theano_version
+scaled_mode_tau_list = []
+basename_list = []
+taste_num_list = []
+for i, this_row in tqdm(wanted_frame.iterrows()):
+    pkl_path = this_row['exp.save_path']
+    basename = this_row['data.basename']
+    basename_list.append(basename)
+    taste_num = this_row['data.taste_num']
+    taste_num_list.append(taste_num)
 
-# From saved pkl file
-from pytau.changepoint_analysis import PklHandler
-this_handler = PklHandler(pkl_path)
-# Can access following attributes
-# Tau:
-#   Raw Int tau : All tau samples in terms of indices of array given ==> this_handler.tau.raw_int_tau
-#   Raw mode tau : Mode of samples in terms of indices of array given ==> this_handler.tau.raw_mode_tau
-#   Scaled Tau : All tau samples scaled to stimulus delivery ==> this_handler.tau.scaled_tau
-#   Int Scaled Tau : Integer values of "Scaled Tau" ==> this_handler.tau.scaled_int_tau
-#   Mode Scale Tau : Mode of Int Scaled Tau ==> this_handler.tau.scaled_mode_tau
-# Firing:
-#   Raw spikes : Pulled using EphysData ==> this_handler.firing.raw_spikes 
-#   Mean firing rate per state : this_handler.firing.state_firing
-#   Snippets around each transition : this_handler.firing.transition_snips
-#   Significance of changes in state firing : this_handler.firing.anova_p_val_array
-#   Significance of changes in firing across transitions : this_handler.firing.pairwise_p_val_array
-# Metadata
-this_handler.pretty_metadata
+    # From saved pkl file
+    this_handler = PklHandler(pkl_path)
+    this_handler.pretty_metadata
 
-# Plotting
-fit_model = this_handler.data['model_data']['approx']
-spike_train = this_handler.firing.raw_spikes
-scaled_mode_tau = this_handler.tau.scaled_mode_tau
+    scaled_mode_tau = this_handler.tau.scaled_mode_tau
+    scaled_mode_tau_list.append(scaled_mode_tau)
 
-# Plot ELBO over iterations, should be flat by the end
-fig, ax = plotting.plot_elbo_history(fit_model)
-plt.show()
-
-# Overlay raster plot with states
-fig, ax = plotting.plot_changepoint_raster(
-    spike_train, scaled_mode_tau, [1500, 4000])
-plt.show()
-
-# Overview of changepoint positions
-fig, ax = plotting.plot_changepoint_overview(scaled_mode_tau, [1500, 4000])
-plt.show()
-
-# Aligned spiking
-fig, ax = plotting.plot_aligned_state_firing(spike_train, scaled_mode_tau, 300)
-plt.show()
-
-# Plot mean firing rates per state
-fig, ax = plotting.plot_state_firing_rates(spike_train, scaled_mode_tau)
-plt.show()
+# Save as pandas dataframe
+import pandas as pd
+df_dict = dict(
+    basename=basename_list,
+    taste_num=taste_num_list,
+    scaled_mode_tau=scaled_mode_tau_list,
+    )
+df = pd.DataFrame(df_dict)
+df.to_pickle(os.path.join(artifact_dir, 'scaled_mode_tau.pkl'))
