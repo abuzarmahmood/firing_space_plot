@@ -17,6 +17,7 @@ import seaborn as sns
 from sklearn.preprocessing import StandardScaler
 from umap import UMAP
 from sklearn.decomposition import PCA
+from tqdm import tqdm
 
 def return_pred_array(taste_frame):
     """
@@ -132,22 +133,22 @@ plt.close(fig)
 
 ###############
 
-g = sns.clustermap(feature_array, row_colors=row_colors, cmap='viridis',
-                   row_cluster=False, col_cluster=False,
-                   vmin = -2, vmax = 2)
-# Set feature_names as x-axis labels
-g.ax_heatmap.set_xticks(np.arange(len(feature_names))+0.5)
-g.ax_heatmap.set_xticklabels(feature_names, rotation=90)
-legend_elements = [mpl.lines.Line2D([0], [0], color=cmap(i), label=event_type,
-                                    linewidth = 5) \
-        for i, event_type in bsa_event_map.items()] 
-g.ax_heatmap.legend(handles=legend_elements, title='Event Type',
-                    bbox_to_anchor=(1.04,1), loc='upper left')
-g.ax_heatmap.set_xlabel('Feature #')
-plt.suptitle('XGB Predicted Class Heatmap')
-plt.savefig(os.path.join(xgb_pred_plot_dir, 'xgb_pred_heatmap.png'),
-            bbox_inches='tight', dpi = 300)
-plt.close()
+# g = sns.clustermap(feature_array, row_colors=row_colors, cmap='viridis',
+#                    row_cluster=False, col_cluster=False,
+#                    vmin = -2, vmax = 2)
+# # Set feature_names as x-axis labels
+# g.ax_heatmap.set_xticks(np.arange(len(feature_names))+0.5)
+# g.ax_heatmap.set_xticklabels(feature_names, rotation=90)
+# legend_elements = [mpl.lines.Line2D([0], [0], color=cmap(i), label=event_type,
+#                                     linewidth = 5) \
+#         for i, event_type in bsa_event_map.items()] 
+# g.ax_heatmap.legend(handles=legend_elements, title='Event Type',
+#                     bbox_to_anchor=(1.04,1), loc='upper left')
+# g.ax_heatmap.set_xlabel('Feature #')
+# plt.suptitle('XGB Predicted Class Heatmap')
+# plt.savefig(os.path.join(xgb_pred_plot_dir, 'xgb_pred_heatmap.png'),
+#             bbox_inches='tight', dpi = 300)
+# plt.close()
 
 
 

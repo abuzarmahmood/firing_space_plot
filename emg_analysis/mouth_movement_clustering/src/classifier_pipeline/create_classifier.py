@@ -14,6 +14,7 @@ import sys
 from ast import literal_eval
 from sklearn.metrics import accuracy_score
 from scipy.stats import ttest_rel
+from sklearn.model_selection import train_test_split
 
 # artifact_dir = os.path.join(base_dir, 'artifacts')
 artifact_dir = '/media/bigdata/firing_space_plot/emg_analysis/mouth_movement_clustering/src/classifier_pipeline/artifacts'
@@ -23,8 +24,234 @@ artifact_dir = '/media/bigdata/firing_space_plot/emg_analysis/mouth_movement_clu
 ############################################################
 scored_df = pd.read_pickle(os.path.join(artifact_dir, 'fin_training_dataset.pkl'))
 # all_data_frame = pd.read_pickle(os.path.join(artifact_dir, 'all_data_frame.pkl'))
-# merge_gape_pal = pd.read_pickle(os.path.join(artifact_dir, 'merge_gape_pal.pkl'))
+# scored_df = pd.read_pickle(os.path.join(artifact_dir, 'merge_gape_pal.pkl'))
 
+############################################################
+# Perform hyperparameter optimization 
+############################################################
+import pandas as pd
+import numpy as np
+import os
+import seaborn as sns
+import matplotlib.pyplot as plt
+from tqdm import tqdm, trange
+from time import time
+import xgboost as xgb
+import sys
+from sklearn.metrics import accuracy_score
+from sklearn.model_selection import GroupKFold
+from scipy.stats import spearmanr
+import json
+
+from skopt import Optimizer, dump, load
+from skopt.plots import plot_convergence, plot_objective
+from skopt.space import Real, Integer
+from joblib import Parallel, delayed
+
+xgb_optim_artifacts_dir = os.path.join(artifact_dir, 'xgb_optim_artifacts')
+if not os.path.exists(xgb_optim_artifacts_dir):
+    os.makedirs(xgb_optim_artifacts_dir)
+
+X_array = np.stack(scored_df.features.values) 
+y_array = scored_df.event_codes.values 
+animals_array = scored_df.animal_num.values 
+unique_animals = np.unique(animals_array)
+
+############################################################
+search_spaces = {
+        'learning_rate': (0.01, 1.0, 'log-uniform'),
+        'min_child_weight': (0, 10),
+        'max_depth': (0, 50),
+        'max_delta_step': (0, 20),
+        'subsample': (0.01, 1.0, 'uniform'),
+        'colsample_bytree': (0.01, 1.0, 'uniform'),
+        'colsample_bylevel': (0.01, 1.0, 'uniform'),
+        'reg_lambda': (1e-9, 1000, 'log-uniform'),
+        'reg_alpha': (1e-9, 1.0, 'log-uniform'),
+        'gamma': (1e-9, 0.5, 'log-uniform'),
+        'min_child_weight': (0, 5),
+        'n_estimators': (50, 100),
+        'scale_pos_weight': (1e-6, 500, 'log-uniform')
+    }
+
+dimensions = [
+        Real(0.001, 1.0, name='learning_rate', prior='log-uniform'),
+        Integer(1, 10, name='min_child_weight'),
+        Integer(1, 100, name='max_depth'),
+        Integer(0, 20, name='max_delta_step'), 
+        Real(0.01, 1.0, name='subsample', prior='uniform'),
+        Real(0.01, 1.0, name='colsample_bytree', prior='uniform'),
+        Real(0.01, 1.0, name='colsample_bylevel', prior='uniform'),
+        Real(1e-9, 1000, name='reg_lambda', prior='log-uniform'),
+        Real(1e-9, 1.0, name='reg_alpha', prior='log-uniform'),
+        Real(1e-9, 0.5, name='gamma', prior='log-uniform'),
+        Integer(50, 100, name='n_estimators'),
+        # Real(1e-6, 500, name='scale_pos_weight', prior='log-uniform')
+        ]
+
+# Convert search dimensions to dataframe
+dim_names = [dim.name for dim in dimensions]
+dim_lows = [dim.low for dim in dimensions]
+dim_ups = [dim.high for dim in dimensions]
+dim_priors = [dim.prior for dim in dimensions]
+
+dim_df = pd.DataFrame(
+        columns=['name', 'low', 'high', 'prior'],
+        data = list(zip(dim_names, dim_lows, dim_ups, dim_priors))
+        )
+# make low and high floats
+dim_df['low'] = dim_df['low'].astype(float)
+dim_df['high'] = dim_df['high'].astype(float)
+
+# Print to artifact_dir
+dim_df.to_csv(os.path.join(xgb_optim_artifacts_dir, 'xgb_optim_search_dimensions.csv'))
+
+
+def run_xgb_cv_loao(params_kwargs, X_array, y_array, animals_array):
+    """
+    Run cross-validation with leave-one-animal-out
+
+    Parameters
+    ----------
+    params_kwargs : dict
+    X_array : np.array
+    y_array : np.array
+    animals_array : np.array
+
+    Returns
+    -------
+    mean_acc : float
+    """
+    
+    cv_accs = []
+    for i, this_animal in enumerate(unique_animals):
+
+        test_idx = animals_array == this_animal
+        train_idx = ~test_idx
+
+        X_train = X_array[train_idx]
+        y_train = y_array[train_idx]
+        X_test = X_array[test_idx]
+        y_test = y_array[test_idx]
+
+        clf = xgb.XGBClassifier(
+                **params_kwargs, 
+                use_label_encoder=False,
+                n_jobs=1,
+                eval_metric='mlogloss'
+                )
+        clf.fit(X_train, y_train)
+        y_pred = clf.predict(X_test)
+        acc = accuracy_score(y_test, y_pred)
+        cv_accs.append(acc)
+
+    mean_acc = np.mean(cv_accs)
+    return mean_acc
+
+def run_xgb_cv(
+        params, 
+        X_array, 
+        y_array, 
+        test_frac=0.2,
+        ):
+    """
+    Run cross-validation with random splits
+
+    Parameters
+    ----------
+    params : dict
+    X_array : np.array
+    y_array : np.array
+    test_frac : float
+
+    Returns
+    -------
+    mean_acc : float
+    """
+
+    train_X, test_X, train_y, test_y = train_test_split(
+            X_array, y_array, test_size=test_frac, random_state=42
+            )
+
+    clf = xgb.XGBClassifier(
+            **params, 
+            use_label_encoder=False,
+            n_jobs=1,
+            eval_metric='mlogloss'
+            )
+    clf.fit(train_X, train_y)
+    y_pred = clf.predict(test_X)
+    acc = accuracy_score(test_y, y_pred)
+    return acc
+
+
+def run_xgb_cv_wrapper(params):
+    # return run_xgb_cv(params, X_array, y_array, animals_array)
+    return run_xgb_cv(params, X_array, y_array) 
+
+###############
+# Run optimizer
+n_optim_repeats = 20
+
+results_list = []
+optimizer_list = []
+
+for repeat_ind in range(len(results_list), n_optim_repeats):
+
+    optimizer = Optimizer(
+            dimensions=dimensions,
+            base_estimator='GBRT',
+            n_initial_points=10,
+            acq_func='EI',
+            acq_optimizer='auto',
+            )
+
+    n_iter = 100
+    n_parallel = 4
+
+    for i in trange(n_iter):
+        params = optimizer.ask(n_points=n_parallel)
+        params_kwargs = [{key: val for key, val in zip([dim.name for dim in dimensions], this_params)} \
+                for this_params in params]
+
+        # mean_acc = run_xgb_cv_wrapper(params_kwargs)
+        mean_acc = Parallel(n_jobs=n_parallel)\
+                (delayed(run_xgb_cv_wrapper)(this_params) for this_params in params_kwargs)
+        mean_acc = [-this_acc for this_acc in mean_acc]
+
+        result = optimizer.tell(params, mean_acc)
+
+    results_list.append(result)
+    optimizer_list.append(optimizer)
+
+    # Save optimizer results
+    dump(
+            optimizer, 
+            os.path.join(xgb_optim_artifacts_dir, f'xgb_optimization_results_{repeat_ind}.pkl')
+            )
+
+# Save best hyperparameters
+best_result_ind = np.argmax([np.max(-result.func_vals) for result in results_list])
+best_result = results_list[best_result_ind]
+best_params = best_result.x
+param_names = [dim.name for dim in dimensions]
+best_params_kwargs = {key: val for key, val in zip(param_names, best_params)}
+params_df = pd.DataFrame(
+        columns=['name', 'value'],
+        data=list(best_params_kwargs.items())
+        )
+
+def return_type(val):
+    if type(val) == float:
+        return 'float'
+    elif type(val) in [int, np.int64]:
+        return 'int'
+    else:
+        return 'other'
+
+params_df['dtype'] = [return_type(val) for val in best_params]
+params_df.to_csv(os.path.join(xgb_optim_artifacts_dir, 'best_xgb_hyperparams.csv'),
+                 index=False)
 
 ############################################################
 # Train model
@@ -56,6 +283,8 @@ sample_weights = inv_class_weights.loc[y_train].values
 # Train model
 clf = xgb.XGBClassifier(**hparam_dict)
 clf.fit(X_train, y_train, sample_weight=sample_weights)
+y_pred = clf.predict(X_train)
+acc = accuracy_score(y_train, y_pred)
 
 # Save model
 save_dir = os.path.join(artifact_dir, 'xgb_model')
@@ -70,35 +299,9 @@ clf.save_model(os.path.join(save_dir, 'xgb_model.json'))
 # # Leave one-animal-out cross validation
 # unique_animals = scored_df.animal_num.unique()
 # 
-# for i, this_animal in enumerate(tqdm(unique_animals)):
-#     train_df = scored_df[scored_df.animal_num != this_animal]
-#     test_df = merge_gape_pal[merge_gape_pal.animal_num == this_animal]
-# 
-#     # Train model
-#     X_train = np.stack(train_df.features.values)
-#     y_train = train_df.event_codes.values
-# 
-#     # Calculate sample weights and normalize weight for each class
-#     class_weights = train_df.event_codes.value_counts(normalize=True)
-#     inv_class_weights = 1 / class_weights
-#     sample_weights = inv_class_weights.loc[y_train].values 
-# 
-#     X_pred = np.stack(test_df.features.values)
-# 
-#     clf = xgb.XGBClassifier()
-#     clf.fit(X_train, y_train, sample_weight=sample_weights)
-#     # clf.fit(X_train, y_train)
-#     y_pred = clf.predict(X_pred)
-# 
-#     merge_gape_pal.loc[merge_gape_pal.animal_num == this_animal, 'xgb_pred'] = y_pred
-# 
-#     # For sanity checking, check accuracy on y_train
-#     y_train_pred = clf.predict(X_train)
-#     train_acc = accuracy_score(y_train, y_train_pred) 
-#     print(f'Train Accuracy: {train_acc:.2f}')
-# 
 # # Convert xgb_pred to int
-# merge_gape_pal['xgb_pred'] = merge_gape_pal['xgb_pred'].astype('int')
+# scored_df['xgb_pred'] = y_pred
+# scored_df['xgb_pred'] = scored_df['xgb_pred'].astype('int')
 # 
 # # Add event name to xgb_pred
 # bsa_event_map = {
@@ -107,72 +310,4 @@ clf.save_model(os.path.join(save_dir, 'xgb_model.json'))
 #         2 : 'MTMs',
 #         }
 # 
-# merge_gape_pal['xgb_pred_event'] = merge_gape_pal['xgb_pred'].map(bsa_event_map)
-# 
-# ###############
-# # Convert to array so downstream processing can be same as BSA
-# JL_gape_shape = (4,30,7000)
-# xgb_pred_array_list = []
-# for session_num in tqdm(merge_gape_pal.session_ind.unique()):
-#     this_peak_frame = merge_gape_pal.loc[merge_gape_pal.session_ind == session_num] 
-#     event_array = np.zeros(JL_gape_shape)
-#     inds = this_peak_frame[['taste','trial','segment_bounds']]
-#     pred_vals = this_peak_frame['xgb_pred'].values
-#     for ind, pred_val in enumerate(pred_vals):
-#         taste, trial, segment_bounds = inds.iloc[ind]
-#         updated_bounds = segment_bounds.copy()
-#         updated_bounds += 2000
-#         this_pred = pred_vals[ind]
-#         event_array[taste,trial,updated_bounds[0]:updated_bounds[1]] = this_pred
-# 
-#     xgb_pred_array_list.append(event_array)
-# 
-# xgb_pred_array_list = np.array(xgb_pred_array_list)
-# # Convert to int
-# xgb_pred_array_list = xgb_pred_array_list.astype('int')
-# 
-# # Plot
-# # xgb_pred_plot_dir = os.path.join(plot_dir, 'pipeline_test_plots', 'xgb')
-# xgb_pred_plot_dir = os.path.join(artifact_dir, 'pipeline_test_plots')
-# if not os.path.exists(xgb_pred_plot_dir):
-#     os.makedirs(xgb_pred_plot_dir)
-# 
-# event_color_map = {
-#         0 : '#D1D1D1',
-#         1 : '#EF8636',
-#         2 : '#3B75AF',
-#         }
-# 
-# taste_map_list = all_data_frame.taste_map.tolist()
-# taste_list = [list(x.keys()) for x in taste_map_list]
-# basenames = all_data_frame.basename.tolist()
-# x_vec = np.arange(-2000, 5000)
-# 
-# # Create segmented colormap
-# from matplotlib.colors import ListedColormap
-# cmap = ListedColormap(list(event_color_map.values()), name = 'NBT_cmap')
-# 
-# for i, this_xgb_pred  in enumerate(xgb_pred_array_list):
-#     fig, ax = plt.subplots(4,1,sharex=True,sharey=True,
-#                            figsize=(5,10))
-#     this_tastes = taste_list[i]
-#     for taste in range(4):
-#         im = ax[taste].pcolormesh(
-#                 x_vec, np.arange(30), 
-#                 this_xgb_pred[taste],
-#                   cmap=cmap,vmin=0,vmax=2,)
-#         ax[taste].set_ylabel(f'{this_tastes[taste]}' + '\nTrial #')
-#         ax[0].set_title('XGB')
-#         ax[0].set_title('BSA')
-#     ax[-1].set_xlabel('Time (ms)')
-#     cbar_ax = fig.add_axes([0.98, 0.15, 0.02, 0.7])
-#     cbar = fig.colorbar(im, cax=cbar_ax)
-#     cbar.set_ticks([0.5,1,1.5])
-#     cbar.set_ticklabels(['nothing','gape','MTMs'])
-#     basename = basenames[i]
-#     plt.tight_layout()
-#     plt.subplots_adjust(top=0.9)
-#     fig.suptitle(basename)
-#     fig.savefig(os.path.join(xgb_pred_plot_dir, basename + '_xgb_bsa_pred.png'),
-#                 bbox_inches='tight', dpi = 300)
-#     plt.close(fig)
+# scored_df['xgb_pred_event'] = scored_df['xgb_pred'].map(bsa_event_map)
