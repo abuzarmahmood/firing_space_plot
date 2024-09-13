@@ -73,6 +73,9 @@ def extract_features(
         mean_prestim = None
         ):
     """
+    Function to extract features from a list of segments
+    Applied to a single trial
+
     # Features to extract
     # 1. Duration of movement
     # 2. Amplitude
@@ -102,7 +105,6 @@ def extract_features(
                        for i in range(len(peak_times)-1)][1:]
 
     norm_interp_segment_dat = normalize_segments(segment_dat)
-    # pca_segment_dat = PCA(n_components=3).fit_transform(interp_segment_dat)
 
     welch_out = [welch(x, fs=1000, axis=-1) for x in segment_dat]
     max_freq = [x[0][np.argmax(x[1], axis=-1)] for x in welch_out]
@@ -127,10 +129,7 @@ def extract_features(
         feature_list.append(amplitude_norm)
         feature_names.append('amplitude_norm')
 
-    feature_list = [np.atleast_2d(x) for x in feature_list]
-    feature_list = [x if len(x) == len(norm_interp_segment_dat) else x.T
-                    for x in feature_list]
-    feature_array = np.concatenate(feature_list, axis=-1)
+    feature_array = np.stack(feature_list, axis=-1) 
 
     return (
             feature_array, 
@@ -325,7 +324,7 @@ def JL_process(
     return gape_peak_ind, time_list
 
 # Convert segment_dat and gapes_Li to pandas dataframe for easuer handling
-def parse_segment_dat_list(this_segment_dat_list):
+def parse_segment_dat_list(this_segment_dat_list, inds):
     """
     Generate a dataframe with the following columns from segment_dat_list:
     channel, taste, trial, segment_num, features, segment_raw, segment_bounds
@@ -333,6 +332,8 @@ def parse_segment_dat_list(this_segment_dat_list):
     Inputs:
     segment_dat_list : list of lists
         - Each entry in list is a single trial
+    inds: list of tuples
+        - Each tuple is (taste, trial)
 
     Returns:
     gape_frame : pandas dataframe
@@ -349,6 +350,8 @@ def parse_segment_dat_list(this_segment_dat_list):
         segment_bounds = [x[3] for x in this_segment_dat_list],
         )
     gape_frame = pd.DataFrame(wanted_data)
+    gape_frame['taste'] = [x[0] for x in inds]
+    gape_frame['trial'] = [x[1] for x in inds]
     gape_frame = gape_frame.explode(list(wanted_data.keys()))
     return gape_frame
 
