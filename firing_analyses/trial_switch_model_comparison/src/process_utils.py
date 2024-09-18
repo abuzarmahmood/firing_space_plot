@@ -15,6 +15,7 @@ Switch changepoint:
     - Fit switch changepoint model over fixed number of states
         - Variable number of states in other models is to account
             for trial variability
+    - Fit with both MCMC and VI
     - Calculate error in state transitions
         - Each trial will have different number of transitions
 
