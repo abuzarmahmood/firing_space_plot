@@ -8,9 +8,11 @@ Non-switch changepoint:
 For each model:
     - Record time taken to fit model (and across all models if for multiple states)
 """
+import os
+os.environ["MKL_NUM_THREADS"]='1'
+os.environ["OMP_NUM_THREADS"]='1'
 
 from tqdm import tqdm, trange
-import os
 import sys
 import pandas as pd
 import numpy as np
@@ -19,9 +21,6 @@ from pickle import dump, load
 import pymc as pm
 import pytensor.tensor as tt
 
-import os
-os.environ["MKL_NUM_THREADS"]='1'
-os.environ["OMP_NUM_THREADS"]='1'
 
 base_dir = '/media/bigdata/projects/pytau'
 sys.path.append(base_dir)
@@ -123,38 +122,40 @@ for i, this_row in tqdm(df.iterrows()):
     time_bins = spike_array.shape[-1]
 
     for fit_states in range(min_fit_states, max_fit_states+1):
-
-        start_time = time()
-        model = single_taste_poisson(
-                spike_array,
-                fit_states,
-                )
-        with model:
-            inference = pm.ADVI('full-rank')
-            approx = pm.fit(n=n_fit, method=inference)
-            trace = approx.sample(draws=n_samples)
-        end_time = time()
-        time_taken = end_time - start_time
-
-        elbo = -inference.hist[-1]
-        # traces, samples, trials, transitions
-        tau_samples = trace.posterior['tau'].values
-        bins = np.arange(time_bins) 
-        inds = list(np.ndindex(tau_samples.shape[2:]))
-        tau_hist = np.zeros((tau_samples.shape[2], tau_samples.shape[3], time_bins-1))
-        for i, j in inds:
-            tau_hist[i,j], _ = np.histogram(tau_samples[:,:,i,j], bins=bins)
-
-        out_dict = dict(
-                data_index = i,
-                fit_states = fit_states,
-                time_taken = time_taken,
-                elbo = elbo,
-                tau_hist = tau_hist,
-                )
-        # out_df = pd.DataFrame(out_dict, index=[0])
-        # out_df.to_pickle(f'{out_path}/data_{i}_fit_{fit_states}_repeat_{r}.pkl')
         file_name = f'{out_path}/data_{i}_fit_{fit_states}.pkl'
-        with open(file_name, 'wb') as f:
-            dump(out_dict, f)
+
+        if not os.path.exists(file_name):
+
+            start_time = time()
+            model = single_taste_poisson(
+                    spike_array,
+                    fit_states,
+                    )
+            with model:
+                inference = pm.ADVI('full-rank')
+                approx = pm.fit(n=n_fit, method=inference)
+                trace = approx.sample(draws=n_samples)
+            end_time = time()
+            time_taken = end_time - start_time
+
+            elbo = -inference.hist[-1]
+            # traces, samples, trials, transitions
+            tau_samples = trace.posterior['tau'].values
+            bins = np.arange(time_bins) 
+            inds = list(np.ndindex(tau_samples.shape[2:]))
+            tau_hist = np.zeros((tau_samples.shape[2], tau_samples.shape[3], time_bins-1))
+            for i, j in inds:
+                tau_hist[i,j], _ = np.histogram(tau_samples[:,:,i,j], bins=bins)
+
+            out_dict = dict(
+                    data_index = i,
+                    fit_states = fit_states,
+                    time_taken = time_taken,
+                    elbo = elbo,
+                    tau_hist = tau_hist,
+                    )
+            # out_df = pd.DataFrame(out_dict, index=[0])
+            # out_df.to_pickle(f'{out_path}/data_{i}_fit_{fit_states}_repeat_{r}.pkl')
+            with open(file_name, 'wb') as f:
+                dump(out_dict, f)
 

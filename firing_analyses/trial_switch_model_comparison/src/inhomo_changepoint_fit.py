@@ -14,6 +14,7 @@ For changepoint models:
     - Save variables as histograms with 1 percentile bins
 
 """
+
 from tqdm import tqdm, trange
 import os
 import sys
@@ -24,7 +25,6 @@ from pickle import dump, load
 import pymc as pm
 import pytensor.tensor as tt
 
-import os
 # os.environ["MKL_NUM_THREADS"]='1'
 # os.environ["OMP_NUM_THREADS"]='1'
 
@@ -196,23 +196,30 @@ for i, this_row in tqdm(df.iterrows()):
     time_taken = end_time - start_time
 
     # traces, samples, trials, transitions
-    tau_samples = trace.posterior['tau'].values
-    bins = np.arange(time_bins) 
-    inds = list(np.ndindex(tau_samples.shape[2:]))
-    tau_hist = np.zeros((tau_samples.shape[2], tau_samples.shape[3], time_bins-1))
-    for i, j in inds:
-        tau_hist[i,j], _ = np.histogram(tau_samples[:,:,i,j], bins=bins)
+    tau_samples = dpp_trace.posterior['tau'].values
+    # traces, samples, switch_comps
+    tau_trial_samples = dpp_trace.posterior['tau_trial'].values
+
+    # bins = np.arange(time_bins) 
+    # inds = list(np.ndindex(tau_samples.shape[2:]))
+    # tau_hist = np.zeros((tau_samples.shape[2], tau_samples.shape[3], time_bins-1))
+    # for i, j in inds:
+    #     tau_hist[i,j], _ = np.histogram(tau_samples[:,:,i,j], bins=bins)
+    
+    # Convert tau_samples to int8
+    tau_samples = tau_samples.astype(np.int8)
+    tau_trial_samples = tau_trial_samples.astype(np.int8)
 
     out_dict = dict(
             data_index = i,
-            fit_states = fit_states,
+            fit_states = n_states,
             time_taken = time_taken,
-            elbo = elbo,
-            tau_hist = tau_hist,
+            tau_samples = tau_samples,
+            tau_trial_samples = tau_trial_samples,
             )
     # out_df = pd.DataFrame(out_dict, index=[0])
     # out_df.to_pickle(f'{out_path}/data_{i}_fit_{fit_states}_repeat_{r}.pkl')
-    file_name = f'{out_path}/data_{i}_fit_{fit_states}.pkl'
+    file_name = f'{out_path}/data_{i}_fit_{n_states}.pkl'
     with open(file_name, 'wb') as f:
         dump(out_dict, f)
 
