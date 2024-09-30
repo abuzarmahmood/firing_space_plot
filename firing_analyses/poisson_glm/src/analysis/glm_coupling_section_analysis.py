@@ -967,12 +967,19 @@ for ind, this_metric in enumerate(wanted_metrics):
     plot_frame = wanted_frame.loc[wanted_frame['metric'] == this_metric]
     sns.boxenplot(data = plot_frame,
                   x = 'group_label', y = 'value',
+                  palette = ['red','orange'],
+                  hue = 'group_label',
                   showfliers = False,
                   ax = ax[ind])
     sns.stripplot(data = plot_frame,
                   x = 'group_label', y = 'value',
                   dodge = True,
-                  ax = ax[ind])
+                  ax = ax[ind],
+                  facecolors = 'none',
+                  edgecolor = 'black',
+                  alpha = 0.5,
+                  linewidth = 2,
+                  )
     # Perform test between groups for each metric
     group_vals = [plot_frame.loc[plot_frame['group_label'] == x]['value'] for x in wanted_groups]
     t_stat, p_val = ttest_ind(*group_vals)
@@ -983,6 +990,9 @@ for ind, this_metric in enumerate(wanted_metrics):
         ax[ind].set_ylim([0, 40])
     ax[ind].set_xticklabels(['Inter-Receive','Inter-Send-Receive'],
                             rotation = 45, ha = 'right')
+    # Add a bit of whitespace at the top
+    ax[ind].set_ylim([0, ax[ind].get_ylim()[1]*1.1])
+    ax[ind].set_ylabel(this_metric)
 plt.suptitle('GC Inter-Receive vs Inter-Send-Receive\n' +\
         f'{wanted_metrics}')
 plt.tight_layout()
@@ -1018,7 +1028,7 @@ norm_tastiness_group = [x.dropna() for x in norm_tastiness_group]
 # Test for difference between groups
 t_stat, p_val = ttest_ind(*norm_tastiness_group)
 
-fig, ax = plt.subplots(1,2, figsize = (7,5))
+fig, ax = plt.subplots(1,2, figsize = (6,6))
 # sns.scatterplot(data = merged_frame,
 #                 x = 'mean_discrim_stat', y = 'mean_pal_rho',
 #                 hue = 'group_label', ax = ax[0])
@@ -1027,17 +1037,29 @@ ax[0].set_ylabel('Normalized Mean Palatability Rho')
 sns.scatterplot(data = merged_frame,
                 x = 'norm_mean_discrim_stat', y = 'norm_mean_pal_rho',
                 hue = 'group_label', ax = ax[0],
+                palette = ['red','orange'],
                 s = 50,
-                alpha = 0.7)
+                alpha = 0.5,
+                edgecolor = 'black',
+                linewidth = 2)
 sns.boxplot(data = merged_frame,
             x = 'group_label', y = 'norm_tastiness',
             ax = ax[1],
-            hue = 'group_label')
+            hue = 'group_label',
+            palette = ['red','orange'],
+            linewidth = 2,)
 ax[1].set_title(f'T-Test p-value: {p_val:.3f}')
+# Add a bit of space at the top of the plot
+ax[1].set_ylim([0, ax[1].get_ylim()[1]*1.1])
 # Put legend on bottom
-ax[0].legend(loc = 'lower center', bbox_to_anchor = (0.5, -0.3))
+L = ax[0].legend(loc = 'lower center', bbox_to_anchor = (0.5, 1))
+wanted_labels = ['Receive','Send+Receive']
+for i, this_text in enumerate(L.get_texts()):
+    this_text.set_text(wanted_labels[i])
 ax[1].set_xticklabels(['Inter-Receive','Inter-Send-Receive'],
                       rotation = 45, ha = 'right')
+plt.tight_layout()
+plt.subplots_adjust(top = 0.8)
 plt.suptitle('GC Inter-Receive vs Inter-Send-Receive\nWithout Outlier')
 plt.savefig(os.path.join(
     coupling_analysis_plot_dir, f'encoding_metrics_by_group_{wanted_region}_scatter.png'),
@@ -1208,7 +1230,7 @@ norm_mean_waveform_array = np.array(norm_mean_waveforms_list)
 for label in np.unique(unit_labels):
     wanted_inds = np.where(unit_labels == label)[0]
     this_mean_waveform = np.mean(norm_mean_waveform_array[wanted_inds], axis = 0)
-    this_std_waveform = np.std(mean_waveform_array[wanted_inds], axis = 0)
+    this_std_waveform = np.std(norm_mean_waveform_array[wanted_inds], axis = 0)
     group_mean_waveforms.append(this_mean_waveform)
     group_std_waveforms.append(this_std_waveform)
 
@@ -1227,17 +1249,23 @@ ax.set_ylabel('Amplitude')
 fig.suptitle('Group Waveforms\nMean +/- SD')
 plt.tight_layout()
 plt.savefig(os.path.join(
-    waveform_plot_dir, 'group_waveforms.png'),
+    waveform_plot_dir, 'group_waveforms.svg'),
             bbox_inches = 'tight')
 plt.close()
 
 # Make scatter plot of trough_peak_times vs waveform_counts
+trough_to_peak_ms = np.array(trough_to_peak_ms)
+waveform_counts_list = np.array(waveform_counts_list)
 fig, ax = plt.subplots()
-ax.scatter(trough_to_peak_ms, waveform_counts_list)
+color_thresh = 0.4
+above_inds = np.where(np.array(trough_to_peak_ms) > color_thresh)[0]
+ax.scatter(trough_to_peak_ms[above_inds], waveform_counts_list[above_inds])
+below_inds = np.where(np.array(trough_to_peak_ms) < color_thresh)[0]
+ax.scatter(trough_to_peak_ms[below_inds], waveform_counts_list[below_inds])
 ax.set_xlabel('Trough-to-Peak Time (ms)')
 ax.set_ylabel('Waveform Counts')
 plt.savefig(os.path.join(
-    waveform_plot_dir, 'waveform_counts_vs_trough_peak_time.png'),
+    waveform_plot_dir, 'waveform_counts_vs_trough_peak_time.svg'),
             bbox_inches = 'tight')
 plt.close()
 

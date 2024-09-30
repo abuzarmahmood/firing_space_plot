@@ -489,8 +489,9 @@ class shared_autoencoderRNN(nn.Module):
             self, 
             input_size, 
             output_size, 
-            rnn, 
             hidden_size,
+            rnn = None, 
+            rnn_layers = 2,
             dropout = 0.2,
             ):
         """
@@ -512,7 +513,17 @@ class shared_autoencoderRNN(nn.Module):
                 nn.Linear(sum((hidden_size, output_size))//2, output_size),
                 )
         self.en_dropout = nn.Dropout(p = dropout)
-        self.rnn = rnn
+        if rnn is not None:
+            self.rnn = rnn
+        else:
+            self.rnn = nn.RNN(
+                    hidden_size, 
+                    hidden_size, 
+                    rnn_layers, 
+                    batch_first=False, 
+                    bidirectional=False,
+                    dropout = dropout,
+                    )
         for param in self.rnn.parameters():
             param.requires_grad = False
 

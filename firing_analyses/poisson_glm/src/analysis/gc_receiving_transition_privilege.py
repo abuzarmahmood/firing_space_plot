@@ -59,6 +59,7 @@ if env_name == 'pytau_env':
     assert wanted_frame['data.region_name'].unique() == 'gc'
 else:
     import pymc as pm
+    import arviz
 
 ##############################
 file_list_path = '/media/bigdata/projects/pytau/pytau/data/fin_inter_list_3_14_22.txt'
@@ -436,12 +437,25 @@ if len(os.listdir(trace_save_dir)) == 0:
             pm.set_data({'data' : this_group['mean_cp'].values})
             traces.append(pm.sample())
 
+    group_id_strs = [f'{x[0]}_{x[1]}' for x in group_ids]
+    save_paths = [os.path.join(trace_save_dir, f't_dist_trace_{x}.nc') for x in group_id_strs]
+    trace_df = pd.DataFrame(
+            data = {'group_id' : group_ids,
+                    'group_id_strs' : group_id_strs,
+                    'save_path' : save_paths})
+    trace_df.to_csv(os.path.join(trace_save_dir, 'trace_df.csv'))
+
     for i, this_trace in enumerate(traces):
-        this_trace.to_netcdf(os.path.join(trace_save_dir, f't_dist_trace_{i}.nc'))
+        this_trace.to_netcdf(save_paths[i])
 
 else:
-    trace_files = [x for x in os.listdir(trace_save_dir) if x.endswith('.nc')]
-    traces = [pm.backends.netcdf.load(os.path.join(trace_save_dir, x)) for x in trace_files]
+    trace_df = pd.read_csv(os.path.join(trace_save_dir, 'trace_df.csv'))
+    traces = []
+    for this_group in group_list:
+        this_path = trace_df[
+                trace_df['group_id'] == this_group]
+        traces.append(arviz.from_netcdf(this_path))
+
 
 # Extract mu from each trace
 mu_list = [x.posterior.mu.values for x in traces]
@@ -608,7 +622,38 @@ fig = plt.gcf()
 fig.savefig(os.path.join(plot_dir, 'inferred_mu_by_group.png'))
 plt.close(fig)
 
-
+# Also create a box plot with everything in a single plot
+fig, ax = plt.subplots(1, 1, figsize = (10,5))
+this_region = 'gc'
+sns.boxplot(
+        data = inferred_mu_df_final,
+        x = 'transition_num',
+        y = 'inferred_mu',
+        hue = 'group_label',
+        ax = ax,
+        linewidth = 2,
+        palette = ['red','orange','green','blue'],
+        # order = [
+        #     f'{this_region}_inter_receive_only',
+        #     f'{this_region}_inter_send_receive',
+        #     f'{this_region}_inter_send_only',
+        #     f'{this_region}_intra_only',
+        #     ],
+        hue_order = [
+            f'{this_region}_inter_receive_only',
+            f'{this_region}_inter_send_receive',
+            f'{this_region}_inter_send_only',
+            f'{this_region}_intra_only',
+            ],
+        )
+ax.axhline(0, color = 'red', linestyle = '--')
+ax.set_ylabel('<--Earlier | Later-->\n(ms)')
+# Put legend outside
+plt.legend(bbox_to_anchor=(1.05, 1), loc='upper left')
+plt.suptitle('Inferred Mu by Group\n' + str(sig_mark_dict))
+plt.tight_layout()
+fig.savefig(os.path.join(plot_dir, 'inferred_mu_by_group_single.png'))
+plt.close(fig)
 
 ##############################
 # 2) Is inter-trial variance of one group different than the other?

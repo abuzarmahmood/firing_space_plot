@@ -127,8 +127,8 @@ rate_frame = mean_wanted_dat.melt(
         var_name = 'stim_type',
         value_name = 'rate')
 
-#region_mean_rates = list(zip(*mean_rate_list))
-#region_mean_rates = [np.concatenate(x) for x in region_mean_rates]
+# region_mean_rates = list(zip(*mean_rate_list))
+# region_mean_rates = [np.concatenate(x) for x in region_mean_rates]
 
 sns.violinplot(
         data = rate_frame,
@@ -240,5 +240,52 @@ for this_dir in tqdm(dir_list):
                 phase_list.append(phase_frame)
     fin_phase_frame = pd.concat(phase_list)
 
-    hf5_save_path = '/stft/analyses/spike_phase_coherence'
+    hf5_save_path = '/stft/analyses/spike_phase_coherence/actual'
     fin_phase_frame.to_hdf(dat.hdf5_path, hf5_save_path) 
+
+    ##############################
+    # Also generate shuffled data
+    ##############################
+    n_shuffles = 100
+    for shuffle_num in tqdm(range(n_shuffles)):
+        shuffled_phase_list = []
+        for region_ind in range(len(sorted_region_names)):
+            #region_ind = 0
+            this_phase = np.swapaxes(min_err_phase[region_ind],1,-1)
+            # Shuffle trials
+            this_phase = np.random.permutation(this_phase)
+            phase_region = sorted_region_names[region_ind]
+            this_spikes = long_region_spikes[1-region_ind]
+            spikes_region = sorted_region_names[1-region_ind]
+            # Cut to same length
+            this_spikes = np.swapaxes(this_spikes[...,:this_phase.shape[1]],0,1)
+            #for nrn_num, this_nrn in tqdm(enumerate(this_spikes)):
+            for nrn_num, this_nrn in enumerate(this_spikes):
+                if this_nrn.sum(axis=None):
+                    inds = np.where(this_nrn)
+                    phases = this_phase[inds]
+                    phase_inds = np.array(list(np.ndindex(phases.shape)))
+                    phase_frame = pd.DataFrame(
+                            dict(
+                               spikes_region = spikes_region,
+                               phase_region = phase_region,
+                               nrn_num = nrn_num,
+                               trials = inds[0][phase_inds[:,0]],
+                               time = inds[1][phase_inds[:,0]],
+                               freq = phase_inds[:,1],
+                               phases = phases.flatten()
+                                )
+                            )
+                    phase_frame = phase_frame.set_index(
+                            ['spikes_region',
+                             'phase_region',
+                             'nrn_num',
+                             'trials',
+                             'time',
+                             'freq'])
+                    shuffled_phase_list.append(phase_frame)
+        fin_phase_frame = pd.concat(phase_list)
+
+        hf5_save_path = '/stft/analyses/spike_phase_coherence/shuffled/' +\
+                'sh_' + str(shuffle_num)
+        fin_phase_frame.to_hdf(dat.hdf5_path, hf5_save_path) 

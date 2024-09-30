@@ -11,6 +11,8 @@ from tqdm import trange, tqdm
 from scipy import stats
 import pymc3 as pm
 from sklearn.cluster import KMeans
+from scipy.signal import savgol_filter
+from matplotlib.patches import Rectangle
 
 import pandas as pd
 import seaborn as sns
@@ -22,6 +24,8 @@ import pytau.changepoint_model as models
 
 plot_dir_base = '/media/bigdata/firing_space_plot/lfp_analyses/' +\
     'granger_causality/plots/aggregate_plots'
+
+artifact_dir = '/media/bigdata/firing_space_plot/lfp_analyses/granger_causality/artifacts' 
 
 ############################################################
 # Load Data
@@ -51,6 +55,12 @@ name_frame.reset_index(drop=True, inplace=True)
 name_frame.to_csv(os.path.join(plot_dir_base, 'session_names.txt'),
                   sep = '\t', index=False)
 
+# Add index to each animal name
+name_frame['session_inds'] = name_frame.groupby('animal_name').cumcount()
+name_frame['plot_name'] = name_frame['animal_name'] + '_' + name_frame['session_inds'].astype(str)
+
+name_frame['animal_code'] = name_frame['animal_name'].astype('category').cat.codes
+
 
 save_path = '/ancillary_analysis/granger_causality/all'
 names = ['granger_actual',
@@ -61,6 +71,7 @@ names = ['granger_actual',
          'freq_vec']
 
 loaded_dat_list = []
+loaded_name_list = []
 for this_dir in tqdm(dir_list):
     try:
         h5_path = glob(os.path.join(this_dir, '*.h5'))[0]
@@ -68,9 +79,14 @@ for this_dir in tqdm(dir_list):
             loaded_dat = [h5.get_node(save_path, this_name)[:]
                           for this_name in names]
             loaded_dat_list.append(loaded_dat)
+            loaded_name_list.append(os.path.basename(this_dir))
     except:
         print(f'Error loading {this_dir}')
         continue
+
+name_frame.set_index('session_name', inplace=True) 
+name_frame = name_frame.loc[loaded_name_list]
+name_frame.reset_index(inplace=True)
 
 zipped_dat = zip(*loaded_dat_list)
 zipped_dat = [np.stack(this_dat) for this_dat in zipped_dat]
@@ -130,6 +146,156 @@ fig.savefig(os.path.join(plot_dir_base, 'all_granger_masks.png'))
 plt.close()
 #plt.show()
 
+##############################
+# Focus on 0-20Hz ranger for GC-->BLA
+##############################
+freq_inds = np.where(np.logical_and(freq_vec >= 0, freq_vec <= 20))[0]
+
+wanted_plot_mask_array = plot_mask_array[..., freq_inds]
+
+fig, ax = plt.subplots(
+        len(wanted_plot_mask_array) + 2, 2,
+        sharex = True, sharey = True,
+        figsize = (5,15)
+        )
+for dir_ind in range(2):
+    for i in range(len(wanted_plot_mask_array)): 
+        this_plot_dat = 1 - wanted_plot_mask_array[i, dir_ind].T
+        ax[i, dir_ind].pcolorfast(time_vec, freq_vec[freq_inds],
+                            this_plot_dat,
+                           cmap = 'viridis')
+        mean_plot_dat = np.nanmean(this_plot_dat, axis=0)
+        scaled_mean = (mean_plot_dat / mean_plot_dat.max()) * 20
+        ax[i, dir_ind].plot(
+                time_vec, scaled_mean, color = 'red',
+                linestyle = '--', linewidth = 2)
+        ax[i, 0].set_ylabel(name_frame.loc[i, 'plot_name'])
+    ax[-2, dir_ind].pcolorfast(time_vec, freq_vec[freq_inds],
+                               1 - wanted_plot_mask_array[:, dir_ind].mean(axis=0).T,
+                      cmap = 'jet')
+    ax[-1, dir_ind].pcolorfast(time_vec, freq_vec[freq_inds],
+                               stats.zscore(1 - wanted_plot_mask_array[:, dir_ind].mean(axis=0).T, axis=-1),
+                      cmap = 'jet')
+    ax[-1, dir_ind].set_xlabel('Time (s)')
+    ax[0, dir_ind].set_title(dir_names[dir_ind])
+plt.tight_layout()
+fig.savefig(os.path.join(plot_dir_base, 'gc_bla_granger_masks.png'))
+plt.close()
+
+# Plot single session masks for 0-20Hz
+zscored_smoothed_mean_mask_list = []
+dir_ind_list = []
+for i in range(2):
+    this_plot_dat = 1 - wanted_plot_mask_array[:,i].T
+    mean_plot_dat = np.nanmean(this_plot_dat, axis=0).T
+    scaled_mean = (mean_plot_dat / mean_plot_dat.max(axis=-1)[:, None]) * 20
+    smoothed_mean = savgol_filter(mean_plot_dat, 11, 3, axis=-1)
+    zscored_smooth_mean_mask = stats.zscore(smoothed_mean, axis=-1)
+    zscored_smoothed_mean_mask_list.append(zscored_smooth_mean_mask)
+    dir_ind_list.append(i)
+
+##############################
+# Calculate changepoints for zscored smoothed mean mask
+
+wanted_model = models.gaussian_changepoint_mean_2d
+
+zscored_smooth_mean_mask_list_flat = np.concatenate(zscored_smoothed_mean_mask_list, axis=0)
+dir_ind_list_flat = np.concatenate(
+        [np.repeat(x, y.shape[0]) for x, y in zip(dir_ind_list, zscored_smoothed_mean_mask_list)],
+        axis=0
+        )
+
+change_frame_path = os.path.join(artifact_dir, 'granger_individual_mask_changepoints.pkl')
+if not os.path.exists(change_frame_path):
+    tau_list = []
+    mean_ppc_list = []
+    for this_dat in tqdm(zscored_smooth_mean_mask_list_flat):
+        model = wanted_model(this_dat[None,:], 3)
+        model, approx, mu_stack, sigma_stack, tau_samples, fit_data = \
+                models.advi_fit(model = model, fit = 80000, samples = 20000)
+        trace = approx.sample(2000)
+        tau_samples = trace.tau.astype(int) 
+        ppc = pm.sample_posterior_predictive(
+                trace, model = model, var_names = ['obs'])['obs']
+        mean_ppc = np.mean(ppc, axis=0)
+        tau_list.append(tau_samples)
+        mean_ppc_list.append(mean_ppc)
+
+    basenames_list = name_frame['session_name'].tolist()
+    basenames_list = np.stack(basenames_list*2) 
+
+    change_frame = pd.DataFrame(
+            dict(
+                basenames = basenames_list,
+                dir_inds = dir_ind_list_flat,
+                dir_name = [dir_names[x] for x in dir_ind_list_flat],
+                tau_samples = tau_list,
+                mean_ppc = mean_ppc_list
+                )
+            )
+    change_frame.to_pickle(change_frame_path) 
+else:
+    change_frame = pd.read_pickle(change_frame_path)
+
+fig, ax = plt.subplots(2,5, sharex=True, sharey=True,
+                       figsize = (12,5))
+for i in range(2):
+    this_plot_dat = 1 - wanted_plot_mask_array[:,i].T
+    mean_plot_dat = np.nanmean(this_plot_dat, axis=0).T
+    scaled_mean = (mean_plot_dat / mean_plot_dat.max(axis=-1)[:, None]) * 20
+    this_tau = change_frame[change_frame['dir_inds'] == i]['tau_samples'].values
+    this_tau = np.stack(this_tau)
+    this_mode_tau = np.squeeze(stats.mode(this_tau, axis=1)[0])
+    this_change_time = time_vec[this_mode_tau]
+    ax[i, 0].pcolorfast(time_vec, np.arange(len(scaled_mean)),
+                     scaled_mean,
+                     cmap = 'jet')
+    # Smooth using Savitzky-Golay filter
+    smoothed_mean = savgol_filter(mean_plot_dat, 11, 3, axis=-1)
+    ax[i, 1].pcolorfast(time_vec, np.arange(len(smoothed_mean)),
+                        smoothed_mean,
+                        cmap = 'jet')
+    ax[i,0].set_ylabel(dir_names[i])
+    ax[i,2].pcolorfast(time_vec, np.arange(len(scaled_mean)), 
+                       stats.zscore(scaled_mean, axis=-1),
+                       cmap = 'jet')
+    zscored_smooth_mean_mask = stats.zscore(smoothed_mean, axis=-1)
+    ax[i,3].pcolorfast(time_vec, np.arange(len(smoothed_mean)), 
+                       zscored_smooth_mean_mask,
+                       cmap = 'jet')
+    for session_ind, this_times in enumerate(this_change_time):
+        ax[i,3].scatter(
+                this_times, 
+                [session_ind]*len(this_times),
+                color = 'red', alpha = 0.7)
+    ax[i,-1].pcolorfast(time_vec, np.arange(len(scaled_mean)),
+                       name_frame['animal_code'].values[:, None],
+                       cmap = 'Set1')
+ax[0,0].set_title('Summed Mask')
+ax[0,1].set_title('Summed Smoothed Mask')
+ax[0,2].set_title('Zscored Summed Mask')
+ax[0,3].set_title('Zscored Smoothed Mask')
+fig.suptitle('Summed Masks 0-20Hz')
+plt.tight_layout()
+fig.savefig(os.path.join(plot_dir_base, 'gc_bla_granger_masks_single.png'))
+plt.close()
+
+# Plot histograms of changepoints
+fig, ax = plt.subplots(2,1, sharex=True)
+for i in range(2):
+    this_tau = change_frame[change_frame['dir_inds'] == i]['tau_samples'].values
+    this_tau = np.stack(this_tau)
+    this_mode_tau = np.squeeze(stats.mode(this_tau, axis=1)[0])
+    this_plot_tau = this_mode_tau.flatten()
+    ax[i].hist(time_vec[this_plot_tau], bins = 20)
+    ax[i].set_title(dir_names[i])
+plt.tight_layout()
+fig.savefig(os.path.join(plot_dir_base, 'gc_bla_granger_changepoints.png'))
+plt.close()
+
+
+
+##############################
 
 ## Plot mean mask
 #fig, ax = plt.subplots(2,1)
