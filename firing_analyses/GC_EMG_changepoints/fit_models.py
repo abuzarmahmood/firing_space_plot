@@ -32,7 +32,6 @@ if not os.path.exists(artifact_dir):
 
 error_list = []
 for this_dir in tqdm(data_dir_list):
-    pass
     this_ephys_data = ephys_data.EphysData(this_dir)
     this_ephys_data.get_spikes()
     n_tastes = len(this_ephys_data.spikes)
@@ -44,24 +43,59 @@ for this_dir in tqdm(data_dir_list):
     # Keep only csv
     all_files = [x for x in all_files if 'csv' in x]
     # Look for pattern taste_* in each name
-    taste_ind = [int(x.split('taste_')[1][0]) for x in all_files if 'taste' in x]
+    # taste_ind = [int(x.split('taste_')[1][0]) for x in all_files if 'taste' in x]
+
+    # Look for 'taste_trial'
+    all_files = [x for x in all_files if 'taste_trial' in x][0]
+
     # Load pkl files
-    trial_change_dat = [pd.read_csv(os.path.join(artifact_dir, x), index_col = 0) \
-            for x in all_files if 'taste' in x]
+    # trial_change_dat = [pd.read_csv(os.path.join(artifact_dir, x), index_col = 0) \
+    #         for x in all_files if 'taste' in x]
+    trial_change_dat = pd.read_csv(os.path.join(artifact_dir, all_files), index_col = 0)
+
     # Get median lowest elbo
-    best_change = []
-    for this_df in trial_change_dat:
-        med_elbo = this_df.groupby('changes').median()
-        best_change.append(med_elbo['elbo'].idxmin())
+    # best_change = []
+    # for this_df in trial_change_dat:
+    med_elbo = trial_change_dat.groupby('changes').median()
+    # best_change.append(med_elbo['elbo'].idxmin())
+    best_change = med_elbo['elbo'].idxmin()
 
     # Get model with lowest elbo for each taste
-    median_mode_list = []
-    for this_taste_ind, this_change, this_df in zip(taste_ind, best_change, trial_change_dat):
-        this_df = this_df[this_df['changes'] == this_change] 
-        mode_list = np.stack([literal_eval(x) for x in this_df['mode']])
-        median_mode = np.median(mode_list, axis=0) 
-        median_mode = median_mode.astype(int)
-        median_mode_list.append(median_mode)
+    # median_mode_list = []
+    # for this_taste_ind, this_change, this_df in zip(taste_ind, best_change, trial_change_dat):
+    #     this_df = this_df[this_df['changes'] == this_change] 
+    #     mode_list = np.stack([literal_eval(x) for x in this_df['mode']])
+    #     median_mode = np.median(mode_list, axis=0) 
+    #     median_mode = median_mode.astype(int)
+    #     median_mode_list.append(median_mode)
+    best_change_df = trial_change_dat[trial_change_dat['changes'] == best_change]
+    mode_list = np.stack([literal_eval(x) for x in best_change_df['mode']])
+    median_mode_list = np.median(mode_list, axis=0)
+    time_bins = trial_change_dat['time_bins'].iloc[0]
+    time_bins = time_bins.replace(' ',',').replace('\n','').replace('[','').replace(']','').split(',')
+    # Drop any empty strings
+    time_bins = [x for x in time_bins if x]
+    # Convert to float
+    time_bins = [float(x) for x in time_bins]
+
+    # Convert median_mode_list to timepoints using interpolated time_bins 
+    interpolated_time = np.interp(median_mode_list, np.arange(len(time_bins)), time_bins)
+
+    # Make "sections"
+    time_sections = np.concatenate(([0], interpolated_time, [np.max(time_bins)]))
+
+    # Get trial_info_frame and get sections for all trials
+    trial_info_path = os.path.join(this_dir, 'trial_info_frame.csv') 
+    trial_info_frame = pd.read_csv(trial_info_path)
+    trial_info_frame['section'] = pd.cut(trial_info_frame['start_taste'], time_sections, labels=False)
+    
+    wanted_columns = ['dig_in_num_taste', 'start_taste', 'section', 'taste_rel_trial_num']
+    trial_info_frame = trial_info_frame[wanted_columns]
+
+    dig_in_num_taste_map = dict(zip(
+        np.sort(trial_info_frame['dig_in_num_taste'].unique()), 
+        range(n_tastes)))
+    trial_info_frame['taste_ind'] = trial_info_frame['dig_in_num_taste'].map(dig_in_num_taste_map) 
 
     for i in range(n_tastes):
         # Shape: (n_trials, n_neurons, n_timepoints)
@@ -73,22 +107,32 @@ for this_dir in tqdm(data_dir_list):
             continue
 
         # Check if trials need to be split
-        trial_splits = []
-        split_bounds_list = []
-        if best_change[i] > 0:
-            this_median_mode = median_mode_list[i]
-            max_trials = this_taste.shape[0]
-            split_bounds = np.concatenate(([0], this_median_mode, [max_trials]))
-            for j in range(len(split_bounds) - 1):
-                trial_splits.append(this_taste[split_bounds[j]:split_bounds[j+1]])
-                this_split_bounds = (split_bounds[j], split_bounds[j+1])
-                split_bounds_list.append(this_split_bounds)
+        # trial_splits = []
+        # split_bounds_list = []
+        # if best_change[i] > 0:
+        #     this_median_mode = median_mode_list[i]
+        #     max_trials = this_taste.shape[0]
+        #     split_bounds = np.concatenate(([0], this_median_mode, [max_trials]))
+        #     for j in range(len(split_bounds) - 1):
+        #         trial_splits.append(this_taste[split_bounds[j]:split_bounds[j+1]])
+        #         this_split_bounds = (split_bounds[j], split_bounds[j+1])
+        #         split_bounds_list.append(this_split_bounds)
 
-        else:
-            trial_splits.append(this_taste)
-            split_bounds_list.append((0, this_taste.shape[0]))
+        # else:
+        #     trial_splits.append(this_taste)
+        #     split_bounds_list.append((0, this_taste.shape[0]))
 
-        for split_ind, this_split in enumerate(trial_splits):
+        # for split_ind, this_split in enumerate(trial_splits):
+        
+        this_taste_frame = trial_info_frame[trial_info_frame['taste_ind'] == i]
+
+        for section_ind in np.sort(this_taste_frame['section'].unique()):
+            
+            section_frame = this_taste_frame[this_taste_frame['section'] == section_ind]
+            # Get trial splits
+            section_trials = section_frame['taste_rel_trial_num'].values
+            this_split = this_taste[section_trials]
+
             # Check if already fit
             try:
 
@@ -111,7 +155,7 @@ for this_dir in tqdm(data_dir_list):
                     taste_num=i,
                     region_name='all',  # Should match specification in info file
                     laser_type=None,
-                    experiment_name='GC_EMG_changepoints_single_taste_drift_cut_2',
+                    experiment_name='GC_EMG_changepoints_single_taste_drift_cut_3',
                     )
 
                 ## Initialize handler, and feed paramters
@@ -128,8 +172,9 @@ for this_dir in tqdm(data_dir_list):
                 handler.create_model()
 
                 # Once we've run them, we can overwrite the taste_num
-                wanted_split_bounds = split_bounds_list[split_ind]
-                handler.database_handler.taste_num = f'{i}_split_ind{split_ind}_split_bounds{wanted_split_bounds}'
+                # wanted_split_bounds = split_bounds_list[split_ind]
+                wanted_split_bounds = (np.min(section_trials), np.max(section_trials))
+                handler.database_handler.taste_num = f'{i}_split_ind{section_ind}_split_bounds{wanted_split_bounds}'
 
                 # Perform inference and save output to model database
                 handler.run_inference()
@@ -162,7 +207,7 @@ fit_database = DatabaseHandler()
 
 # Get fits for a particular experiment
 dframe = fit_database.fit_database
-wanted_exp_name = 'GC_EMG_changepoints_single_taste_drift_cut_2'
+wanted_exp_name = 'GC_EMG_changepoints_single_taste_drift_cut_3'
 wanted_frame = dframe.loc[dframe['exp.exp_name'] == wanted_exp_name] 
 
 # Drop duplicates
