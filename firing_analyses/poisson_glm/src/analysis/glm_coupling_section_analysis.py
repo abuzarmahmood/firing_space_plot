@@ -44,6 +44,7 @@ import matplotlib as mpl
 from matplotlib import colors
 import matplotlib.patches as mpatches
 import tables
+import pingouin as pg
 
 def calc_firing_rates(spike_array, kern):
     """
@@ -875,6 +876,78 @@ encoding_frame = encoding_frame.merge(pal_iden_frame,
 encoding_frame['nrn_id'] = encoding_frame['session'].astype('str') + '_' + \
         encoding_frame['neuron'].astype('str')
 
+encoding_frame.dropna(inplace = True)
+encoding_frame['region'] = encoding_frame['group_label'].apply(lambda x: x.split('_')[0])
+encoding_frame['cxn_type'] = \
+        encoding_frame['group_label'].apply(
+                lambda x: "_".join(x.split('_')[1:]))
+
+###############
+# Calculate tastiness
+# l2 norm of normalized discrimin and palatability
+encoding_frame['log_discrim'] = np.log(encoding_frame['mean_discrim_stat'])
+encoding_frame['norm_log_discrim'] = \
+        (encoding_frame['log_discrim'] / np.max(encoding_frame['log_discrim']))
+encoding_frame['norm_pal'] = \
+        (encoding_frame['mean_pal_rho'] / np.max(encoding_frame['mean_pal_rho']))
+encoding_frame['tastiness'] = \
+        np.sqrt(encoding_frame['norm_log_discrim']**2 + \
+                encoding_frame['norm_pal']**2)
+encoding_frame['region'] = encoding_frame.region.apply(lambda x: x.upper())
+
+discrim_pal_corr = spearmanr(
+        encoding_frame['norm_log_discrim'],
+        encoding_frame['norm_pal'])
+# plt.scatter(
+#         encoding_frame.mean_discrim_stat,
+#         encoding_frame.mean_pal_rho,
+#         alpha = 0.5)
+fig, ax = plt.subplots(figsize = (3,5))
+sns.scatterplot(data = encoding_frame,
+                x = 'norm_log_discrim', 
+                y = 'norm_pal',
+                # hue = 'region',
+                style = 'region',
+                markers = True,
+                s = 50,
+                color = 'k',
+                alpha = 0.7,
+                # edgecolor = 'k',
+                # linewidth = 1,
+                # palette = 'grey')
+)
+# Make contours for tastiness
+x_min, x_max = ax.get_xlim()
+y_min, y_max = ax.get_ylim()
+x_vals = np.linspace(x_min, x_max, 100)
+y_vals = np.linspace(y_min, y_max, 100)
+X, Y = np.meshgrid(x_vals, y_vals)
+Z = np.sqrt(X**2 + Y**2)
+im = ax.contourf(X, Y, Z, zorder = -1, alpha = 0.5,
+                 cmap = 'viridis') 
+plt.colorbar(im, ax = ax, label = 'Tastiness')
+# im = ax.contour(X, Y, Z, zorder = -1, alpha = 0.7,
+#                 colors = 'k')
+# ax.clabel(im, inline = True, fmt = '%.1f',)
+# ax.set_aspect('equal')
+plt.legend()
+# plt.xscale('log')
+plt.xlabel('Norm-Log Mean Discrimination')
+plt.ylabel('Norm Palatability')
+plt.suptitle(
+        'Spearman Correlation between Discrimination and Palatability\n' +\
+        f'Corr: {discrim_pal_corr.statistic:.3f}, p = {discrim_pal_corr.pvalue:.3f}')
+# plt.show()
+plt.savefig(os.path.join(
+    coupling_analysis_plot_dir, 'discrim_pal_correlation.svg'),
+            bbox_inches = 'tight')
+plt.close()
+
+# Write out encoding_frame
+encoding_frame.to_csv(os.path.join(
+    coupling_analysis_plot_dir, 'encoding_frame.csv'),
+    index = False)
+
 ############################################################
 nrn_groups = [
         gc_inter_send_only, gc_inter_receive_only, gc_inter_send_receive,
@@ -894,8 +967,15 @@ for group_name, group in zip(nrn_group_names, nrn_groups):
     encoding_frame.loc[encoding_frame['nrn_id'].isin(group), 'group_label'] = group_name
 
 # Melt encoding_frame by encoding metric
-metric_list = ['mean_post_stim_rates','responsiveness',
-               'mean_discrim_stat','mean_pal_rho']
+metric_list = [
+        # 'mean_post_stim_rates',
+        # 'responsiveness',
+        'mean_discrim_stat',
+        'mean_pal_rho',
+        'norm_log_discrim',
+        'norm_pal',
+        'tastiness'
+        ]
 encoding_frame_melt = pd.melt(encoding_frame,
                               id_vars = ['session','neuron','nrn_id',
                                          'group_label'],
@@ -906,163 +986,261 @@ encoding_frame_melt.dropna(inplace = True)
 encoding_frame_melt['region'] = \
         encoding_frame_melt['group_label'].apply(lambda x: x.split('_')[0])
 
+# Write out encoding_frame_melt
+encoding_frame_melt.to_csv(os.path.join(
+    coupling_analysis_plot_dir, 'encoding_frame_melt.csv'),
+    index = False)
+
 # Plot boxen plots using sns
-wanted_metrics = ['mean_post_stim_rates',
-                  'mean_discrim_stat','mean_pal_rho']
+wanted_metrics = [
+        # 'mean_post_stim_rates',
+        'mean_discrim_stat',
+        'mean_pal_rho',
+        'tastiness'
+        ]
+
+# For each metric, calculate all p-values
+out_list = []
+for this_metric in wanted_metrics:
+    wanted_frame = encoding_frame_melt.loc[
+            encoding_frame_melt['metric'] == this_metric]
+    wanted_frame = wanted_frame.loc[
+            wanted_frame['region'] == 'gc']
+    out = pg.pairwise_ttests(data = wanted_frame, 
+                       dv = 'value', between = 'group_label',
+                       )
+    out['metric'] = this_metric
+    out_list.append(out)
+out_frame = pd.concat(out_list, ignore_index = True)
+out_frame.to_csv(os.path.join(
+    coupling_analysis_plot_dir, 'encoding_metric_gc_pvals.csv'),
+    index = False)
+
+
 for this_region in ['gc','bla']:
     wanted_frame = encoding_frame_melt.loc[
             encoding_frame_melt['region'] == this_region]
     wanted_frame = wanted_frame.loc[
             wanted_frame['metric'].isin(wanted_metrics)]
+    # Remove group_labels with 'inter_send_receive'
+    wanted_frame = wanted_frame.loc[
+            ~wanted_frame['group_label'].str.contains('inter_send_receive')]
     g = sns.catplot(data = wanted_frame, 
                 x = 'group_label', y = 'value',
-                palette = ['red','orange','green','blue'],
+                palette = [
+                    'red',
+                    # 'orange',
+                    'green',
+                    'blue'
+                    ],
                 order = [
                     f'{this_region}_inter_receive_only',
-                    f'{this_region}_inter_send_receive',
+                    # f'{this_region}_inter_send_receive',
                     f'{this_region}_inter_send_only',
                     f'{this_region}_intra_only',
                     ],
                 hue_order = [
                     f'{this_region}_inter_receive_only',
-                    f'{this_region}_inter_send_receive',
+                    # f'{this_region}_inter_send_receive',
                     f'{this_region}_inter_send_only',
                     f'{this_region}_intra_only',
                     ],
                 kind = 'boxen', hue = 'group_label',
                 col = 'metric', 
                 aspect = 2, sharey = False, showfliers = False,
+                    alpha = 0.7,
                     )
     g.fig.set_size_inches(8,5)
-    for ax in g.axes.flatten():
+    y_ax_labels = [
+            'Discrimination',
+            'Palatability',
+            'Tastiness'
+            ]
+    for ax_ind, ax in enumerate(g.axes.flatten()):
         plt.sca(ax)
-        plt.xticks(rotation = 45, ha = 'right')
+        # plt.xticks(rotation = 45, ha = 'right')
         this_title = ax.get_title()
+        x_labels = [
+                'Inter\nReceive',
+                'Inter\nSend',
+                'Intra'
+                ]
+        ax.set_xticklabels(x_labels)
         y_label = this_title.split('=')[1].strip()
         plt.ylabel(y_label)
         plt.title(None)
-    temp_frame = wanted_frame.loc[wanted_frame.metric == 'mean_post_stim_rates']
+        ax.set_ylabel(y_ax_labels[ax_ind])
+        ax.set_xlabel(None)
+    temp_frame = wanted_frame.loc[wanted_frame.metric == 'mean_discrim_stat']
     g.fig.suptitle(f'{this_region.upper()} Encoding Metrics by Group' +\
             f'\n{temp_frame.group_label.value_counts().reset_index().values}')
     plt.tight_layout()
     plt.savefig(os.path.join(
         coupling_analysis_plot_dir, 
-        f'encoding_metrics_by_group_{this_region}.png'),
+        f'encoding_metrics_by_group_{this_region}.svg'),
                 bbox_inches = 'tight')
     plt.close()
 
 ##############################
 # Close look at GC inter-receive + GC inter-send-receive
 # for mean_discrim and mean_pal_rho
-wanted_metrics = ['mean_discrim_stat','mean_pal_rho']
-wanted_groups = ['gc_inter_receive_only','gc_inter_send_receive']
-wanted_region = 'gc'
-wanted_frame = encoding_frame_melt.loc[
-        (encoding_frame_melt['region'] == wanted_region) & \
-        (encoding_frame_melt['metric'].isin(wanted_metrics)) & \
-        (encoding_frame_melt['group_label'].isin(wanted_groups))]
+# wanted_metrics = ['mean_discrim_stat','mean_pal_rho']
+# wanted_groups = ['gc_inter_receive_only','gc_inter_send_receive']
+# wanted_region = 'gc'
+# wanted_frame = encoding_frame_melt.loc[
+#         (encoding_frame_melt['region'] == wanted_region) & \
+#         (encoding_frame_melt['metric'].isin(wanted_metrics)) & \
+#         (encoding_frame_melt['group_label'].isin(wanted_groups))]
+# 
+# fig, ax = plt.subplots(1, len(wanted_metrics), figsize = (5,5))
+# for ind, this_metric in enumerate(wanted_metrics):
+#     plot_frame = wanted_frame.loc[wanted_frame['metric'] == this_metric]
+#     sns.boxenplot(data = plot_frame,
+#                   x = 'group_label', y = 'value',
+#                   palette = ['red','orange'],
+#                   hue = 'group_label',
+#                   showfliers = False,
+#                   ax = ax[ind])
+#     sns.stripplot(data = plot_frame,
+#                   x = 'group_label', y = 'value',
+#                   dodge = True,
+#                   ax = ax[ind],
+#                   facecolors = 'none',
+#                   edgecolor = 'black',
+#                   alpha = 0.5,
+#                   linewidth = 2,
+#                   )
+#     # Perform test between groups for each metric
+#     group_vals = [plot_frame.loc[plot_frame['group_label'] == x]['value'] for x in wanted_groups]
+#     t_stat, p_val = ttest_ind(*group_vals)
+#     ax[ind].set_title(this_metric + '\n' + f'p = {p_val:.3f}')
+#     ax[ind].set_ylabel(None)
+#     ax[ind].set_xlabel(None)
+#     if ind == 0:
+#         ax[ind].set_ylim([0, 40])
+#     ax[ind].set_xticklabels(['Inter-Receive','Inter-Send-Receive'],
+#                             rotation = 45, ha = 'right')
+#     # Add a bit of whitespace at the top
+#     ax[ind].set_ylim([0, ax[ind].get_ylim()[1]*1.1])
+#     ax[ind].set_ylabel(this_metric)
+# plt.suptitle('GC Inter-Receive vs Inter-Send-Receive\n' +\
+#         f'{wanted_metrics}')
+# plt.tight_layout()
+# plt.savefig(os.path.join(
+#     coupling_analysis_plot_dir, f'encoding_metrics_by_group_{wanted_region}_close.png'),
+#             bbox_inches = 'tight')
+# plt.close()
 
-fig, ax = plt.subplots(1, len(wanted_metrics), figsize = (5,5))
-for ind, this_metric in enumerate(wanted_metrics):
-    plot_frame = wanted_frame.loc[wanted_frame['metric'] == this_metric]
-    sns.boxenplot(data = plot_frame,
-                  x = 'group_label', y = 'value',
-                  palette = ['red','orange'],
-                  hue = 'group_label',
-                  showfliers = False,
-                  ax = ax[ind])
-    sns.stripplot(data = plot_frame,
-                  x = 'group_label', y = 'value',
-                  dodge = True,
-                  ax = ax[ind],
-                  facecolors = 'none',
-                  edgecolor = 'black',
-                  alpha = 0.5,
-                  linewidth = 2,
-                  )
-    # Perform test between groups for each metric
-    group_vals = [plot_frame.loc[plot_frame['group_label'] == x]['value'] for x in wanted_groups]
-    t_stat, p_val = ttest_ind(*group_vals)
-    ax[ind].set_title(this_metric + '\n' + f'p = {p_val:.3f}')
-    ax[ind].set_ylabel(None)
-    ax[ind].set_xlabel(None)
-    if ind == 0:
-        ax[ind].set_ylim([0, 40])
-    ax[ind].set_xticklabels(['Inter-Receive','Inter-Send-Receive'],
-                            rotation = 45, ha = 'right')
-    # Add a bit of whitespace at the top
-    ax[ind].set_ylim([0, ax[ind].get_ylim()[1]*1.1])
-    ax[ind].set_ylabel(this_metric)
-plt.suptitle('GC Inter-Receive vs Inter-Send-Receive\n' +\
-        f'{wanted_metrics}')
-plt.tight_layout()
-plt.savefig(os.path.join(
-    coupling_analysis_plot_dir, f'encoding_metrics_by_group_{wanted_region}_close.png'),
-            bbox_inches = 'tight')
-plt.close()
 
 # Make 2D plot with each metric on the axis, and color by group
 # Remove outlier
-wanted_frame = wanted_frame.loc[wanted_frame['value'] < 40]
 
+# wanted_frame = wanted_frame.loc[wanted_frame['value'] < 40]
+# 
+# 
+# discrim_frame = wanted_frame.loc[wanted_frame['metric'] == 'mean_discrim_stat']
+# pal_frame = wanted_frame.loc[wanted_frame['metric'] == 'mean_pal_rho']
+# merged_frame = discrim_frame.merge(pal_frame,
+#                                    how = 'outer',
+#                                    on = ['session','neuron','nrn_id','group_label'])
+# merged_frame.rename(columns = {'value_x':'mean_discrim_stat',
+#                                'value_y':'mean_pal_rho'},
+#                     inplace = True)
+# merged_frame['norm_mean_discrim_stat'] = \
+#         MinMaxScaler().fit_transform(merged_frame['mean_discrim_stat'].values.reshape(-1,1))
+# merged_frame['norm_mean_pal_rho'] = \
+#         MinMaxScaler().fit_transform(merged_frame['mean_pal_rho'].values.reshape(-1,1))
+# merged_frame['norm_tastiness'] = \
+#     np.linalg.norm(merged_frame[['norm_mean_discrim_stat',
+#                                  'norm_mean_pal_rho']].values, axis = 1)
+# norm_tastiness_group = [merged_frame.loc[merged_frame['group_label'] == x]['norm_tastiness'] 
+#                         for x in wanted_groups]
+# # Remove nan
+# norm_tastiness_group = [x.dropna() for x in norm_tastiness_group]
 
-discrim_frame = wanted_frame.loc[wanted_frame['metric'] == 'mean_discrim_stat']
-pal_frame = wanted_frame.loc[wanted_frame['metric'] == 'mean_pal_rho']
-merged_frame = discrim_frame.merge(pal_frame,
-                                   how = 'outer',
-                                   on = ['session','neuron','nrn_id','group_label'])
-merged_frame.rename(columns = {'value_x':'mean_discrim_stat',
-                               'value_y':'mean_pal_rho'},
-                    inplace = True)
-merged_frame['norm_mean_discrim_stat'] = \
-        MinMaxScaler().fit_transform(merged_frame['mean_discrim_stat'].values.reshape(-1,1))
-merged_frame['norm_mean_pal_rho'] = \
-        MinMaxScaler().fit_transform(merged_frame['mean_pal_rho'].values.reshape(-1,1))
-merged_frame['norm_tastiness'] = \
-    np.linalg.norm(merged_frame[['norm_mean_discrim_stat',
-                                 'norm_mean_pal_rho']].values, axis = 1)
-norm_tastiness_group = [merged_frame.loc[merged_frame['group_label'] == x]['norm_tastiness'] 
-                        for x in wanted_groups]
-# Remove nan
-norm_tastiness_group = [x.dropna() for x in norm_tastiness_group]
+wanted_frame = encoding_frame_melt.loc[
+        (encoding_frame_melt['region'] == 'gc')
+        ]
 # Test for difference between groups
-t_stat, p_val = ttest_ind(*norm_tastiness_group)
+wanted_groups = ['gc_inter_receive_only','gc_inter_send_receive']
+wanted_metrics = ['norm_log_discrim','norm_pal', 'tastiness']
+wanted_frame = wanted_frame.loc[wanted_frame['metric'].isin(wanted_metrics)]
+wanted_frame = wanted_frame.loc[wanted_frame['group_label'].isin(wanted_groups)]
+# norm_tastiness_group = [x[1] for x in list(tastiness_frame.groupby('group_label')['value'])]
 
-fig, ax = plt.subplots(1,2, figsize = (6,6))
+norm_tastiness_group = [
+        x[1] for x in list(
+            wanted_frame.loc[wanted_frame['metric'] == 'tastiness'].groupby('group_label')['value'])]
+# Remove outliers
+t_stat, p_val = ttest_ind(
+        *[x[x<1.2] for x in norm_tastiness_group])
+
+merged_frame = wanted_frame.pivot_table(
+        index = ['session','neuron','nrn_id','group_label'],
+        columns = 'metric',
+        values = 'value').reset_index()
+
+# fig, ax = plt.subplots(1,2, figsize = (6,6))
+fig, ax = plt.subplots(figsize = (3,4))
 # sns.scatterplot(data = merged_frame,
 #                 x = 'mean_discrim_stat', y = 'mean_pal_rho',
 #                 hue = 'group_label', ax = ax[0])
-ax[0].set_xlabel('Normalized Mean Discrimination Statistic')
-ax[0].set_ylabel('Normalized Mean Palatability Rho')
-sns.scatterplot(data = merged_frame,
-                x = 'norm_mean_discrim_stat', y = 'norm_mean_pal_rho',
-                hue = 'group_label', ax = ax[0],
-                palette = ['red','orange'],
-                s = 50,
-                alpha = 0.5,
-                edgecolor = 'black',
-                linewidth = 2)
+# sns.scatterplot(
+#                 data = merged_frame,
+#                 # x = 'norm_mean_discrim_stat', y = 'norm_mean_pal_rho',
+#                 # x = 'mean_discrim_stat', y = 'mean_pal_rho',
+#                 x = 'norm_log_discrim', y = 'norm_pal',
+#                 hue = 'group_label', ax = ax[0],
+#                 palette = ['red','orange'],
+#                 s = 50,
+#                 alpha = 0.5,
+#                 edgecolor = 'black',
+#                 linewidth = 2)
 sns.boxplot(data = merged_frame,
-            x = 'group_label', y = 'norm_tastiness',
-            ax = ax[1],
+            # x = 'group_label', y = 'norm_tastiness',
+            x = 'group_label', y = 'tastiness',
+            # ax = ax[1],
+            ax = ax,
             hue = 'group_label',
             palette = ['red','orange'],
-            linewidth = 2,)
-ax[1].set_title(f'T-Test p-value: {p_val:.3f}')
+            linewidth = 2,
+            showfliers = False)
+sns.stripplot(data = merged_frame,
+              x = 'group_label', y = 'tastiness',
+              # ax = ax[1],
+              ax = ax,
+              hue = 'group_label',
+              palette = ['red','orange'],
+              s = 7,
+              alpha = 0.5,
+              edgecolor = 'black',
+              linewidth = 1,
+              )
+ax.set_ylabel('Tastiness')
+ax.set_xlabel('Group')
+# Remove top and right spines
+ax.spines['top'].set_visible(False)
+ax.spines['right'].set_visible(False)
+# ax[1].set_title(f'T-Test p-value: {p_val:.3f}')
+ax.set_title(f'T-Test p-value: {p_val:.3f}')
 # Add a bit of space at the top of the plot
-ax[1].set_ylim([0, ax[1].get_ylim()[1]*1.1])
+# ax[1].set_ylim([0, ax[1].get_ylim()[1]*1.1])
+ax.set_ylim([0, 1.2]) 
 # Put legend on bottom
-L = ax[0].legend(loc = 'lower center', bbox_to_anchor = (0.5, 1))
-wanted_labels = ['Receive','Send+Receive']
-for i, this_text in enumerate(L.get_texts()):
-    this_text.set_text(wanted_labels[i])
-ax[1].set_xticklabels(['Inter-Receive','Inter-Send-Receive'],
-                      rotation = 45, ha = 'right')
+# L = ax[0].legend(loc = 'lower center', bbox_to_anchor = (0.5, 1))
+# wanted_labels = ['Receive','Send+Receive']
+# for i, this_text in enumerate(L.get_texts()):
+#     this_text.set_text(wanted_labels[i])
+# ax[1].set_xticklabels(['Inter-Receive','Inter-Send-Receive'],
+ax.set_xticklabels(
+    ['Inter\nReceive','Inter\nSend+Receive'],
+    )
+#                       rotation = 45, ha = 'right')
 plt.tight_layout()
 plt.subplots_adjust(top = 0.8)
 plt.suptitle('GC Inter-Receive vs Inter-Send-Receive\nWithout Outlier')
 plt.savefig(os.path.join(
-    coupling_analysis_plot_dir, f'encoding_metrics_by_group_{wanted_region}_scatter.png'),
+    coupling_analysis_plot_dir, f'encoding_metrics_by_group_{wanted_region}_scatter.svg'),
             bbox_inches = 'tight')
 plt.close()
 
@@ -1072,12 +1250,17 @@ plt.close()
 # Confirm:
 # 1) Each HDF5 file has waveforms
 # 2) Each HDF5 has epected number of neurons as per data_inds_frame
+old_new_map_path = '/media/bigdata/firing_space_plot/firing_analyses/poisson_glm/artifacts/single_neuron_match.csv'
+old_new_map = pd.read_csv(old_new_map_path, index_col = 0)
 
+rec_bool = encoding_frame['group_label'].str.contains('rec')
+
+##############################
+# GC
+##############################
 # Get number of gc_rec neurons in each session
 gc_bool = encoding_frame['group_label'].str.contains('gc')
 gc_bool.fillna(False, inplace = True)
-
-rec_bool = encoding_frame['group_label'].str.contains('rec')
 
 # gc_rec_neurons = encoding_frame.loc[gc_bool & rec_bool]
 # gc_rec_neurons = gc_rec_neurons.groupby('session')['neuron'].count().reset_index()
@@ -1088,8 +1271,6 @@ gc_neurons = encoding_frame.loc[gc_bool]
 gc_neurons = gc_neurons[wanted_cols]
 
 # Cross match with old-new neuron ids
-old_new_map_path = '/media/bigdata/firing_space_plot/firing_analyses/poisson_glm/artifacts/single_neuron_match.csv'
-old_new_map = pd.read_csv(old_new_map_path, index_col = 0)
 
 # Add session_name using unit_region_frame
 gc_neurons = gc_neurons.merge(unit_region_frame[['session','neuron','basename']],
@@ -1110,6 +1291,45 @@ gc_neurons.dropna(inplace = True)
 gc_neurons.drop(columns = ['session_y','nrn_id','unit_number_old'], inplace = True)
 gc_neurons['unit_number_new'] = gc_neurons['unit_number_new'].astype(int)
 
+##############################
+# bla
+##############################
+# Get number of bla_rec neurons in each session
+bla_bool = encoding_frame['group_label'].str.contains('bla')
+bla_bool.fillna(False, inplace = True)
+
+# bla_rec_neurons = encoding_frame.loc[bla_bool & rec_bool]
+# bla_rec_neurons = bla_rec_neurons.groupby('session')['neuron'].count().reset_index()
+# bla_rec_neurons.sort_values('neuron', ascending = False, inplace = True)
+
+wanted_cols = ['session','neuron','group_label']
+bla_neurons = encoding_frame.loc[bla_bool]
+bla_neurons = bla_neurons[wanted_cols]
+
+# Cross match with old-new neuron ids
+
+# Add session_name using unit_region_frame
+bla_neurons = bla_neurons.merge(unit_region_frame[['session','neuron','basename']],
+                              how = 'left',
+                              on = ['session','neuron'])
+bla_neurons['nrn_id'] = bla_neurons['basename'].astype('str') + '_' + \
+        bla_neurons['neuron'].astype('str')
+
+old_new_map['nrn_id'] = old_new_map['session'].astype('str') + '_' + \
+        old_new_map['unit_number_old'].astype('str')
+
+bla_neurons = bla_neurons.merge(
+        old_new_map[['session','unit_number_old','unit_number_new', 'nrn_id']],
+        how = 'left',
+        on = 'nrn_id')
+
+bla_neurons.dropna(inplace = True)
+bla_neurons.drop(columns = ['session_y','nrn_id','unit_number_old'], inplace = True)
+bla_neurons['unit_number_new'] = bla_neurons['unit_number_new'].astype(int)
+
+
+##############################
+##############################
 # For remaining neurons, pull out mean waveforms
 new_data_list_path = '/media/storage/for_transfer/bla_gc/data_dir_list.txt' 
 new_data_list = [x.strip() for x in open(new_data_list_path,'r').readlines()] 
@@ -1118,11 +1338,11 @@ sys.path.append('/media/bigdata/firing_space_plot/ephys_data')
 from ephys_data import ephys_data
 import tables
 
-session_list = []
-unit_list = []
-mean_waveform_list = []
-median_waveform_list = []
-waveform_counts_list = []
+gc_session_list = []
+gc_unit_list = []
+gc_mean_waveform_list = []
+gc_median_waveform_list = []
+gc_waveform_counts_list = []
 for this_session in tqdm(gc_neurons['basename'].unique()):
     this_data_path = [x for x in new_data_list if this_session in x][0]
     this_data = ephys_data(this_data_path)
@@ -1137,20 +1357,51 @@ for this_session in tqdm(gc_neurons['basename'].unique()):
             mean_waveform = np.mean(this_waveforms, axis = 0)
             median_waveform = np.median(this_waveforms, axis = 0)
             waveform_counts = this_waveforms.shape[0]
-            session_list.append(this_session)
-            unit_list.append(this_unit)
-            mean_waveform_list.append(mean_waveform)
-            median_waveform_list.append(median_waveform)
-            waveform_counts_list.append(waveform_counts)
+            gc_session_list.append(this_session)
+            gc_unit_list.append(this_unit)
+            gc_mean_waveform_list.append(mean_waveform)
+            gc_median_waveform_list.append(median_waveform)
+            gc_waveform_counts_list.append(waveform_counts)
+
+bla_session_list = []
+bla_unit_list = []
+bla_mean_waveform_list = []
+bla_median_waveform_list = []
+bla_waveform_counts_list = []
+for this_session in tqdm(bla_neurons['basename'].unique()):
+    this_data_path = [x for x in new_data_list if this_session in x][0]
+    this_data = ephys_data(this_data_path)
+    this_hdf_path = this_data.hdf5_path
+    this_bla_frame = bla_neurons.loc[bla_neurons['basename'] == this_session]
+    wanted_units = this_bla_frame['unit_number_new'].values
+    # Convert to unit_strs
+    wanted_unit_str_list = [f'unit{i:03}' for i in wanted_units]
+    with tables.open_file(this_hdf_path, 'r') as h5_file:
+        for this_unit, this_unit_str in zip(wanted_units, wanted_unit_str_list): 
+            this_waveforms = h5_file.get_node(f'/sorted_units/{this_unit_str}/waveforms')[:]
+            mean_waveform = np.mean(this_waveforms, axis = 0)
+            median_waveform = np.median(this_waveforms, axis = 0)
+            waveform_counts = this_waveforms.shape[0]
+            bla_session_list.append(this_session)
+            bla_unit_list.append(this_unit)
+            bla_mean_waveform_list.append(mean_waveform)
+            bla_median_waveform_list.append(median_waveform)
+            bla_waveform_counts_list.append(waveform_counts)
 
 # Normalize waveforms using
 # 1) Mean of first 10 samples == 0
 # 2) Trough == -1
-norm_mean_waveforms_list = []
-for this_mean_waveform in mean_waveform_list:
+gc_norm_mean_waveforms_list = []
+for this_mean_waveform in gc_mean_waveform_list:
     this_mean_waveform -= np.mean(this_mean_waveform[:10])
     this_mean_waveform /= -np.min(this_mean_waveform)
-    norm_mean_waveforms_list.append(this_mean_waveform)
+    gc_norm_mean_waveforms_list.append(this_mean_waveform)
+
+bla_norm_mean_waveforms_list = []
+for this_mean_waveform in bla_mean_waveform_list:
+    this_mean_waveform -= np.mean(this_mean_waveform[:10])
+    this_mean_waveform /= -np.min(this_mean_waveform)
+    bla_norm_mean_waveforms_list.append(this_mean_waveform)
 
 # Plot mean and median waveforms
 waveform_plot_dir = os.path.join(plot_dir, 'waveforms')
@@ -1180,11 +1431,14 @@ plt.savefig(os.path.join(
             bbox_inches = 'tight')
 plt.close()
 
+##############################
+# gc
+##############################
 # For each mean_waveform, calculate trough-to-next-peak time
 trough_times = []
 next_peak_times = []
 trough_peak_times = []
-for this_mean_waveform in mean_waveform_list:
+for this_mean_waveform in gc_mean_waveform_list:
     trough_ind = np.argmin(this_mean_waveform)
     next_peak_ind = np.argmax(this_mean_waveform[trough_ind:]) + trough_ind
     trough_times.append(trough_ind)
@@ -1194,11 +1448,191 @@ for this_mean_waveform in mean_waveform_list:
 # Sampling rate is 30 kHz
 sampling_rate = 30000
 trough_to_peak_ms = [x/sampling_rate*1000 for x in trough_peak_times]
-unit_labels = np.array(trough_to_peak_ms) < 0.4
+unit_labels = np.array(trough_to_peak_ms) < 0.45
 
 gc_neurons['trough_peak_time'] = trough_to_peak_ms
 gc_neurons['unit_label'] = unit_labels
+gc_neurons['waveform_counts'] = gc_waveform_counts_list
+gc_neurons['norm_mean_waveform'] = gc_norm_mean_waveforms_list
 
+##############################
+# bla
+##############################
+trough_times = []
+next_peak_times = []
+trough_peak_times = []
+for this_mean_waveform in bla_mean_waveform_list:
+    trough_ind = np.argmin(this_mean_waveform)
+    next_peak_ind = np.argmax(this_mean_waveform[trough_ind:]) + trough_ind
+    trough_times.append(trough_ind)
+    next_peak_times.append(next_peak_ind)
+    trough_peak_times.append(next_peak_ind - trough_ind)
+
+# Sampling rate is 30 kHz
+sampling_rate = 30000
+trough_to_peak_ms = [x/sampling_rate*1000 for x in trough_peak_times]
+unit_labels = np.array(trough_to_peak_ms) < 0.45
+
+bla_neurons['trough_peak_time'] = trough_to_peak_ms
+bla_neurons['unit_label'] = unit_labels
+bla_neurons['waveform_counts'] = bla_waveform_counts_list
+bla_neurons['norm_mean_waveform'] = bla_norm_mean_waveforms_list
+
+
+##############################
+##############################
+all_neurons = pd.concat([gc_neurons, bla_neurons])
+all_neurons['region'] = all_neurons['group_label'].apply(lambda x: x.split('_')[0])
+all_neurons['cxn_type'] = all_neurons['group_label'].apply(
+        lambda x: '_'.join(x.split('_')[1:]))
+
+# Replace unit_labels with False=Pyr, True=Int
+all_neurons['unit_label'] = all_neurons['unit_label'].apply(
+        lambda x: 'Pyr' if x else 'Int')
+
+# Replace group_labels
+cxn_type_dict = dict(
+        inter_receive_only = 'Inter Receive',
+        inter_send_receive = 'Inter Send + Receive',
+        inter_send_only = 'Inter Send',
+        intra_only = 'Intra')
+all_neurons['cxn_type'] = all_neurons['cxn_type'].apply(
+        lambda x: cxn_type_dict[x])
+
+
+# Pivot tables
+region_pivot = []
+for this_region in ['gc','bla']:
+    this_frame = all_neurons.loc[all_neurons['region'] == this_region]
+    this_pivot = this_frame.pivot_table(index = 'cxn_type',
+                                        columns = 'unit_label',
+                                        values = 'neuron',
+                                        aggfunc = 'count')
+    this_pivot.fillna(0, inplace = True)
+    region_pivot.append(this_pivot)
+
+# Save to waveform_plot_dir
+gc_pivot_path = os.path.join(waveform_plot_dir, 'gc_neuron_types.csv')
+bla_pivot_path = os.path.join(waveform_plot_dir, 'bla_neuron_types.csv')
+region_pivot[0].to_csv(gc_pivot_path)
+region_pivot[1].to_csv(bla_pivot_path)
+
+# Plot heatmap
+fig, ax = plt.subplots(1,2, figsize = (7,3),)
+# Annotated heatmap
+vmin = np.min([region_pivot[0].values, region_pivot[1].values])
+vmax = np.max([region_pivot[0].values, region_pivot[1].values])
+sns.heatmap(region_pivot[0], 
+            ax = ax[0], cmap = 'viridis',
+            annot = True, fmt = 'g',
+            vmin = vmin, vmax = vmax,
+            cbar = False)
+g = sns.heatmap(region_pivot[1], 
+            ax = ax[1], cmap = 'viridis',
+            annot = True, fmt = 'g',
+            vmin = vmin, vmax = vmax,
+            cbar = False)
+ax[0].set_title('GC Neuron Types')
+ax[1].set_title('BLA Neuron Types')
+# x-axis label = 'Putative Neuron Type'
+# y-axis label = 'Connection Type'
+for this_ax in ax:
+    this_ax.set_xlabel('Putative Neuron Type')
+    this_ax.set_ylabel('Connection Type')
+    this_ax.set_xticklabels(['Pyramidal','Interneuron'], rotation = 45)
+    this_ax.set_yticklabels(this_ax.get_yticklabels(), rotation = 0)
+plt.tight_layout()
+plt.savefig(os.path.join(
+    waveform_plot_dir, 'neuron_types_heatmap.svg'),
+            bbox_inches = 'tight')
+plt.close()
+
+##############################
+##############################
+# scatter of trough_peak_times vs waveform_counts,
+# with marker-type indicating region
+# and hue indicating putative neuron type
+bins = np.linspace(all_neurons['trough_peak_time'].min(),
+                   all_neurons['trough_peak_time'].max(), 20)
+# fig, ax = plt.subplots(2,1, sharex=True,
+#                        figsize = (5,7))
+fig = plt.figure(figsize = (5,4))
+cmap = sns.color_palette('tab10')
+# Add a large axis, and a small axis for histogram on top
+# Share x-axes
+ax = [
+      fig.add_axes([0.1,0.85,0.8,0.15]),
+      ]
+ax.append(
+        fig.add_axes([0.1,0.1,0.8,0.7]),
+        )
+markers = ['o','x']
+for i, nrn_type in enumerate(['Pyr','Int'][::-1]):
+    this_frame = all_neurons.loc[all_neurons['unit_label'] == nrn_type]
+    ax[0].hist(this_frame['trough_peak_time'], bins = bins, alpha = 0.5, 
+               label = nrn_type, color = cmap[i],)
+    ax[0].hist(this_frame['trough_peak_time'], bins = bins, alpha = 1, 
+               histtype = 'step', color = cmap[i],)
+    for region_ind, region in enumerate(['gc','bla']):
+        this_region_frame = this_frame.loc[this_frame['region'] == region]
+        ax[1].scatter(this_region_frame['trough_peak_time'], 
+                      this_region_frame['waveform_counts'],
+                      marker = markers[region_ind], color = cmap[i], 
+                      label = f'{region.upper()} {nrn_type}',
+                      alpha = 0.7)
+    # ax[1].scatter(this_frame['trough_peak_time'], this_frame['waveform_counts'],
+    #               marker = markers[i], color = cmap[i], label = nrn_type)
+ax[0].set_yscale('log')
+# Put legend outside
+ax[1].legend(loc = 'upper left', bbox_to_anchor = (1,1))
+# g = sns.scatterplot(
+#                 data = all_neurons,
+#                 x = 'trough_peak_time', 
+#                 y = 'waveform_counts',
+#                 hue = 'unit_label', 
+#                 style = 'region',
+#                 # palette = ['red','blue'],
+#                 # markers = ['o','x'],
+#                 ax = ax[1])
+# ax.set_xlabel('Trough-to-Peak Time (ms)')
+# ax.set_ylabel('Waveform Counts')
+ax[0].set_xticklabels([])
+ax[0].set_ylabel('Log Count')
+ax[1].set_xlabel('Trough-to-Peak Time (ms)')
+ax[1].set_ylabel('Waveform Counts')
+plt.tight_layout()
+plt.savefig(os.path.join(
+    waveform_plot_dir, 'regions_waveform_counts_vs_trough_peak_time.svg'),
+            bbox_inches = 'tight')
+plt.close()
+
+# Plot histogram by itself
+fig, ax = plt.subplots(figsize = (5,4))
+for i, nrn_type in enumerate(['Pyr','Int'][::-1]):
+    this_frame = all_neurons.loc[all_neurons['unit_label'] == nrn_type]
+    # Pick oppostite label
+    label = ['Pyr','Int'][i]
+    ax.hist(this_frame['trough_peak_time'], bins = bins, alpha = 0.5, 
+            label = label, color = cmap[i],)
+    ax.hist(this_frame['trough_peak_time'], bins = bins, alpha = 1, 
+            histtype = 'step', color = cmap[i], linewidth = 2)
+ax.set_yscale('log')
+ax.set_xlabel('Trough-to-Peak Time (ms)')
+ax.set_ylabel('Log Count')
+ax.legend(loc = 'upper left')
+# Remoev top and right spines
+ax.spines['top'].set_visible(False)
+ax.spines['right'].set_visible(False)
+plt.tight_layout()
+plt.savefig(os.path.join(
+    waveform_plot_dir, 'trough_peak_time_histogram.svg'),
+            bbox_inches = 'tight')
+plt.close()
+
+
+
+##############################
+##############################
 gc_group_frac = gc_neurons.groupby('group_label')['unit_label'].count()
 frac_inter = gc_neurons.groupby('group_label')['unit_label'].mean()
 gc_group_frac = pd.DataFrame(gc_group_frac)
@@ -1269,6 +1703,52 @@ plt.savefig(os.path.join(
             bbox_inches = 'tight')
 plt.close()
 
+###############
+###############
+# Plot waveforms for all neurons
+linestyles = ['-', '-x'][::-1]
+fig, ax = plt.subplots(figsize = (3,3))
+for inds, this_frame in all_neurons.groupby(['region','unit_label']):
+    waveforms = np.stack(this_frame['norm_mean_waveform'].values)
+    mean_waveform = np.mean(waveforms, axis = 0)
+    std_waveform = np.std(waveforms, axis = 0)
+    if inds[0] == 'gc':
+        ax.plot(mean_waveform, 
+                linestyles[inds[0] == 'gc'],
+                label = f'{inds[0]} {inds[1]}',
+                color = cmap[inds[1] == 'Pyr'],
+                # linestyle = linestyles[inds[0] == 'gc'],
+                linewidth = 3,
+                alpha = 0.7)
+    else:
+        ax.scatter(
+                np.arange(len(mean_waveform)),
+                mean_waveform,
+                marker = 'x',
+                label = f'{inds[0]} {inds[1]}',
+                color = cmap[inds[1] == 'Pyr'],
+                alpha = 0.7,
+                s = 50)
+        ax.plot(mean_waveform, 
+                label = f'{inds[0]} {inds[1]}',
+                color = cmap[inds[1] == 'Pyr'],
+                linewidth = 1,
+                alpha = 0.7)
+    # ax.fill_between(np.arange(len(mean_waveform)),
+    #                 mean_waveform - std_waveform,
+    #                 mean_waveform + std_waveform,
+    #                 alpha = 0.5,
+    #                 color = cmap[inds[1] == 'Pyr'],
+    #                 )
+ax.legend(loc = 'upper left', bbox_to_anchor = (1,1))
+ax.set_xlabel('Sample')
+ax.set_ylabel('Amplitude')
+plt.savefig(os.path.join(
+    waveform_plot_dir, 'all_neurons_waveforms.svg'),
+            bbox_inches = 'tight')
+plt.close()
+
+###############
 ###############
 # Get waveform for all gc neurons for comparison
 new_data_basenames = [x.split('/')[-1] for x in new_data_list]
@@ -1526,6 +2006,45 @@ g.savefig(os.path.join(
     coupling_analysis_plot_dir, 'fraction_neuron_connections.png'),
             bbox_inches = 'tight')
 plt.close()
+
+# make plots
+g = sns.catplot(data = fin_adj_frame,
+                x = 'region', y = 'values',
+                hue = 'type', row = 'type',
+                kind = 'violin', sharey = True)
+g.axes[0,0].set_title('Fraction of Neurons in Other \nRegion a Single Neuron Projects to')
+g.axes[1,0].set_title('Fraction of Neurons in Other \nRegion a Single Neuron Receives from')
+# Turn legend off
+g._legend.remove()
+g.fig.set_size_inches(3,5)
+plt.tight_layout()
+g.savefig(os.path.join(
+    coupling_analysis_plot_dir, 'fraction_neuron_connections_violin.png'),
+            bbox_inches = 'tight')
+plt.close()
+
+# Manually create the violin plot so we can overlay points on it
+fig, ax = plt.subplots(2,1, figsize = (3,5), sharey = True)
+for i, this_type in enumerate(fin_adj_frame['type'].unique()):
+    this_data = fin_adj_frame.loc[fin_adj_frame['type'] == this_type]
+    g = sns.violinplot(data = this_data,
+                       x = 'region', y = 'values',
+                       ax = ax[i],
+                       inner = 'point',
+                       hue = 'type',
+                       split = True,
+                       alpha = 0.5,
+                       inner_kws = {'s':20, 'facecolors':'none'},
+                       legend = False)
+    ax[i].set_title(f'Fraction of Neurons in Other \nRegion a Single Neuron {this_type}s to')
+    ax[i].set_ylabel('Fraction')
+    ax[i].set_xlabel('Region')
+plt.tight_layout()
+plt.savefig(os.path.join(
+    coupling_analysis_plot_dir, 'fraction_neuron_connections_violin_overlay.png'),
+            bbox_inches = 'tight')
+plt.close()
+
 
 # also plot other way
 g = sns.catplot(data = fin_adj_frame,
