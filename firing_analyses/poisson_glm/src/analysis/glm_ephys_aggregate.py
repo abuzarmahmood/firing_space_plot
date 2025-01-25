@@ -107,6 +107,8 @@ sig_alpha = 0.05
 data_inds_frame = pd.DataFrame(data_inds,
                                columns = ind_frame.columns)
 
+
+
 ############################################################
 # Preprocessing
 ############################################################
@@ -135,6 +137,180 @@ inds = np.logical_and(
         fin_ll_frame['trial_shuffled'] > low_lim, 
         )
 pretty_ll_data = fin_ll_frame.loc[inds]
+
+############################################################
+# R2 of trial-averaged rates 
+############################################################
+avg_pred_spikes_list = [x.mean(axis = 0) for x in pred_spikes_list]
+avg_design_spikes_list = [x.mean(axis = 0) for x in design_spikes_list]
+
+kern_len = 200
+kern = np.ones(kern_len)/kern_len
+
+pred_smooth = np.apply_along_axis(
+        lambda m: np.convolve(m, kern, mode = 'same'), 
+        axis = -1, 
+        arr = avg_pred_spikes_list)
+
+des_smooth = np.apply_along_axis(
+        lambda m: np.convolve(m, kern, mode = 'same'), 
+        axis = -1, 
+        arr = avg_design_spikes_list)
+
+trial_avg_psth_plot_dir = os.path.join(plot_dir, 'trial_avg_psths')
+if not os.path.exists(trial_avg_psth_plot_dir):
+    os.makedirs(trial_avg_psth_plot_dir)
+
+for i, (this_pred, this_des) in tqdm(
+        enumerate(
+            zip(
+                pred_smooth, des_smooth,
+                )
+            )
+        ):
+    fig,ax = plt.subplots()
+    ax.plot(this_des, label = 'Des')
+    ax.plot(this_pred, label = 'Pred')
+    fig.savefig(os.path.join(trial_avg_psth_plot_dir, f'model_{i}.png'))
+    plt.close(fig)
+
+# Calculate r2 for each neurons
+r2_list = [
+        # r2_score(x, y) for x, y in zip(pred_smooth, 
+        spearmanr(x, y)[0] for x, y in zip(pred_smooth, 
+                                          des_smooth)]
+
+unit_shuffle_r2_list = [
+        # r2_score(x, y) for x, y in zip(pred_smooth,
+        spearmanr(x, y)[0] for x, y in zip(pred_smooth,
+                                       np.random.permutation(des_smooth))
+        ]
+
+circ_shuffle_r2_list = [
+        # r2_score(np.random.permutation(x), y) for x, y in zip(pred_smooth,
+        spearmanr(np.random.permutation(x), y)[0] for x, y in zip(pred_smooth,
+                                                              des_smooth)
+        ]
+
+# Take abs
+r2_list = np.abs(r2_list)
+unit_shuffle_r2_list = np.abs(unit_shuffle_r2_list)
+circ_shuffle_r2_list = np.abs(circ_shuffle_r2_list)
+
+# Calculate p-values
+actual_vs_unit_p_test = wilcoxon(r2_list, unit_shuffle_r2_list)
+actual_vs_circ_p_test = wilcoxon(r2_list, circ_shuffle_r2_list)
+
+# bins = np.logspace(-3, 0, 50)
+fig, ax = plt.subplots(figsize = (5,4))
+bins = np.linspace(0, 1, 50)
+cmap = plt.get_cmap('tab10')
+plt.hist(r2_list, bins = bins, label = 'Actual', alpha = 0.5, color = cmap(0), density = True)
+plt.hist(unit_shuffle_r2_list, bins = bins, label = 'Unit Shuffle', alpha = 0.5, color = cmap(1), density = True)
+plt.hist(circ_shuffle_r2_list, bins = bins, label = 'Circ Shuffle', alpha = 0.5, color = cmap(2), density = True)
+# Add step hists
+plt.hist(r2_list, bins = bins, histtype = 'step', color = cmap(0), linewidth = 2, density = True)
+plt.hist(unit_shuffle_r2_list, bins = bins, histtype = 'step', color = cmap(1), linewidth = 2, density = True)
+plt.hist(circ_shuffle_r2_list, bins = bins, histtype = 'step', color = cmap(2), linewidth = 2, density = True)
+# plt.yscale('log')
+# plt.xlabel('R^2')
+plt.xlabel('Spearman R')
+plt.ylabel('Normalized Density')
+plt.legend()
+plt.title('Spearman R of Actual vs Predicted PSTHs\n' +\
+    f'Actual vs Unit Shuffle : stat: {actual_vs_unit_p_test.statistic:.2f}, p: {actual_vs_unit_p_test.pvalue:.2e}\n' +\
+    f'Actual vs Circ Shuffle : stat: {actual_vs_circ_p_test.statistic:.2f}, p: {actual_vs_circ_p_test.pvalue:.2e}')
+plt.yscale('log')
+plt.xlim([0,1])
+plt.tight_layout()
+plt.savefig(os.path.join(plot_dir, 'r2_trial_avg.svg'))
+plt.close()
+
+##############################
+# Make KDE plot with sns
+
+# Make a dataframe with the data
+r2_frame = pd.DataFrame(
+    dict(
+        r2 = r2_list,
+        shuffle = ['Actual']*len(r2_list)
+        )
+    )
+unit_shuffle_frame = pd.DataFrame(
+    dict(
+        r2 = unit_shuffle_r2_list,
+        shuffle = ['Unit']*len(unit_shuffle_r2_list)
+        )
+    )
+circ_shuffle_frame = pd.DataFrame(
+    dict(
+        r2 = circ_shuffle_r2_list,
+        shuffle = ['Circ']*len(circ_shuffle_r2_list)
+        )
+    )
+cat_frame = pd.concat([r2_frame, unit_shuffle_frame, circ_shuffle_frame])
+
+# Plot with seaborn
+sns.kdeplot(data = cat_frame, x = 'r2', hue = 'shuffle', fill = True)
+plt.xlabel('Spearman R')
+plt.ylabel('Density')
+plt.title('Spearman R of Actual vs Predicted PSTHs')
+plt.savefig(os.path.join(plot_dir, 'r2_trial_avg_kde.svg'))
+plt.close()
+
+##############################
+
+
+# Calculate normalized mse for each neuron 
+# def nmse(x,y):
+#     return np.mean((x-y)**2) / (np.mean(x)*np.mean(y))
+def nmse(x,y):
+    return np.mean((x-y)**2)
+nmse_list = [nmse(x, y) for x, y in zip(avg_pred_spikes_list,
+                                       avg_design_spikes_list)]
+nmse_mean_list = [
+        nmse(x, np.ones(x.shape)*np.mean(x)) for x in avg_pred_spikes_list]
+nmse_shuffle_list = [
+        nmse(x,y) for x, y in zip(avg_pred_spikes_list,
+                                  np.random.permutation(avg_design_spikes_list))]
+
+fig, ax = plt.subplots(1,3, figsize = (15,5))
+log_bins = np.logspace(-3, 2.5, 50)
+ax[0].hist(nmse_list, 
+         bins = log_bins, 
+         alpha = 0.5, 
+         label = 'Actual')
+ax[0].hist(nmse_mean_list, 
+         bins = log_bins, 
+         alpha = 0.5, 
+         log = True,
+         label = 'vs Mean')
+ax[0].hist(nmse_shuffle_list, 
+         bins = log_bins, 
+         alpha = 0.5, 
+         log = True,
+         label = 'vs Shuffled')
+ax[0].set_xlabel('NMSE')
+ax[0].set_ylabel('Count')
+ax[0].set_title('NMSE of Trial-Averaged Rates')
+ax[0].legend()
+ax[1].scatter(nmse_list, nmse_mean_list, alpha = 0.1) 
+ax[1].set_xlabel('NMSE Actual')
+ax[1].set_ylabel('NMSE vs Mean')
+min_val = np.min([min(nmse_list), min(nmse_mean_list)])
+max_val = np.max([max(nmse_list), max(nmse_mean_list)])
+ax[1].plot([min_val, max_val], [min_val, max_val],
+           color = 'r', linestyle = '--')
+ax[1].set_aspect('equal')
+ax[2].scatter(nmse_list, nmse_shuffle_list, alpha = 0.1)
+ax[2].set_xlabel('NMSE Actual')
+ax[2].set_ylabel('NMSE vs Shuffled')
+min_val = np.min([min(nmse_list), min(nmse_shuffle_list)])
+max_val = np.max([max(nmse_list), max(nmse_shuffle_list)])
+ax[2].plot([min_val, max_val], [min_val, max_val],
+           color = 'r', linestyle = '--')
+plt.savefig(os.path.join(plot_dir, 'nmse_trial_avg.png'))
+plt.close()
 
 ############################################################
 # Pred R^2
@@ -248,76 +424,76 @@ for ind in tqdm(range(len(test_spikes_list))):
     psth_r2_list.append(psth_r2)
 
     # Plot all trials for test_psth vs test_pred_psth
-    if trial_avg_pred_r2 > 0.5 and make_plots and pred_r > psth_r:
-        fig, ax = vz.gen_square_subplots(test_psth.shape[0],
-                                         sharex = True, sharey = True)
-        for i in range(test_psth.shape[0]):
-            ax.flatten()[i].plot(1000*test_psth[i,:], label = 'Actual')
-            ax.flatten()[i].plot(1000*test_pred_psth[i,:], label = 'Pred')
-            if i == 0:
-                ax.flatten()[i].legend()
-        fig.savefig(os.path.join(test_psth_plot_dir, f'test_psth_{ind}.png'))
-        plt.close(fig)
+    # if trial_avg_pred_r2 > 0.5 and make_plots and pred_r > psth_r:
+    #     fig, ax = vz.gen_square_subplots(test_psth.shape[0],
+    #                                      sharex = True, sharey = True)
+    #     for i in range(test_psth.shape[0]):
+    #         ax.flatten()[i].plot(1000*test_psth[i,:], label = 'Actual')
+    #         ax.flatten()[i].plot(1000*test_pred_psth[i,:], label = 'Pred')
+    #         if i == 0:
+    #             ax.flatten()[i].legend()
+    #     fig.savefig(os.path.join(test_psth_plot_dir, f'test_psth_{ind}.png'))
+    #     plt.close(fig)
 
-        # Also plot mean psths for both test and test_pred
-        fig, ax = plt.subplots()
-        ax.plot(1000*mean_test_psth, label = 'Actual')
-        ax.plot(1000*mean_test_pred_psth, label = 'Pred')
-        ax.legend()
-        fig.savefig(os.path.join(test_psth_plot_dir, f'mean_test_psth_{ind}.png'))
-        plt.close(fig)
+    #     # Also plot mean psths for both test and test_pred
+    #     fig, ax = plt.subplots()
+    #     ax.plot(1000*mean_test_psth, label = 'Actual')
+    #     ax.plot(1000*mean_test_pred_psth, label = 'Pred')
+    #     ax.legend()
+    #     fig.savefig(os.path.join(test_psth_plot_dir, f'mean_test_psth_{ind}.png'))
+    #     plt.close(fig)
 
-        # Plot scatters of tiled psth vs test psth vs test pred psth
-        fig, ax = plt.subplots(2,1, sharex=True, sharey=True,
-                               figsize = (5,5))
-        ax[0].scatter(tiled_psth.flatten(), test_psth.flatten(), alpha = 0.1)
-        ax[0].set_title('Tiled psth vs test psth')
-        # ax[0].set_aspect('equal')
-        ax[0].set_xlabel('Tiled psth')
-        ax[0].set_ylabel('Test psth')
-        ax[1].scatter(test_pred_psth.flatten(), test_psth.flatten(), alpha = 0.1)
-        ax[1].set_title('Test pred psth vs test psth')
-        # ax[1].set_aspect('equal')
-        ax[1].set_xlabel('Test pred psth')
-        ax[1].set_ylabel('Test psth')
-        ax[0].set_aspect('equal')
-        ax[1].set_aspect('equal')
-        fig.suptitle(f'Pred corr: {pred_r:.3f}, Psth corr: {psth_r:.3f}') 
-        min_val = np.min([ax[0].get_xlim()[0], ax[0].get_ylim()[0]])
-        max_val = np.max([ax[0].get_xlim()[1], ax[0].get_ylim()[1]])
-        ax[0].set_xlim([min_val, max_val])
-        ax[0].set_ylim([min_val, max_val])
-        for this_ax in ax:
-            this_ax.plot([min_val, max_val], [min_val, max_val],
-                         color = 'r', linestyle = '--')
-        plt.tight_layout()
-        fig.savefig(os.path.join(test_psth_plot_dir,
-                                 f'test_psth_scatter_{ind}.png'),
-                    bbox_inches = 'tight') 
-        plt.close(fig)
-        #plt.show()
+    #     # Plot scatters of tiled psth vs test psth vs test pred psth
+    #     fig, ax = plt.subplots(2,1, sharex=True, sharey=True,
+    #                            figsize = (5,5))
+    #     ax[0].scatter(tiled_psth.flatten(), test_psth.flatten(), alpha = 0.1)
+    #     ax[0].set_title('Tiled psth vs test psth')
+    #     # ax[0].set_aspect('equal')
+    #     ax[0].set_xlabel('Tiled psth')
+    #     ax[0].set_ylabel('Test psth')
+    #     ax[1].scatter(test_pred_psth.flatten(), test_psth.flatten(), alpha = 0.1)
+    #     ax[1].set_title('Test pred psth vs test psth')
+    #     # ax[1].set_aspect('equal')
+    #     ax[1].set_xlabel('Test pred psth')
+    #     ax[1].set_ylabel('Test psth')
+    #     ax[0].set_aspect('equal')
+    #     ax[1].set_aspect('equal')
+    #     fig.suptitle(f'Pred corr: {pred_r:.3f}, Psth corr: {psth_r:.3f}') 
+    #     min_val = np.min([ax[0].get_xlim()[0], ax[0].get_ylim()[0]])
+    #     max_val = np.max([ax[0].get_xlim()[1], ax[0].get_ylim()[1]])
+    #     ax[0].set_xlim([min_val, max_val])
+    #     ax[0].set_ylim([min_val, max_val])
+    #     for this_ax in ax:
+    #         this_ax.plot([min_val, max_val], [min_val, max_val],
+    #                      color = 'r', linestyle = '--')
+    #     plt.tight_layout()
+    #     fig.savefig(os.path.join(test_psth_plot_dir,
+    #                              f'test_psth_scatter_{ind}.png'),
+    #                 bbox_inches = 'tight') 
+    #     plt.close(fig)
+    #     #plt.show()
 
-        fig,ax = plt.subplots(3,1)
-        vmin = np.min([test_psth, test_pred_psth, tiled_psth])
-        vmax = np.max([test_psth, test_pred_psth, tiled_psth])
-        img_kwargs = dict(vmin = vmin, vmax = vmax, 
-                          aspect = 'auto', cmap = 'jet')
-        im = ax[0].imshow(tiled_psth, **img_kwargs) 
-        ax[0].set_title('Tiled psth')
-        # ax[0].plot(mean_test_pred_psth, label = 'Mean test pred')
-        # ax[0].plot(test_psth.T, alpha = 0.1)#label = 'Test data')
-        ax[1].imshow(test_psth, **img_kwargs) 
-        ax[1].set_title('Test psth')
-        ax[2].imshow(test_pred_psth, **img_kwargs) 
-        ax[2].set_title('Test pred psth')
-        for this_ax in ax:
-            plt.colorbar(im, ax = this_ax)
-        plt.tight_layout()
-        fig.savefig(os.path.join(test_psth_plot_dir,
-                                 f'test_psth_heatmap_{ind}.png'),
-                    bbox_inches = 'tight')
-        plt.close(fig)
-        # plt.show()
+    #     fig,ax = plt.subplots(3,1)
+    #     vmin = np.min([test_psth, test_pred_psth, tiled_psth])
+    #     vmax = np.max([test_psth, test_pred_psth, tiled_psth])
+    #     img_kwargs = dict(vmin = vmin, vmax = vmax, 
+    #                       aspect = 'auto', cmap = 'jet')
+    #     im = ax[0].imshow(tiled_psth, **img_kwargs) 
+    #     ax[0].set_title('Tiled psth')
+    #     # ax[0].plot(mean_test_pred_psth, label = 'Mean test pred')
+    #     # ax[0].plot(test_psth.T, alpha = 0.1)#label = 'Test data')
+    #     ax[1].imshow(test_psth, **img_kwargs) 
+    #     ax[1].set_title('Test psth')
+    #     ax[2].imshow(test_pred_psth, **img_kwargs) 
+    #     ax[2].set_title('Test pred psth')
+    #     for this_ax in ax:
+    #         plt.colorbar(im, ax = this_ax)
+    #     plt.tight_layout()
+    #     fig.savefig(os.path.join(test_psth_plot_dir,
+    #                              f'test_psth_heatmap_{ind}.png'),
+    #                 bbox_inches = 'tight')
+    #     plt.close(fig)
+    #     # plt.show()
 
 # Convert lists to arrays for easier manipulation
 pred_r2_list = np.array(pred_r2_list)
@@ -713,24 +889,29 @@ plt.close()
 
 # Histogram along diagonal
 # Convert data to vectors
-vec_data = np.array([
-    pretty_ll_data['actual'],
-    pretty_ll_data['trial_shuffled']
-    ]).T
-proj_vec = np.array([-1,1])
-proj_data = np.dot(vec_data, proj_vec)
+# vec_data = np.array([
+#     pretty_ll_data['actual'],
+#     pretty_ll_data['trial_shuffled']
+#     ]).T
+# proj_vec = np.array([-1,1])
+# proj_data = np.dot(vec_data, proj_vec)
+proj_data = pretty_ll_data['actual'] - pretty_ll_data['trial_shuffled']
 
 # Check that median is significantly different from 0
 wil_stat, wil_p = wilcoxon(proj_data)
 
-fig, ax = plt.subplots(figsize = (5,3))
-ax.hist(proj_data, bins = 50, density = True, alpha = 0.5, color = 'k');
-ax.hist(proj_data, bins = 50, histtype = 'step', color = 'k', density = True);
+fig, ax = plt.subplots(figsize = (5,4))
+x_lims = [-700, 700]
+bins = np.linspace(x_lims[0], x_lims[1], 50)
+ax.hist(proj_data, bins = bins, density = True, alpha = 0.5, color = 'k');
+ax.hist(proj_data, bins = bins, histtype = 'step', color = 'k', density = True);
 ax.axvline(0, color = 'red', linestyle = '--', linewidth = 2)
-ax.set_xlabel('Actual - Trial Shuffled Likelihood')
+ax.set_xlabel('Actual - Trial Shuffled Neg Log Likelihood\n' +\
+        '<-- Shuffled better | Actual better -->')
 # ax.set_ylabel('Count')
-plt.suptitle('Actual vs Trial Shuffled Log Likelihood\n' +\
-        f'Wilcoxon p = {wil_p:.3f}')
+plt.suptitle('Actual vs Trial Shuffled Neg Log Likelihood\n' +\
+        f'Wilcoxon p = {wil_p:.3f}, stat = {wil_stat}\n' +\
+        f'Median = {np.median(proj_data):.3f}')
 # Mark median with arrow
 med_val = np.median(proj_data)
 ax.annotate(
@@ -749,6 +930,7 @@ ax.annotate(
 ax.spines['right'].set_visible(False)
 ax.spines['top'].set_visible(False)
 ax.spines['left'].set_visible(False)
+# ax.set_xlim([-500, 500])
 ax.set_yticks([])
 plt.tight_layout()
 plt.savefig(os.path.join(plot_dir, 'actual_vs_trial_shuffled_ll_hist.svg'),
