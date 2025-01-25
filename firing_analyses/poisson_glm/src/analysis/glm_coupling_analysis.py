@@ -9,7 +9,7 @@ import pylab as plt
 import pandas as pd
 import sys
 sys.path.append('/media/bigdata/firing_space_plot/firing_analyses/poisson_glm/src')
-import utils.makeRaisedCosBasis as cb
+from utils import makeRaisedCosBasis as cb
 from analysis import aggregate_utils
 from pandas import DataFrame as df
 from pandas import concat
