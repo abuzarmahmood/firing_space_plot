@@ -2,6 +2,7 @@
 Perform changepoint detection on significance mask of granger causality
 for each direction of interaction
 """
+
 import tables
 import os
 import numpy as np
@@ -9,10 +10,14 @@ from glob import glob
 import matplotlib.pyplot as plt
 from tqdm import trange, tqdm
 from scipy import stats
-import pymc3 as pm
+import pymc as pm
 from sklearn.cluster import KMeans
 from scipy.signal import savgol_filter
 from matplotlib.patches import Rectangle
+from sklearn.decomposition import PCA
+# import pickle
+from cloudpickle import dump, load
+from multiprocessing import cpu_count
 
 import pandas as pd
 import seaborn as sns
@@ -416,6 +421,53 @@ mean_mask_bands = np.stack(mean_mask_bands, axis=1)
 zscored_mean_mask_bands = np.stack([
     stats.zscore(x, axis=-1) for x in mean_mask_bands])
 
+##############################
+# Generate PCA of zscored spectra
+
+# Plot explained_variance_ratio for zscored_mean_mask
+zscored_mean_mask = np.stack(
+        [
+            stats.zscore(x, axis=-1) for x in mean_mask
+            ]
+        )
+
+explained_variance = []
+for this_dir in zscored_mean_mask:
+    pca = PCA()
+    pca.fit(this_dir.T)
+    explained_variance.append(pca.explained_variance_ratio_)
+
+pca_spectra_list = []
+for this_dir in mean_mask:
+    pca = PCA(n_components = 5)
+    pca.fit(this_dir.T)
+    print(len(pca.components_))
+    pca_data = pca.transform(this_dir.T).T
+    pca_data = stats.zscore(pca_data, axis=-1)
+    pca_spectra_list.append(pca_data)
+
+fig, ax = plt.subplots(2,3, figsize = (7.5,5))
+for i in range(2):
+    ax[i,0].imshow(zscored_mean_mask[i], aspect='auto', origin='lower',
+                   interpolation='none',
+                     extent=[time_vec[0], time_vec[-1],
+                             freq_vec[0], freq_vec[-1]],
+                        cmap='viridis')
+    ax[i,1].plot(explained_variance[i], '-x')
+    ax[i,2].imshow(pca_spectra_list[i], aspect='auto', origin='lower',
+                   interpolation='none',
+                   extent=[time_vec[0], time_vec[-1],
+                           pca_spectra_list[i].shape[0], 0],
+                   cmap='viridis')
+    ax[i,0].set_ylabel('Frequency (Hz)')
+    ax[i,0].set_xlabel('Time (s)')
+plt.tight_layout()
+fig.savefig(os.path.join(plot_dir_base, 'granger_mask_pca.png'))
+plt.close()
+
+
+
+
 ## Plot mean mask bands
 #fig, ax = plt.subplots(2,2)
 #for i, this_ax in enumerate(ax):
@@ -436,53 +488,177 @@ zscored_mean_mask_bands = np.stack([
 ############################################################
 # Using Dirichlet Process Prior 
 ############################################################
-max_states = 10
-n_chains = 30
+max_states = 6
+n_chains = 24
+n_cores = np.min([n_chains, cpu_count()])
 
-model_list = []
-trace_list = []
-for data_array in zscored_mean_mask_bands:
-    dpp_model = models.gaussian_changepoint_mean_dirichlet(
-            data_array, max_states = max_states)
-    with dpp_model:
-        dpp_trace = pm.sample(
-                            tune = 500,
-                            draws = 500, 
-                              target_accept = 0.95,
-                             chains = n_chains,
-                             cores = 30,
-                            return_inferencedata=False)
-    trace_list.append(dpp_trace)
-    model_list.append(dpp_model)
 
-tau_samples = np.stack([x['tau'] for x in trace_list], axis=0)
+for max_states in np.arange(6,11):
+    max_states = int(max_states)
+    trace_path = os.path.join(artifact_dir, f'granger_mask_changepoints_dirichlet_{max_states}states.pkl')
 
-ppc_list = []
-for this_model, this_trace in zip(model_list, trace_list):
-    this_ppc = pm.sample_posterior_predictive(
-        this_trace, model = this_model, var_names = ['obs','w_latent', 'tau'])
-    ppc_list.append(this_ppc)
-ppc_w_latent = np.stack([x['w_latent'] for x in ppc_list], axis=0)
-ppc_tau = np.stack([x['tau'] for x in ppc_list], axis=0)
-ppc_list = [x['obs'] for x in ppc_list]
-mean_ppc = np.stack(ppc_list).mean(axis=1)
+    if not os.path.exists(trace_path):
+        model_list = []
+        trace_list = []
+        for data_array in zscored_mean_mask_bands:
+        # for data_array in pca_spectra_list:
+            dpp_model = models.gaussian_changepoint_mean_dirichlet(
+                    data_array, max_states = max_states)
+            with dpp_model:
+                # dpp_trace = pm.sample_smc(return_inferencedata=False)
+                # Numpyro sampler seems to ignore return_inferencedata flag
+                rng = np.random.default_rng(666)
+                dpp_trace = pm.sample(
+                                    tune = 1000,
+                                    draws = 4000, 
+                                    target_accept = 0.95,
+                                    chains = int(n_chains),
+                                    cores = int(n_cores),
+                                    nuts_sampler = 'numpyro',
+                                    return_inferencedata=True,
+                                    random_seed = rng)
+            trace_list.append(dpp_trace)
+            model_list.append(dpp_model)
 
-# Apparatus for extracting state counts
-w_latent_samples = np.stack([x['w_latent'] for x in trace_list])
-sorted_w_latent = np.sort(w_latent_samples, axis=-1)[...,::-1]
-chain_w_latent = np.stack(np.array_split(sorted_w_latent, n_chains, axis=1))
-mean_sorted = np.swapaxes(np.mean(chain_w_latent, axis=2), 0, 1)
+        # Save traces and models
+        with open(trace_path, 'wb') as f:
+            # pickle.dump((model_list, trace_list), f)
+            dump((model_list, trace_list), f)
+    else:
+        with open(trace_path, 'rb') as f:
+            model_list, trace_list = load(f)
+            # model_list, trace_list = pickle.load(f)
 
-set_thresh = 0.05
-inds = np.array(list(np.ndindex(mean_sorted.shape)))
-state_frame = pd.DataFrame(
-                        dict(
-                            dirs = inds[:,0],
-                            chains = inds[:,1],
-                            states = inds[:,2]+1,
-                            dur = mean_sorted.flatten()
+    tau_samples = np.stack([x.posterior['tau'] for x in trace_list], axis=0)
+
+    ppc_list = []
+    for this_model, this_trace in zip(model_list, trace_list):
+        this_ppc = pm.sample_posterior_predictive(
+            this_trace, model = this_model, var_names = ['obs','w_latent', 'tau'])
+        ppc_list.append(this_ppc)
+    ppc_w_latent = np.stack([x.posterior_predictive['w_latent'] for x in ppc_list], axis=0)
+    ppc_tau = np.stack([x.posterior_predictive['tau'] for x in ppc_list], axis=0)
+    ppc_list = [x.posterior_predictive['obs'] for x in ppc_list]
+    mean_ppc = np.stack([np.mean(x, axis=(0,1)) for x in ppc_list], axis=0)
+
+    # Apparatus for extracting state counts
+    w_latent_samples = np.stack([x.posterior['w_latent'] for x in trace_list])
+    sorted_w_latent = np.sort(w_latent_samples, axis=-1)[...,::-1]
+    # chain_w_latent = np.stack(np.array_split(sorted_w_latent, n_chains, axis=1))
+    # mean_sorted = np.swapaxes(np.mean(chain_w_latent, axis=2), 0, 1)
+    mean_sorted = np.mean(sorted_w_latent, axis=2)
+
+    set_thresh = 0.05
+    inds = np.array(list(np.ndindex(mean_sorted.shape)))
+    state_frame = pd.DataFrame(
+                            dict(
+                                dirs = inds[:,0],
+                                chains = inds[:,1],
+                                states = inds[:,2]+1,
+                                dur = mean_sorted.flatten()
+                            )
                         )
-                    )
+
+    yticks = np.arange(len(band_ranges)) + 0.5
+    yticks = yticks * ((freq_vec.max() - freq_vec.min()) / len(band_ranges))
+    fig, ax = plt.subplots(6, 2, figsize = (10,15))
+    for i in range(ax.shape[1]):
+        this_frame = state_frame[state_frame['dirs'] == i]
+        sns.stripplot(
+            data = this_frame,
+            x = 'states',
+            y = 'dur',
+            color = 'k',
+            ax = ax[0,i],
+            alpha = 0.5,
+        );
+        ax[0,i].set_title(dir_names[i])
+        ax[0,i].plot(mean_sorted[i].T, alpha = 0.7, color = 'grey')
+        ax[0,i].axhline(set_thresh, color = 'red', linestyle = '--',
+                 label = f'Set thresh : {set_thresh}')
+        ax[0,i].legend()
+        ax[0,i].set_ylabel('State Durations')
+        # ax[1,i].imshow(pca_spectra_list[i], aspect='auto', origin='lower',
+        ax[1,i].imshow(1 - zscored_mean_mask_bands[i], aspect='auto', origin='lower',
+                       interpolation='nearest',
+                       extent=[time_vec[0], time_vec[-1],
+                               freq_vec[0], freq_vec[-1]],
+                       )
+        ax[1,i].set_yticks(yticks)
+        ax[1,i].set_yticklabels([str(x) for x in band_ranges])
+        ax[1,i].set_ylabel('Frequency (Hz)')
+        ax[1,i].set_xlabel('Time')
+        ax[1,i].set_title('Zscored Mask')
+        ax[2,i].imshow(1 - mean_ppc[i], aspect='auto', origin='lower',
+                       interpolation='nearest',
+                       extent=[time_vec[0], time_vec[-1],
+                               freq_vec[0], freq_vec[-1]],
+                       )
+        ax[2,i].set_yticks(yticks)
+        ax[2,i].set_yticklabels([str(x) for x in band_ranges])
+        ax[2,i].set_title('Mean PPC')
+        # tau_int = np.round(ppc_tau[i]).astype(int).flatten()
+        tau_int = np.round(tau_samples[i]).astype(int).flatten()
+        tau_int = np.clip(tau_int, 0, len(time_vec)-1)
+        ax[3,i].hist(time_vec[tau_int], 
+                     bins = time_vec[:-1], color = 'grey')
+        ax[3,i].set_title('All State Tau Distribution')
+        # peaks = [-0.07, 0.23, 0.73, 0.93]
+        peaks = [-0.07, 0.23, 0.9]
+        for this_peak in peaks:
+            ax[3,i].axvline(this_peak, color = 'red', linestyle = '--')
+        ax[3,i].sharex(ax[2,i])
+        # ax[3,i].set_yscale('log')
+        bins = np.arange(int(np.max(tau_samples)))
+        tau_hist = np.stack([np.histogram(x.flatten(), bins=bins)[0] for x in  tau_samples[i]])
+        ax[4,i].imshow(tau_hist, aspect='auto', origin='lower',
+                       interpolation='nearest',)
+        ax[4,i].set_xlabel('Time bin')
+        ax[4,i].set_ylabel('Chain #')
+        max_state_per_chain = this_frame.loc[this_frame.dur > set_thresh].groupby('chains').max()
+        max_state_counts = max_state_per_chain.groupby('states').count()
+        state_vec = np.arange(0,max_states+1)
+        counts = [max_state_counts.loc[x].values[0] if x in max_state_counts.index else 0 for x in state_vec ]
+        ax[5,i].bar(state_vec, counts)
+        ax[5,i].set_xlabel("States")
+        ax[5,i].set_ylabel('Count')
+        ax[5,i].set_title(f'State Distribution, Thresh = {set_thresh}')
+    plt.tight_layout()
+    fig.savefig(os.path.join(plot_dir_base, f'granger_mask_changepoints_dirichlet_{max_states}states.svg'))
+    plt.close(fig)
+    #plt.show()
+
+##############################
+# Get all models and plot flat histograms
+
+model_list = sorted(glob(os.path.join(artifact_dir,'granger*dirichlet*pkl')))
+model_states = [int(x.split('states')[0].split('_')[-1]) for x in model_list]
+sort_inds = np.argsort(model_states)
+model_list = [model_list[i] for i in sort_inds]
+model_states = [model_states[i] for i in sort_inds]
+
+peaks = [-0.07, 0.23, 0.9]
+fig, ax = plt.subplots(len(model_list), 2, sharex=True, sharey=False,
+                       figsize = (10,5))
+for i, model_path in enumerate(model_list):
+    with open(model_path,'rb') as f:
+        this_model = load(f)[1]
+    tau_samples = np.stack([x.posterior['tau'] for x in this_model], axis=0)
+    for j, this_samples in enumerate(tau_samples):
+        int_tau = np.vectorize(int)(this_samples.flatten())
+        int_tau[int_tau > (len(time_vec)-1)] = len(time_vec) - 1
+        time_samples = time_vec[int_tau]
+        ax[i,j].hist(time_samples, bins = time_vec)
+        for this_peak in peaks:
+            ax[i,j].axvline(this_peak, color = 'red', linestyle = '--', alpha = 0.7)
+    ax[i,0].set_ylabel(f'{model_states[i]} states')
+fig.suptitle('Aggregate changepoints')
+fig.savefig(os.path.join(plot_dir_base, 'changepoint_dirichlet_aggregrate.svg'),
+            bbox_inches='tight')
+plt.close(fig)
+    
+    
+##############################
 
 yticks = np.arange(len(band_ranges)) + 0.5
 yticks = yticks * ((freq_vec.max() - freq_vec.min()) / len(band_ranges))
@@ -494,7 +670,8 @@ for i in range(ax.shape[1]):
         x = 'states',
         y = 'dur',
         color = 'k',
-        ax = ax[0,i]
+        ax = ax[0,i],
+        alpha = 0.5,
     );
     ax[0,i].set_title(dir_names[i])
     ax[0,i].plot(mean_sorted[i].T, alpha = 0.7, color = 'grey')
@@ -502,8 +679,9 @@ for i in range(ax.shape[1]):
              label = f'Set thresh : {set_thresh}')
     ax[0,i].legend()
     ax[0,i].set_ylabel('State Durations')
-    ax[1,i].imshow(zscored_mean_mask_bands[i], aspect='auto', origin='lower',
-                   interpolation='none',
+    # ax[1,i].imshow(pca_spectra_list[i], aspect='auto', origin='lower',
+    ax[1,i].imshow(1 - zscored_mean_mask_bands[i], aspect='auto', origin='lower',
+                   interpolation='nearest',
                    extent=[time_vec[0], time_vec[-1],
                            freq_vec[0], freq_vec[-1]],
                    )
@@ -512,21 +690,25 @@ for i in range(ax.shape[1]):
     ax[1,i].set_ylabel('Frequency (Hz)')
     ax[1,i].set_xlabel('Time')
     ax[1,i].set_title('Zscored Mask')
-    ax[2,i].imshow(mean_ppc[i], aspect='auto', origin='lower',
-                   interpolation='none',
+    ax[2,i].imshow(1 - mean_ppc[i], aspect='auto', origin='lower',
+                   interpolation='nearest',
                    extent=[time_vec[0], time_vec[-1],
                            freq_vec[0], freq_vec[-1]],
                    )
     ax[2,i].set_yticks(yticks)
     ax[2,i].set_yticklabels([str(x) for x in band_ranges])
     ax[2,i].set_title('Mean PPC')
-    ax[3,i].hist(time_vec[tau_samples[i].flatten().astype('int')], 
-                 bins = time_vec, color = 'grey')
+    tau_int = np.round(ppc_tau[i]).astype(int).flatten()
+    tau_int = np.clip(tau_int, 0, len(time_vec)-1)
+    ax[3,i].hist(time_vec[tau_int], 
+                 bins = time_vec[:-1], color = 'grey')
     ax[3,i].set_title('All State Tau Distribution')
-    peaks = [-0.07, 0.23, 0.73, 0.93]
+    # peaks = [-0.07, 0.23, 0.73, 0.93]
+    peaks = [-0.07, 0.23, 0.9]
     for this_peak in peaks:
         ax[3,i].axvline(this_peak, color = 'red', linestyle = '--')
     ax[3,i].sharex(ax[2,i])
+    # ax[3,i].set_yscale('log')
     max_state_per_chain = this_frame.loc[this_frame.dur > set_thresh].groupby('chains').max()
     max_state_counts = max_state_per_chain.groupby('states').count()
     state_vec = np.arange(0,max_states+1)
@@ -535,12 +717,15 @@ for i in range(ax.shape[1]):
     ax[4,i].set_xlabel("States")
     ax[4,i].set_ylabel('Count')
     ax[4,i].set_title(f'State Distribution, Thresh = {set_thresh}')
+time_lims = [-0.5, time_vec[-1]]
+for this_ax in ax[1:].flatten():
+    this_ax.set_xlim(time_lims)
 plt.tight_layout()
-fig.savefig(os.path.join(plot_dir_base, 'granger_mask_changepoints_dirichlet.png'),
-            dpi = 300)
+fig.savefig(os.path.join(plot_dir_base, 'granger_mask_changepoints_dirichlet_cut.svg'))
 plt.close(fig)
 #plt.show()
 
+##############################
 # Plot 5 state changepoint hists using ppc
 wanted_n_states = 5
 ppc_obs_array = np.stack(ppc_list)
@@ -574,8 +759,8 @@ for this_ax in ax.flatten():
         this_ax.axvline(this_peak, color = 'red', linestyle = '--')
 fig.suptitle('Tau Distribution, 5 State\n' + str(peaks) )
 plt.tight_layout()
-fig.savefig(os.path.join(plot_dir_base, 'granger_mask_changepoints_dirichlet_5state.png'),
-            dpi = 300)
+fig.savefig(os.path.join(plot_dir_base, 'granger_mask_changepoints_dirichlet_5state.svg'),
+            )
 plt.close(fig)
 
 # Plot per transition histograms for each tau
@@ -821,4 +1006,41 @@ fig, ax = plt.subplots(2,1)
 for this_mu, this_ax in zip(mean_mu, ax):
     this_ax.matshow(this_mu, aspect='auto', origin='lower',
                     )
+plt.show()
+
+############################################################
+
+mean_pca_mask = np.load(os.path.join(artifact_dir, 'mean_pca_mask.npy'))
+max_states = 10
+n_chains = 10
+n_cores = np.min([n_chains, cpu_count()])
+dpp_model = models.gaussian_changepoint_mean_dirichlet(
+        mean_pca_mask, max_states = max_states)
+with dpp_model:
+    # dpp_trace = pm.sample_smc(return_inferencedata=False)
+    # Numpyro sampler seems to ignore return_inferencedata flag
+    rng = np.random.default_rng(666)
+    dpp_trace = pm.sample(
+                        tune = 50,
+                        draws = 200, 
+                        target_accept = 0.95,
+                        chains = int(n_chains),
+                        cores = int(n_cores),
+                        nuts_sampler = 'numpyro',
+                        return_inferencedata=True,
+                        random_seed = rng)
+tau_samples = dpp_trace.posterior['tau'].values 
+np.save(
+        os.path.join(artifact_dir, 'pca_mask_changepoints_tau.npy'),
+        tau_samples
+        )
+
+fig, ax = plt.subplots(2,1, sharex=True)
+n_bins = mean_pca_mask.shape[-1]
+ax[0].imshow(mean_pca_mask, interpolation='none', aspect='auto')
+ax[1].hist(tau_samples.flatten(), bins = n_bins) 
+ax[1].hist(np.random.uniform(0, n_bins, len(tau_samples.flatten())), bins = n_bins,
+        alpha = 0.3, color = 'k')
+ax[1].axhline(len(tau_samples.flatten()) / n_bins, color = 'k')
+ax.set_xlim([0, mean_pca_mask.shape[-1]])
 plt.show()
