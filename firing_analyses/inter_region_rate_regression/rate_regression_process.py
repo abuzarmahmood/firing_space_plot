@@ -13,7 +13,7 @@ from sklearn.model_selection import GroupKFold, cross_validate
 from sklearn.decomposition import PCA
 from sklearn.neural_network import MLPRegressor
 from sklearn.linear_model import LinearRegression
-from scipy.stats import spearmanr, pearsonr
+from scipy.stats import spearmanr, pearsonr, wilcoxon
 from sklearn.metrics import make_scorer, mean_squared_error
 import seaborn as sns
 import base64
@@ -340,15 +340,55 @@ for i, this_row in tqdm(all_pivot_frame.iterrows()):
     # plt.scatter(x_names, [np.mean(x) for x in y_vals_list], c='r', s=100, alpha=0.5)
     # plt.show()
 
-all_pivot_frame['cv_results'] = cv_dict_list
-all_pivot_frame['mean_cv_results'] = mean_cv_dict_list
-all_pivot_frame.to_pickle(os.path.join(artifact_dir, 'all_pivot_frame_cv.pkl'))
+# Get all pickle files
+cv_files = os.listdir(cv_out_dir)
+cv_files = [x for x in cv_files if '.pkl' in x]
+cv_dict_list = [pd.read_pickle(os.path.join(cv_out_dir, x)) for x in cv_files]
 
-mean_cv_dict_list = [
-        {this_key:np.mean(this_dict[this_key]) for this_key in this_dict.keys()} \
-        for this_dict in cv_dict_list
-        ]
-mean_cv_frame = pd.DataFrame(mean_cv_dict_list)
+cv_frame = pd.DataFrame(cv_dict_list)
+cv_frame.reset_index(drop=True, inplace=True)
+mean_cv_test = cv_frame.cv_results.apply(lambda x: np.mean(x['cv_test_score']))
+mean_group_shuffle_test = cv_frame.cv_results.apply(lambda x: np.mean(x['group_shuffle_cv_test_score']))
+
+cv_frame['mean_cv_test'] = mean_cv_test
+cv_frame['mean_group_shuffle_test'] = mean_group_shuffle_test
+cv_frame['cv_diff'] = cv_frame['mean_cv_test'] - cv_frame['mean_group_shuffle_test']
+
+mean_cols = ['mean_cv_test', 'mean_group_shuffle_test', 'cv_diff']
+mean_cv_frame = cv_frame.groupby(['animal','basename'])[mean_cols].mean()
+mean_cv_frame.reset_index(inplace=True)
+mean_mean_cv_diff = np.mean(mean_cv_frame['cv_diff'])
+
+# Test for significance
+wilcoxon_out = wilcoxon(cv_frame['cv_diff'])
+
+fig, ax = plt.subplots(1,2, sharey=True)
+sns.scatterplot(data = mean_cv_frame, x = 'animal', y = 'cv_diff', hue = 'basename',
+                legend = False, s = 100, ax = ax[0], alpha = 0.5, edgecolor = 'k', linewidth = 1)
+ax[0].axhline(0, c='r')
+ax[0].set_title('CV Diff')
+ax[0].set_ylabel('Mean CV Diff\n<-- Actual better | Shuffled better -->')
+ax[1].hist(mean_cv_frame['cv_diff'], orientation='horizontal', bins=20)
+# Annotate histogram with mean
+ax[1].annotate(f'Mean: {mean_mean_cv_diff:.2f}', xy=(0, mean_mean_cv_diff), xytext=(0, mean_mean_cv_diff),
+             arrowprops=dict(facecolor='black', shrink=0.05))
+ax[1].set_title(f'CV Diff Histogram\nWilcoxon p: {wilcoxon_out.pvalue:.2e}')
+ax[1].axhline(0, c='r')
+fig.suptitle('Mean CV Diff by Animal and Session')
+plt.tight_layout()
+fig.savefig(os.path.join(plot_dir, 'mean_cv_diff.svg'))
+plt.close(fig)
+# plt.show()
+
+# all_pivot_frame['cv_results'] = cv_dict_list
+# all_pivot_frame['mean_cv_results'] = mean_cv_dict_list
+# all_pivot_frame.to_pickle(os.path.join(artifact_dir, 'all_pivot_frame_cv.pkl'))
+
+# mean_cv_dict_list = [
+#         {this_key:np.mean(this_dict[this_key]) for this_key in this_dict.keys()} \
+#         for this_dict in cv_dict_list
+#         ]
+# mean_cv_frame = pd.DataFrame(mean_cv_dict_list)
 # mean_cv_frame['region_names'] = region_names_list
 # iden_frame = pd.DataFrame(iden_list)
 # iden_frame.reset_index(drop=True, inplace=True)
@@ -358,12 +398,13 @@ mean_cv_frame = pd.DataFrame(mean_cv_dict_list)
 
 # Drop scrambled
 # plot_mean_cv_frame = mean_cv_frame.drop(columns = 'scrambled_cv_test_score')
-delta_cv = mean_cv_frame['cv_test_score'] - mean_cv_frame['group_shuffle_cv_test_score']
+# delta_cv = mean_cv_frame['cv_test_score'] - mean_cv_frame['group_shuffle_cv_test_score']
+delta_cv = mean_cv_test - mean_group_shuffle_test
 mean_delta_cv = np.mean(delta_cv)
 median_delta_cv = np.median(delta_cv)
 
 bins = np.linspace(-1,1,50)
-plt.hist(delta_cv)#, bins=bins)
+plt.hist(delta_cv, bins=bins)
 plt.axvline(0, c='r')
 # Annotate mean and median with arrows
 plt.annotate(f'Mean: {mean_delta_cv:.2f}', xy=(mean_delta_cv, 0), xytext=(mean_delta_cv, 10),
@@ -372,5 +413,5 @@ plt.annotate(f'Median: {median_delta_cv:.2f}', xy=(median_delta_cv, 0), xytext=(
              arrowprops=dict(facecolor='black', shrink=0.05))
 plt.ylabel('Count')
 plt.xlabel('Delta CV\n<-- Actual better | Shuffled better -->')
-# plt.tight_layout()
+plt.tight_layout()
 plt.show()
