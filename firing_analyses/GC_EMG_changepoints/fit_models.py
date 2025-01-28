@@ -32,14 +32,19 @@ if not os.path.exists(artifact_dir):
 
 error_list = []
 for this_dir in tqdm(data_dir_list):
+
+    print(' ===================================== ')
+    print(this_dir)
+    print(' ===================================== ')
+
     this_ephys_data = ephys_data.EphysData(this_dir)
     this_ephys_data.get_spikes()
     n_tastes = len(this_ephys_data.spikes)
 
     # Get trial-changepoints
-    artifact_dir = os.path.join(this_dir, 'QA_output', 'artifacts')
+    session_artifact_dir = os.path.join(this_dir, 'QA_output', 'artifacts')
     # Get all files
-    all_files = sorted(os.listdir(artifact_dir))
+    all_files = sorted(os.listdir(session_artifact_dir))
     # Keep only csv
     all_files = [x for x in all_files if 'csv' in x]
     # Look for pattern taste_* in each name
@@ -51,7 +56,7 @@ for this_dir in tqdm(data_dir_list):
     # Load pkl files
     # trial_change_dat = [pd.read_csv(os.path.join(artifact_dir, x), index_col = 0) \
     #         for x in all_files if 'taste' in x]
-    trial_change_dat = pd.read_csv(os.path.join(artifact_dir, all_files), index_col = 0)
+    trial_change_dat = pd.read_csv(os.path.join(session_artifact_dir, all_files), index_col = 0)
 
     # Get median lowest elbo
     # best_change = []
@@ -98,6 +103,11 @@ for this_dir in tqdm(data_dir_list):
     trial_info_frame['taste_ind'] = trial_info_frame['dig_in_num_taste'].map(dig_in_num_taste_map) 
 
     for i in range(n_tastes):
+
+        print('==========')
+        print(f'Taste {i}')
+        print('==========')
+
         # Shape: (n_trials, n_neurons, n_timepoints)
         this_taste = this_ephys_data.spikes[i]
         # If no spikes, skip
@@ -174,7 +184,10 @@ for this_dir in tqdm(data_dir_list):
                 # Once we've run them, we can overwrite the taste_num
                 # wanted_split_bounds = split_bounds_list[split_ind]
                 wanted_split_bounds = (np.min(section_trials), np.max(section_trials))
-                handler.database_handler.taste_num = f'{i}_split_ind{section_ind}_split_bounds{wanted_split_bounds}'
+                taste_num_str = f'{i}_split_ind{section_ind}_split_bounds{wanted_split_bounds}'
+                handler.database_handler.taste_num = taste_num_str
+                print()
+                print(taste_num_str)
 
                 # Perform inference and save output to model database
                 handler.run_inference()
@@ -204,6 +217,7 @@ for this_dir in tqdm(data_dir_list):
 fit_database = DatabaseHandler()
 # fit_database.drop_duplicates()
 # fit_database.clear_mismatched_paths()
+# fit_database.write_updated_database()
 
 # Get fits for a particular experiment
 dframe = fit_database.fit_database
@@ -309,37 +323,37 @@ for (this_basename, this_base_taste), this_row in tqdm(grouped_frame.iterrows())
 
 df_dict = dict(
     basename=all_basename,
-    base_taste=all_base_taste,
+    taste=all_base_taste,
     scaled_mode_tau=all_scaled_mode_tau,
     section_array=all_section_array
     )
 df = pd.DataFrame(df_dict)
 df.to_pickle(os.path.join(artifact_dir, 'scaled_mode_tau_cut.pkl'))
 
-# Pull out a single data_directory
-
-scaled_mode_tau_list = []
-basename_list = []
-taste_num_list = []
-for i, this_row in tqdm(wanted_frame.iterrows()):
-    pkl_path = this_row['exp.save_path']
-    basename = this_row['data.basename']
-    basename_list.append(basename)
-    taste_num = this_row['data.taste_num']
-    taste_num_list.append(taste_num)
-
-    # From saved pkl file
-    this_handler = PklHandler(pkl_path)
-    # this_handler.pretty_metadata
-
-    scaled_mode_tau = this_handler.tau.scaled_mode_tau
-    scaled_mode_tau_list.append(scaled_mode_tau)
-
-# Save as pandas dataframe
-df_dict = dict(
-    basename=basename_list,
-    taste_num=taste_num_list,
-    scaled_mode_tau=scaled_mode_tau_list,
-    )
-df = pd.DataFrame(df_dict)
-df.to_pickle(os.path.join(artifact_dir, 'scaled_mode_tau.pkl'))
+# # Pull out a single data_directory
+# 
+# scaled_mode_tau_list = []
+# basename_list = []
+# taste_num_list = []
+# for i, this_row in tqdm(wanted_frame.iterrows()):
+#     pkl_path = this_row['exp.save_path']
+#     basename = this_row['data.basename']
+#     basename_list.append(basename)
+#     taste_num = this_row['data.taste_num']
+#     taste_num_list.append(taste_num)
+# 
+#     # From saved pkl file
+#     this_handler = PklHandler(pkl_path)
+#     # this_handler.pretty_metadata
+# 
+#     scaled_mode_tau = this_handler.tau.scaled_mode_tau
+#     scaled_mode_tau_list.append(scaled_mode_tau)
+# 
+# # Save as pandas dataframe
+# df_dict = dict(
+#     basename=basename_list,
+#     taste_num=taste_num_list,
+#     scaled_mode_tau=scaled_mode_tau_list,
+#     )
+# df = pd.DataFrame(df_dict)
+# df.to_pickle(os.path.join(artifact_dir, 'scaled_mode_tau.pkl'))
