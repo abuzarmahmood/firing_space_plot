@@ -51,7 +51,8 @@ for i, this_row in tqdm(scaled_mode_tau_df.iterrows()):
 
     # From saved dataframe
     basename = this_row['basename']
-    taste_num = int(this_row['base_taste'])
+    # taste_num = int(this_row['base_taste'])
+    taste_num = int(this_row['taste'])
     scaled_mode_tau = this_row['scaled_mode_tau']
     data_dir = [x for x in data_dir_list if basename in x][0]
     section_array = this_row['section_array']
@@ -75,8 +76,15 @@ for i, this_row in tqdm(scaled_mode_tau_df.iterrows()):
             spike_train, scaled_mode_tau, [2000, 4000],
             figsize = (7, 15)
             )
+    n_sections = len(np.unique(section_array))
+    cmap = plt.cm.get_cmap('tab20', n_sections)
+    colors = [cmap(int(i)) for i in section_array]
     for i in range(len(section_array)):
         ax[i].set_ylabel(f'Sec \n {int(section_array[i])}')
+        # Make label bold, and change color by section
+        ax[i].set_title(ax[i].get_title(), fontweight='bold')
+        ax[i].spines['left'].set_color(colors[i])
+        ax[i].spines['left'].set_linewidth(10)
     fig.suptitle(f'{basename} Taste {taste_num}')
     # fig.savefig(os.path.join(change_plot_dir, f'{basename}_taste_{taste_num}_raster.png'))
     fig.savefig(os.path.join(change_plot_dir, f'{basename}_taste_{taste_num}_raster_cut.png'))
@@ -86,6 +94,15 @@ for i, this_row in tqdm(scaled_mode_tau_df.iterrows()):
     fig, ax = plotting.plot_changepoint_overview(
             scaled_mode_tau, [2000, 4000]
             )
+    # ax = 2 rows, 1 column
+    # Add a thin ax next to the top one to plot the section_array
+    # Get edges of top ax
+    top_ax = ax[0]
+    top_ax_edges = top_ax.get_position().bounds
+    # Add vertical thin ax to right of top ax
+    sec_ax = fig.add_axes([top_ax_edges[0] + top_ax_edges[2] + 0.01, top_ax_edges[1], 0.01, top_ax_edges[3]],
+                          sharey=top_ax)
+    sec_ax.imshow(section_array[:, None], aspect='auto', cmap='tab20', origin='lower')
     fig.suptitle(f'{basename} Taste {taste_num}')
     # fig.savefig(os.path.join(change_plot_dir, f'{basename}_taste_{taste_num}_overview.png'))
     fig.savefig(os.path.join(change_plot_dir, f'{basename}_taste_{taste_num}_overview_cut.png'))
