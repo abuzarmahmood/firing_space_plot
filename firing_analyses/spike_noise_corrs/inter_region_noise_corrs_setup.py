@@ -24,12 +24,7 @@ Shuffles:
 """
 
 ########################################
-# ____       _               
-#/ ___|  ___| |_ _   _ _ __  
-#\___ \ / _ \ __| | | | '_ \ 
-# ___) |  __/ |_| |_| | |_) |
-#|____/ \___|\__|\__,_| .__/ 
-#                     |_|    
+# Setup
 ########################################
 
 ########################################
@@ -139,19 +134,14 @@ def gen_bin_df(corr_array, p_val_array, percentiles, pair_list, label):
 
 
 ################################################### 
-# _                    _   ____        _        
-#| |    ___   __ _  __| | |  _ \  __ _| |_ __ _ 
-#| |   / _ \ / _` |/ _` | | | | |/ _` | __/ _` |
-#| |__| (_) | (_| | (_| | | |_| | (_| | || (_| |
-#|_____\___/ \__,_|\__,_| |____/ \__,_|\__\__,_|
-#                                               
+# Load Data
 ################################################### 
 
 data_dir = sys.argv[1]
 print(data_dir)
 #data_dir = '/media/bigdata/Abuzar_Data/AM26/AM26_4Tastes_200829_100535'
-name_splits = os.path.basename(data_dir[:-1]).split('_')
-fin_name = name_splits[0]+'_'+name_splits[2]
+# name_splits = os.path.basename(data_dir[:-1]).split('_')
+# fin_name = name_splits[0]+'_'+name_splits[2]
 
 dat = ephys_data(data_dir)
 dat.get_spikes()
@@ -160,17 +150,34 @@ spikes = np.array(dat.spikes)
 
 # Path to save noise corrs in HDF5
 save_path = '/ancillary_analysis/spike_noise_corrs'
+frame_name_list = [     
+                'inter_region_frame',
+                'shuffle_inter_region_frame',
+                'intra_region_frame',
+                'shuffle_intra_region_frame'
+                   ]#,
 
 with tables.open_file(dat.hdf5_path,'r+') as hf5:
     if save_path not in hf5:
         hf5.create_group(os.path.dirname(save_path),os.path.basename(save_path),
                 createparents = True)
+    else:
+        present_list = []
+        for name in frame_name_list:
+            if os.path.join(save_path,name) in hf5:
+                present_list.append(name)
+        if len(present_list) > 0:
+            print('Data already present in HDF5')
+            print("\n".join(present_list))
+            cont = input('Do you want to continue? (y/n)')
+            while cont not in ['y','n']:
+                cont = input('Please enter y or n')
+            if cont == 'n':
+                sys.exit()
+
 
 ########################
-# / ___|___  _ __ _ __ 
-#| |   / _ \| '__| '__|
-#| |__| (_) | |  | |   
-# \____\___/|_|  |_|   
+# Corr
 ########################
 
 # If array not present, then perform calculation
@@ -216,11 +223,13 @@ if not present_bool:
     # Perform correlation over all pairs for each taste separately
     # Compare values to corresponding shuffles
 
+    print('== Processing Inter-Region Whole Trial ==')
     out = list(zip(*parallelize(taste_calc_corrs,diff_sum_spikes,pair_inds)))
     out = [np.array(x) for x in out]
 
     inter_region_frame = gen_df(out[0], out[1], out[-1],
                                 pair_inds,'inter_region')
+    print(inter_region_frame)
 
     shuffle_inter_region_frame = gen_df(out[2], out[3], None,
                                 pair_inds,'shuffle_inter_region')
@@ -258,6 +267,7 @@ if not present_bool:
 
     #this_save_path = os.path.join(save_path,'intra_region')
 
+    print('== Processing Intra-Region Whole Trial ==')
     pair_list = [list(it.combinations(np.arange(x.shape[1]),2)) \
                             for x in diff_sum_spikes]
 
@@ -332,10 +342,6 @@ if not present_bool:
     ########################################
     ## Save arrays 
     ########################################
-    frame_name_list = [     'inter_region_frame',
-                            'shuffle_inter_region_frame',
-                            'intra_region_frame',
-                            'shuffle_intra_region_frame']#,
                             #'bin_inter_region_frame',
                             #'shuffle_bin_inter_region_frame']#,
                             #'baseline_inter_region_frame',
