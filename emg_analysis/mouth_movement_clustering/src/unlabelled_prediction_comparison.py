@@ -1013,9 +1013,12 @@ for i, (this_xgb_pred, this_bsa_pred) in enumerate(zip(xgb_pred_array_list, bsa_
                   cmap=cmap,vmin=0,vmax=2,)
         ax[0,0].set_title('XGB')
         ax[0,1].set_title('BSA')
+        wanted_xlims = [-1000, 3000]
+        ax[taste,0].set_xlim(wanted_xlims)
+        ax[taste,1].set_xlim(wanted_xlims)
     ax[-1,0].set_xlabel('Time (ms)')
     ax[-1,1].set_xlabel('Time (ms)')
-    cbar_ax = fig.add_axes([0.98, 0.15, 0.02, 0.7])
+    cbar_ax = fig.add_axes([0.99, 0.15, 0.02, 0.7])
     cbar = fig.colorbar(im, cax=cbar_ax)
     cbar.set_ticks([0.5,1,1.5])
     cbar.set_ticklabels(['nothing','gape','MTMs'])
