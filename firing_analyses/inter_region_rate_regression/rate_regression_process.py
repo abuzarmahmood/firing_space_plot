@@ -5,6 +5,7 @@ import pandas as pd
 blech_clust_dir = os.path.expanduser('~/Desktop/blech_clust')
 sys.path.append(blech_clust_dir)
 from utils.ephys_data.ephys_data import ephys_data
+from utils.ephys_data import visualize as vz
 from pprint import pprint as pp
 import numpy as np
 from ast import literal_eval
@@ -13,7 +14,7 @@ from sklearn.model_selection import GroupKFold, cross_validate
 from sklearn.decomposition import PCA
 from sklearn.neural_network import MLPRegressor
 from sklearn.linear_model import LinearRegression
-from scipy.stats import spearmanr, pearsonr, wilcoxon
+from scipy.stats import spearmanr, pearsonr, wilcoxon, zscore
 from sklearn.metrics import make_scorer, mean_squared_error
 import seaborn as sns
 import base64
@@ -130,6 +131,9 @@ if recollect_data:
                 np.sort(trial_info_frame['dig_in_num_taste'].unique()), 
                 range(n_tastes)))
             trial_info_frame['taste_ind'] = trial_info_frame['dig_in_num_taste'].map(dig_in_num_taste_map) 
+
+            vz.firing_overview(this_ephys_data.all_normalized_firing)
+            plt.show()
 
             this_ephys_data.get_sequestered_firing()
             seq_firing_frame = this_ephys_data.sequestered_firing_frame
@@ -391,38 +395,162 @@ fig.savefig(os.path.join(plot_dir, 'mean_cv_diff.svg'))
 plt.close(fig)
 # plt.show()
 
-# all_pivot_frame['cv_results'] = cv_dict_list
-# all_pivot_frame['mean_cv_results'] = mean_cv_dict_list
-# all_pivot_frame.to_pickle(os.path.join(artifact_dir, 'all_pivot_frame_cv.pkl'))
+############################################################
+############################################################
+# Make Average and single trial plots
 
-# mean_cv_dict_list = [
-#         {this_key:np.mean(this_dict[this_key]) for this_key in this_dict.keys()} \
-#         for this_dict in cv_dict_list
-#         ]
-# mean_cv_frame = pd.DataFrame(mean_cv_dict_list)
-# mean_cv_frame['region_names'] = region_names_list
-# iden_frame = pd.DataFrame(iden_list)
-# iden_frame.reset_index(drop=True, inplace=True)
-# mean_cv_frame = pd.concat([iden_frame, mean_cv_frame], axis=1)
+# Get highest cv_test_score (lowest mse score)
+cv_frame['min_cv_test'] = cv_frame.cv_results.apply(lambda x: np.min(x['cv_test_score']))
 
-# melted_mean_cv_frame = mean_cv_frame.melt(var_name='cv_type', value_name='score')
+min_cv_frame = cv_frame[cv_frame['min_cv_test'] == cv_frame['min_cv_test'].min()]
+# Get details from all_pivot_frame
+row_bool = (all_pivot_frame['animal'] == min_cv_frame['animal'].iloc[0]) & \
+        (all_pivot_frame['basename'] == min_cv_frame['basename'].iloc[0]) & \
+        (all_pivot_frame['taste'] == min_cv_frame['taste'].iloc[0]) & \
+        (all_pivot_frame['section'] == min_cv_frame['section'].iloc[0])
+row_ind = np.where(row_bool)[0][0]
+wanted_pivots = pivots_list[row_ind]
+wanted_region_names = region_name_list[row_ind]
+# all_pivot_frame.loc[np.where(row_bool)[0][0]]
+wanted_index = wanted_pivots[0].index
+n_trials = wanted_index.get_level_values('trial_num').nunique()
+pivot_pca = [PCA(n_components = 3, whiten=True).fit_transform(x) for x in wanted_pivots] 
+# Split into trials and average
+pivot_pca_trials = [np.stack(np.split(x, n_trials, axis=0)) for x in pivot_pca]
+mean_pivot_pca = [np.mean(x, axis=0) for x in pivot_pca_trials]
 
-# Drop scrambled
-# plot_mean_cv_frame = mean_cv_frame.drop(columns = 'scrambled_cv_test_score')
-# delta_cv = mean_cv_frame['cv_test_score'] - mean_cv_frame['group_shuffle_cv_test_score']
-delta_cv = mean_cv_test - mean_group_shuffle_test
-mean_delta_cv = np.mean(delta_cv)
-median_delta_cv = np.median(delta_cv)
+# Align both using regression
+X = mean_pivot_pca[0]
+y = mean_pivot_pca[1]
+proj_y = np.linalg.lstsq(X, y, rcond=None)[0] @ X.T
 
-bins = np.linspace(-1,1,50)
-plt.hist(delta_cv, bins=bins)
-plt.axvline(0, c='r')
-# Annotate mean and median with arrows
-plt.annotate(f'Mean: {mean_delta_cv:.2f}', xy=(mean_delta_cv, 0), xytext=(mean_delta_cv, 10),
-             arrowprops=dict(facecolor='black', shrink=0.05))
-plt.annotate(f'Median: {median_delta_cv:.2f}', xy=(median_delta_cv, 0), xytext=(median_delta_cv, 10),
-             arrowprops=dict(facecolor='black', shrink=0.05))
-plt.ylabel('Count')
-plt.xlabel('Delta CV\n<-- Actual better | Shuffled better -->')
-plt.tight_layout()
+# Plot in 3D
+fig = plt.figure(figsize=(12, 6))
+ax0 = fig.add_subplot(121, projection='3d')
+ax1 = fig.add_subplot(122, projection='3d')
+ax0.scatter(*X.T, alpha=0.5)
+ax1.scatter(*proj_y, alpha=0.5)
 plt.show()
+
+# Average pivots by trial and plot
+mean_pivots = []
+for this_pivot in wanted_pivots:
+    this_pivot = this_pivot.reset_index()
+    mean_pivots.append(this_pivot.groupby('time_num').mean())
+
+# fig, ax = plt.subplots(2,1, sharex=True, figsize=(12,8))
+fig = plt.figure(figsize=(12, 6))
+ax0 = fig.add_subplot(121, projection='3d')
+ax1 = fig.add_subplot(122, projection='3d')
+ax = [ax0, ax1]
+for i, this_mean_pivot in enumerate(mean_pivots):
+    zscore_mean_pivot = zscore(this_mean_pivot.values, axis=0)
+    # Drop nans
+    zscore_mean_pivot = zscore_mean_pivot[:,~np.isnan(zscore_mean_pivot).any(axis=0)]
+    # ax[i].imshow(zscore_mean_pivot.T, aspect='auto', interpolation='none')
+    ax[i].scatter(*zscore_mean_pivot[:,:3].T, alpha=0.5)
+plt.show()
+
+############################################################
+############################################################
+
+for this_dir in tqdm(data_dir_list):
+    this_ephys_data = ephys_data(this_dir)
+
+    print(' ===================================== ')
+    print(this_dir)
+    print(' ===================================== ')
+
+    # this_ephys_data.default_firing_params['type'] = 'basis'
+
+    this_ephys_data.get_region_units()
+    region_dict = dict(
+            zip(
+                this_ephys_data.region_names,
+                this_ephys_data.region_units,
+                )
+            )
+    inv_region_map = {}
+    for k,v in region_dict.items():
+        for unit in v:
+            inv_region_map[unit] = k
+    this_ephys_data.get_spikes()
+    this_ephys_data.get_firing_rates()
+
+    norm_firing = this_ephys_data.normalized_firing.copy()
+    region_firing = [norm_firing[:,x] for k, x in region_dict.items()] 
+
+    # region_firing = [this_ephys_data.get_region_firing(x) for x in this_ephys_data.region_names]
+    # # Chop by time_lims
+    time_lims = np.array([2000, 4000]) // 25
+    region_firing = [x[...,time_lims[0]:time_lims[1]] for x in region_firing]
+
+    # # Normalize for each neuron
+    # norm_region_firing = region_firing.copy()
+    # for i, this_region in enumerate(norm_region_firing):
+    #     for nrn_ind in range(this_region.shape[1]):
+    #         norm_region_firing[i][:,nrn_ind] = zscore(this_region[:,nrn_ind])
+
+    # cat_norm_firing = np.concatenate(norm_region_firing, axis=1)
+
+    # vz.firing_overview(np.concatenate(cat_norm_firing.swapaxes(1,2),0).swapaxes(0,1))
+    # plt.show()
+
+    mean_region_firing = [np.mean(x, axis=2).swapaxes(0,1) for x in region_firing]
+    cat_mean_region_firing = np.concatenate(mean_region_firing, axis=0)
+
+    # fig, ax = vz.gen_square_subplots(len(cat_mean_region_firing))
+    # for i, this_ax in enumerate(ax.flatten()):
+    #     this_ax.plot(cat_mean_region_firing[i].T)
+    # plt.show()
+    
+    region_firing_long = region_firing.copy()
+    region_firing_long = [x.swapaxes(0,1) for x in region_firing_long]
+    region_firing_long = [np.reshape(x, (x.shape[0], -1)) for x in region_firing_long]
+
+    # Perform pca
+    pca_list = [PCA(n_components=3).fit(x.T) for x in region_firing_long]
+
+    # Also get a projection between PC components of regions
+    pca_region_long = [x.transform(y.T) for x,y in zip(pca_list, region_firing_long)]
+    X = pca_region_long[0]
+    y = pca_region_long[1]
+    y_projection = np.linalg.lstsq(X, y, rcond=None)[0]
+
+    # Peform pca on single_trials
+    region_pca_arrays = []
+    for this_pca_obj, this_region in zip(pca_list, region_firing):
+        this_region = this_region.swapaxes(1,2)
+        region_inds = list(np.ndindex(this_region.shape[:2]))
+        pca_array = np.empty((this_region.shape[0], this_region.shape[1], 3, this_region.shape[3]))
+        for i, this_region_ind in enumerate(region_inds):
+            pca_array[this_region_ind] = this_pca_obj.transform(this_region[this_region_ind].T).T
+        region_pca_arrays.append(pca_array)
+
+    all_region_pca_array = np.stack(region_pca_arrays)
+    mean_region_pca_array = np.mean(all_region_pca_array, axis=2)
+
+    mean_region_pca_proj = np.tensordot(
+            mean_region_pca_array[0],
+            y_projection,
+            [1, 0],
+            ).swapaxes(1,2)
+
+    fig = plt.figure(figsize=(12, 6))
+    ax0 = fig.add_subplot(131, projection='3d')
+    ax1 = fig.add_subplot(132, projection='3d')
+    ax2 = fig.add_subplot(133, projection='3d')
+    ax = [ax0, ax1, ax2]
+    for i, this_region in enumerate(mean_region_pca_array):
+        for taste in this_region:
+            ax[i].plot(*taste, alpha=0.5)
+    for taste in mean_region_pca_proj:
+        ax[2].plot(*taste, alpha=0.5)
+    ax[0].set_title('Region 1 PCA')
+    ax[1].set_title('Region 2 PCA')
+    ax[2].set_title('Region 1 PCA projected onto Region 2 PCA')
+    basename = os.path.basename(this_dir)
+    fig.suptitle(f'{basename}')
+    fig.savefig(os.path.join(plot_dir, f'{basename}_pca.svg'))
+    plt.close(fig)
+    # plt.show()
