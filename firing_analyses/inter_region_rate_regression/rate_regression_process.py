@@ -47,7 +47,7 @@ plot_dir = os.path.join(base_dir,'plots')
 if not os.path.exists(plot_dir):
     os.makedirs(plot_dir)
 
-recollect_data = False
+recollect_data = True
 
 if recollect_data:
     for this_dir in tqdm(data_dir_list):
@@ -58,7 +58,8 @@ if recollect_data:
             print(this_dir)
             print(' ===================================== ')
 
-            this_ephys_data.get_region_units()
+            this_ephys_data.default_firing_params['type'] = 'basis'
+
             this_ephys_data.get_region_units()
             region_dict = dict(
                     zip(
@@ -161,17 +162,17 @@ if recollect_data:
         except Exception as e:
             print(f'Error with {this_dir}')
             print(e)
-else:
-    df_list_paths = os.listdir(artifact_dir)
-    df_list_paths = [x for x in df_list_paths if 'section_rate.pkl' in x]
-    df_list = [pd.read_pickle(os.path.join(artifact_dir, x)) for x in df_list_paths]
+
+df_list_paths = os.listdir(artifact_dir)
+df_list_paths = [x for x in df_list_paths if 'section_rate.pkl' in x]
+df_list = [pd.read_pickle(os.path.join(artifact_dir, x)) for x in df_list_paths]
 
 ############################################################
 # Perform regression
 ############################################################
 
 # Generate list of pivotted data
-time_lims = [0, 2000]
+time_lims = [2000, 4000]
 basename_list = []
 animal_list = []
 taste_list = []
@@ -188,8 +189,9 @@ for this_df in tqdm(df_list):
         # Pivot to make neuron_num the columns
         pivot_frames = []
         for i, this_region in enumerate(region_data):
+            this_region.drop(columns = 'start_taste', inplace=True)
             this_pivot = this_region.pivot(
-                    index = ['trial_num','time'],
+                    index = ['trial_num','time_num'],
                     columns = 'neuron_num', 
                     values = 'firing')
             # Drop according to time_lims
@@ -202,6 +204,9 @@ for this_df in tqdm(df_list):
         section_list.append(this_section['section'].iloc[0])
         pivots_list.append(pivot_frames)
         region_name_list.append(region_names)
+
+# plt.plot(pivot_frames[0].iloc[:,0].values)
+# plt.show()
 
 # Perform regression
 all_pivot_frame = pd.DataFrame(
@@ -226,10 +231,10 @@ cv_out_dir = os.path.join(artifact_dir, 'cv_results')
 if not os.path.exists(cv_out_dir):
     os.makedirs(cv_out_dir)
 
-# cv_dict_list = []
-# mean_cv_dict_list = []
-# region_names_list = []
-# iden_list = []
+cv_dict_list = []
+mean_cv_dict_list = []
+region_names_list = []
+iden_list = []
 for i, this_row in tqdm(all_pivot_frame.iterrows()):
     iden_cols = this_row[['animal','basename','taste','section']]
     orig_pivot_frames = this_row['pivots']
@@ -254,7 +259,8 @@ for i, this_row in tqdm(all_pivot_frame.iterrows()):
             continue
 
         groups = pivot_frames[0].index.get_level_values('trial_num')
-        time_vals = pivot_frames[0].index.get_level_values('time')
+        # time_vals = pivot_frames[0].index.get_level_values('time')
+        time_vals = pivot_frames[0].index.get_level_values('time_num')
         n_components = np.min([5, min([x.shape[1] for x in pivot_frames])])
         pivot_pca = [PCA(n_components = n_components, whiten=True).fit_transform(x) for x in pivot_frames] 
         # Shuffle groups
@@ -268,14 +274,15 @@ for i, this_row in tqdm(all_pivot_frame.iterrows()):
         # ax[2].imshow(scrambled_pivot_pca[0].T, **img_kwargs)
         # plt.show()
 
-        gkf = GroupKFold(n_splits=groups.nunique())
-        mlp = MLPRegressor(hidden_layer_sizes=(50,50,50), max_iter=1000)
-        # lr = LinearRegression()
+        gkf = GroupKFold(n_splits=np.min([groups.nunique(), 5]))
+        # mlp = MLPRegressor(hidden_layer_sizes=(50,50,50), max_iter=1000)
+        lr = LinearRegression()
+        estimator = lr
 
         # spearman_score = lambda x,y: np.abs(spearmanr(x.flatten(),y.flatten())[0])
 
         cross_val_kwargs = dict(
-                estimator = mlp,
+                estimator = estimator, 
                 groups = groups,
                 cv = gkf,
                 scoring = mse_score,
@@ -357,10 +364,14 @@ cv_frame['cv_diff'] = cv_frame['mean_cv_test'] - cv_frame['mean_group_shuffle_te
 mean_cols = ['mean_cv_test', 'mean_group_shuffle_test', 'cv_diff']
 mean_cv_frame = cv_frame.groupby(['animal','basename'])[mean_cols].mean()
 mean_cv_frame.reset_index(inplace=True)
-mean_mean_cv_diff = np.mean(mean_cv_frame['cv_diff'])
+
+# Throw out anything with abs > 30
+mean_cv_frame = mean_cv_frame[mean_cv_frame['cv_diff'].abs() < 30]
+# mean_mean_cv_diff = np.mean(mean_cv_frame['cv_diff'])
 
 # Test for significance
-wilcoxon_out = wilcoxon(cv_frame['cv_diff'])
+# wanted_cv_diff = cv_frame['cv_diff']
+wilcoxon_out = wilcoxon(mean_cv_frame['cv_diff'])
 
 fig, ax = plt.subplots(1,2, sharey=True)
 sns.scatterplot(data = mean_cv_frame, x = 'animal', y = 'cv_diff', hue = 'basename',
