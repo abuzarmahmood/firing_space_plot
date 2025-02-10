@@ -735,20 +735,39 @@ for this_dir in tqdm(data_dir_list):
             taste_list.append(taste_ind)
 
         ############################## 
-        # Also perform partial least squares regression 
-        for taste_ind in range(n_tastes):
-            # taste_ind = 0
-            region_firing_long = region_firing.copy()
-            taste_firing = [x[taste_ind] for x in region_firing_long]
-            region_firing_long = taste_firing.copy()
-            # region_firing_long = [np.concatenate(x, axis=0) for x in region_firing_long]
-            region_firing_long = [x.swapaxes(0,1) for x in region_firing_long]
-            region_firing_long = [np.reshape(x, (x.shape[0], -1)) for x in region_firing_long]
-
-            pls = PLSRegression(n_components=3)
-            pls.fit(region_firing_long[0].T, region_firing_long[1].T)
-            y_proj = pls.predict(region_firing_long[0].T).T
-
+        # # Also perform partial least squares regression 
+        # for taste_ind in range(n_tastes):
+        #     # taste_ind = 0
+        #     region_firing_long = region_firing.copy()
+        #     taste_firing = [x[taste_ind] for x in region_firing_long]
+        #     region_firing_long = taste_firing.copy()
+        #     # region_firing_long = [np.concatenate(x, axis=0) for x in region_firing_long]
+        #     region_firing_long = [x.swapaxes(0,1) for x in region_firing_long]
+        #     region_firing_long = [np.reshape(x, (x.shape[0], -1)) for x in region_firing_long]
+        #
+        #     pls = PLSRegression(n_components=3)
+        #     pls.fit(region_firing_long[0].T, region_firing_long[1].T)
+        #     # y_proj = pls.transform(region_firing_long[0].T).T
+        #     # x_proj, y_proj = pls.transform(region_firing_long[0].T, region_firing_long[1].T)
+        #     proj_out = [pls.transform(a.T,b.T) for a,b in zip(taste_firing[0], taste_firing[1])]
+        #     x_proj, y_proj = zip(*proj_out)
+        #     x_proj = np.stack(x_proj)
+        #     y_proj = np.stack(y_proj)
+        #
+        #     mean_x_proj = x_proj.mean(axis=0)
+        #     mean_y_proj = y_proj.mean(axis=0)
+        #
+        #     fig = plt.figure(figsize=(6, 6))
+        #     ax = fig.add_subplot(111, projection='3d')
+        #     ax.plot(*mean_x_proj.T, alpha=0.5, label='Region 1')
+        #     ax.plot(*mean_y_proj.T, alpha=0.5, label='Region 2')
+        #     ax.set_title(f'Taste {taste_ind} PLS')
+        #     ax.legend()
+        #     basename = os.path.basename(this_dir)
+        #     fig.suptitle(f'{basename}')
+        #     fig.savefig(os.path.join(plot_dir, f'{basename}_pls_taste_{taste_ind}.svg'))
+        #     plt.close(fig)
+        #
 
 cos_sim_frame = pd.DataFrame(
         dict(
