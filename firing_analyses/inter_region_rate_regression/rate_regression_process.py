@@ -454,6 +454,10 @@ plt.show()
 ############################################################
 ############################################################
 
+mean_firing_plot_dir = os.path.join(plot_dir, 'mean_firing')
+if not os.path.exists(mean_firing_plot_dir):
+    os.makedirs(mean_firing_plot_dir)
+
 for this_dir in tqdm(data_dir_list):
     this_ephys_data = ephys_data(this_dir)
 
@@ -461,7 +465,8 @@ for this_dir in tqdm(data_dir_list):
     print(this_dir)
     print(' ===================================== ')
 
-    # this_ephys_data.default_firing_params['type'] = 'basis'
+    firing_type = 'basis'
+    this_ephys_data.default_firing_params['type'] = firing_type
 
     this_ephys_data.get_region_units()
     region_dict = dict(
@@ -477,13 +482,25 @@ for this_dir in tqdm(data_dir_list):
     this_ephys_data.get_spikes()
     this_ephys_data.get_firing_rates()
 
-    norm_firing = this_ephys_data.normalized_firing.copy()
-    region_firing = [norm_firing[:,x] for k, x in region_dict.items()] 
+    cat_spikes = np.concatenate(this_ephys_data.spikes, axis=0)
+
+    norm_firing = this_ephys_data.normalized_firing_list.copy()
+    # List (tastes) -> list (regions) - > array (trials, neurons, time)
+    region_firing = [[taste[:,x] for k, x in region_dict.items()] for taste in norm_firing] 
+    region_spikes = [cat_spikes[:,x] for k, x in region_dict.items()]
+    cat_region_spikes = np.concatenate(region_spikes, axis=1)
 
     # region_firing = [this_ephys_data.get_region_firing(x) for x in this_ephys_data.region_names]
     # # Chop by time_lims
-    time_lims = np.array([2000, 4000]) // 25
-    region_firing = [x[...,time_lims[0]:time_lims[1]] for x in region_firing]
+    time_lims_raw = np.array([1500, 4000])
+    if firing_type == 'conv':
+        time_lims = np.array([1500, 4000]) // 25
+    elif firing_type == 'basis':
+        time_lims = time_lims.copy()
+    region_firing = [[x[...,time_lims[0]:time_lims[1]] for x in taste] for taste in region_firing]
+
+    # Zip to have regions as outer list
+    region_firing = list(zip(*region_firing))
 
     # # Normalize for each neuron
     # norm_region_firing = region_firing.copy()
@@ -496,15 +513,55 @@ for this_dir in tqdm(data_dir_list):
     # vz.firing_overview(np.concatenate(cat_norm_firing.swapaxes(1,2),0).swapaxes(0,1))
     # plt.show()
 
-    mean_region_firing = [np.mean(x, axis=2).swapaxes(0,1) for x in region_firing]
+    # mean_region_firing = [np.mean(x, axis=2).swapaxes(0,1) for x in region_firing]
+    mean_region_firing = [np.stack([np.mean(x, axis=0) for x in taste]).swapaxes(0,1) for taste in region_firing]
     cat_mean_region_firing = np.concatenate(mean_region_firing, axis=0)
+    cat_region_labels = np.concatenate([[k]*x.shape[0] for k,x in region_dict.items()])
 
-    # fig, ax = vz.gen_square_subplots(len(cat_mean_region_firing))
-    # for i, this_ax in enumerate(ax.flatten()):
-    #     this_ax.plot(cat_mean_region_firing[i].T)
-    # plt.show()
+    # if len(cat_mean_region_firing) > 1:
+    #
+    #     fig, ax = vz.gen_square_subplots(len(cat_mean_region_firing), 
+    #                                      sharex=True, sharey=True,
+    #                                      figsize=(12,12))
+    #     font_color_dict = dict(
+    #             zip(
+    #                 this_ephys_data.region_names, 
+    #                 sns.color_palette('tab10', len(this_ephys_data.region_names))
+    #                 )
+    #             )
+    #     for i, this_firing in enumerate(cat_mean_region_firing):
+    #         this_ax = ax.flatten()[i]
+    #         this_ax.plot(this_firing.T)
+    #         this_ax.set_title(cat_region_labels[i], 
+    #                           color=font_color_dict[cat_region_labels[i]],
+    #                           fontweight='bold')
+    #     fig.suptitle(os.path.basename(this_dir))
+    #     plt.tight_layout()
+    #     # plt.show()
+    #     fig.savefig(os.path.join(mean_firing_plot_dir, f'{os.path.basename(this_dir)}_mean_{firing_type}_firing.svg'))
+    #     plt.close(fig)
+    #
+    #     ############################## 
+    #     # Plot spikes
+    #     cat_region_spikes = cat_region_spikes[...,time_lims_raw[0]:time_lims_raw[1]]
+    #
+    #     fig, ax = vz.gen_square_subplots(cat_region_spikes.shape[1],
+    #                                      sharex=True, sharey=True,
+    #                                      figsize=(12,12))
+    #     for i in range(cat_region_spikes.shape[1]):
+    #         this_ax = ax.flatten()[i]
+    #         this_ax = vz.raster(this_ax, cat_region_spikes[:, i], marker = '|', color = 'k') 
+    #         this_ax.set_title(cat_region_labels[i], 
+    #                           color=font_color_dict[cat_region_labels[i]],
+    #                           fontweight='bold')
+    #     fig.suptitle(os.path.basename(this_dir))
+    #     plt.tight_layout()
+    #     # plt.show()
+    #     fig.savefig(os.path.join(mean_firing_plot_dir, f'{os.path.basename(this_dir)}_spikes.png'))
+    #     plt.close(fig)
     
     region_firing_long = region_firing.copy()
+    region_firing_long = [np.concatenate(x, axis=0) for x in region_firing_long]
     region_firing_long = [x.swapaxes(0,1) for x in region_firing_long]
     region_firing_long = [np.reshape(x, (x.shape[0], -1)) for x in region_firing_long]
 
