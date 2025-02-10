@@ -459,6 +459,9 @@ mean_firing_plot_dir = os.path.join(plot_dir, 'mean_firing')
 if not os.path.exists(mean_firing_plot_dir):
     os.makedirs(mean_firing_plot_dir)
 
+mean_cos_sim_list = []
+basename_list = []
+taste_list = []
 for this_dir in tqdm(data_dir_list):
     this_ephys_data = ephys_data(this_dir)
 
@@ -685,14 +688,31 @@ for this_dir in tqdm(data_dir_list):
                     [x.mean(axis=0) for x in region_pca_arrays]
                     )
 
-            mean_region_pca_proj = np.tensordot(
-                    mean_region_pca_array[0],
-                    y_projection,
-                    [0, 0],
-                    ).T
+            lr = LinearRegression()
+            X = mean_region_pca_array[0]
+            y = mean_region_pca_array[1]
+            lr.fit(X.T, y.T)
+            y_proj  = lr.predict(X.T).T
+            mean_region_pca_proj = y_proj.copy()
+
+            # mean_region_pca_proj = np.tensordot(
+            #         mean_region_pca_array[0],
+            #         y_projection,
+            #         [0, 0],
+            #         ).T
 
             region_pca_list.append(mean_region_pca_array)
             region_pca_proj_list.append(mean_region_pca_proj)
+
+            # Calculate mean cosine similarity
+            def cos_sim(x,y):
+                return np.dot(x,y) / (np.linalg.norm(x) * np.linalg.norm(y))
+
+            cos_sim_list = [cos_sim(a,b) for a,b in zip(X.T, y_proj.T)]
+            mean_cos_sim = np.mean(cos_sim_list)
+
+            # plt.imshow(np.dot(y.T, y_proj), interpolation='nearest')
+            # plt.show()
 
             fig = plt.figure(figsize=(8, 6))
             ax0 = fig.add_subplot(121, projection='3d')
@@ -702,11 +722,39 @@ for this_dir in tqdm(data_dir_list):
                     ax[i].plot(*this_region, alpha=0.5)
             ax[1].plot(*mean_region_pca_proj, alpha=0.5, c='r', label = 'Projected')
             ax[0].set_title('Region 1 PCA')
-            ax[1].set_title('Region 2 PCA')
+            ax[1].set_title(f'Region 2 PCA, Mean Cosine Sim: {mean_cos_sim:.2f}')
             ax[1].legend()
             basename = os.path.basename(this_dir)
             fig.suptitle(f'{basename}')
             fig.savefig(os.path.join(plot_dir, f'{basename}_pca_taste_{taste_ind}.svg'))
             plt.close(fig)
             # plt.show()
+            
+            mean_cos_sim_list.append(mean_cos_sim)
+            basename_list.append(basename)
+            taste_list.append(taste_ind)
 
+        ############################## 
+        # Also perform partial least squares regression 
+        for taste_ind in range(n_tastes):
+            # taste_ind = 0
+            region_firing_long = region_firing.copy()
+            taste_firing = [x[taste_ind] for x in region_firing_long]
+            region_firing_long = taste_firing.copy()
+            # region_firing_long = [np.concatenate(x, axis=0) for x in region_firing_long]
+            region_firing_long = [x.swapaxes(0,1) for x in region_firing_long]
+            region_firing_long = [np.reshape(x, (x.shape[0], -1)) for x in region_firing_long]
+
+            pls = PLSRegression(n_components=3)
+            pls.fit(region_firing_long[0].T, region_firing_long[1].T)
+            y_proj = pls.predict(region_firing_long[0].T).T
+
+
+cos_sim_frame = pd.DataFrame(
+        dict(
+            basename = basename_list,
+            taste = taste_list,
+            cos_sim = mean_cos_sim_list,
+            )
+        )
+cos_sim_frame.to_csv(os.path.join(artifact_dir, 'cos_sim_frame.csv'))
