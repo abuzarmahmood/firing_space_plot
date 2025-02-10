@@ -577,15 +577,34 @@ for this_dir in tqdm(data_dir_list):
     # Peform pca on single_trials
     region_pca_arrays = []
     for this_pca_obj, this_region in zip(pca_list, region_firing):
-        this_region = this_region.swapaxes(1,2)
-        region_inds = list(np.ndindex(this_region.shape[:2]))
-        pca_array = np.empty((this_region.shape[0], this_region.shape[1], 3, this_region.shape[3]))
-        for i, this_region_ind in enumerate(region_inds):
-            pca_array[this_region_ind] = this_pca_obj.transform(this_region[this_region_ind].T).T
-        region_pca_arrays.append(pca_array)
+        this_region_tastes = []
+        for this_taste in this_region:
+            taste_inds = list(np.ndindex(this_taste.shape[:1]))
+            pca_array = np.empty((this_taste.shape[0], 3, this_taste.shape[-1]))
+            for i, this_taste_ind in enumerate(taste_inds):
+                pca_array[this_taste_ind] = this_pca_obj.transform(this_taste[this_taste_ind].T).T
+            this_region_tastes.append(pca_array)
+        region_pca_arrays.append(this_region_tastes)
+        # this_region = this_region.swapaxes(1,2)
+        # region_inds = list(np.ndindex(this_region.shape[:2]))
+        # pca_array = np.empty((this_region.shape[0], this_region.shape[1], 3, this_region.shape[3]))
+        # for i, this_region_ind in enumerate(region_inds):
+        #     pca_array[this_region_ind] = this_pca_obj.transform(this_region[this_region_ind].T).T
+        # region_pca_arrays.append(pca_array)
 
-    all_region_pca_array = np.stack(region_pca_arrays)
-    mean_region_pca_array = np.mean(all_region_pca_array, axis=2)
+    # Shape : region, taste, trial, pca, time
+    # all_region_pca_array = np.stack(region_pca_arrays)
+    # region_pca_arrays: region (list) --> taste (list) --> trials, pca, time
+
+    # mean_region_pca_array = np.mean(all_region_pca_array, axis=2)
+    # shape: region, taste, pca, time
+    mean_region_pca_array = np.stack(
+            [[x.mean(axis=0) for x in region] \
+                    for region in region_pca_arrays]
+            )
+
+    # vz.firing_overview(mean_region_pca_array[0])
+    # plt.show()
 
     mean_region_pca_proj = np.tensordot(
             mean_region_pca_array[0],
