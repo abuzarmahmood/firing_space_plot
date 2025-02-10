@@ -14,6 +14,7 @@ from sklearn.model_selection import GroupKFold, cross_validate
 from sklearn.decomposition import PCA
 from sklearn.neural_network import MLPRegressor
 from sklearn.linear_model import LinearRegression
+from sklearn.cross_decomposition import PLSRegression
 from scipy.stats import spearmanr, pearsonr, wilcoxon, zscore
 from sklearn.metrics import make_scorer, mean_squared_error
 import seaborn as sns
@@ -465,8 +466,12 @@ for this_dir in tqdm(data_dir_list):
     print(this_dir)
     print(' ===================================== ')
 
-    firing_type = 'basis'
-    this_ephys_data.default_firing_params['type'] = firing_type
+    firing_type = 'baks'
+
+    this_ephys_data.firing_rate_params = this_ephys_data.default_firing_params.copy()
+    this_ephys_data.firing_rate_params['type'] = firing_type
+    this_ephys_data.firing_rate_params['step_size'] = 10
+    step_size = this_ephys_data.firing_rate_params['step_size']
 
     this_ephys_data.get_region_units()
     region_dict = dict(
@@ -492,11 +497,16 @@ for this_dir in tqdm(data_dir_list):
 
     # region_firing = [this_ephys_data.get_region_firing(x) for x in this_ephys_data.region_names]
     # # Chop by time_lims
-    time_lims_raw = np.array([1500, 4000])
+    time_lims_raw = np.array([1000, 5000])
     if firing_type == 'conv':
-        time_lims = np.array([1500, 4000]) // 25
+        time_lims = time_lims_raw // step_size
     elif firing_type == 'basis':
-        time_lims = time_lims.copy()
+        time_lims = time_lims_raw.copy()
+    elif firing_type == 'baks':
+        step_size = this_ephys_data.firing_rate_params['baks_resolution'] / \
+                this_ephys_data.firing_rate_params['baks_dt']
+        step_size = int(step_size)
+        time_lims = time_lims_raw // step_size
     region_firing = [[x[...,time_lims[0]:time_lims[1]] for x in taste] for taste in region_firing]
 
     # Zip to have regions as outer list
@@ -518,28 +528,28 @@ for this_dir in tqdm(data_dir_list):
     cat_mean_region_firing = np.concatenate(mean_region_firing, axis=0)
     cat_region_labels = np.concatenate([[k]*x.shape[0] for k,x in region_dict.items()])
 
-    # if len(cat_mean_region_firing) > 1:
-    #
-    #     fig, ax = vz.gen_square_subplots(len(cat_mean_region_firing), 
-    #                                      sharex=True, sharey=True,
-    #                                      figsize=(12,12))
-    #     font_color_dict = dict(
-    #             zip(
-    #                 this_ephys_data.region_names, 
-    #                 sns.color_palette('tab10', len(this_ephys_data.region_names))
-    #                 )
-    #             )
-    #     for i, this_firing in enumerate(cat_mean_region_firing):
-    #         this_ax = ax.flatten()[i]
-    #         this_ax.plot(this_firing.T)
-    #         this_ax.set_title(cat_region_labels[i], 
-    #                           color=font_color_dict[cat_region_labels[i]],
-    #                           fontweight='bold')
-    #     fig.suptitle(os.path.basename(this_dir))
-    #     plt.tight_layout()
-    #     # plt.show()
-    #     fig.savefig(os.path.join(mean_firing_plot_dir, f'{os.path.basename(this_dir)}_mean_{firing_type}_firing.svg'))
-    #     plt.close(fig)
+    if len(cat_mean_region_firing) > 1:
+    
+        fig, ax = vz.gen_square_subplots(len(cat_mean_region_firing), 
+                                         sharex=True, sharey=True,
+                                         figsize=(12,12))
+        font_color_dict = dict(
+                zip(
+                    this_ephys_data.region_names, 
+                    sns.color_palette('tab10', len(this_ephys_data.region_names))
+                    )
+                )
+        for i, this_firing in enumerate(cat_mean_region_firing):
+            this_ax = ax.flatten()[i]
+            this_ax.plot(this_firing.T)
+            this_ax.set_title(cat_region_labels[i], 
+                              color=font_color_dict[cat_region_labels[i]],
+                              fontweight='bold')
+        fig.suptitle(os.path.basename(this_dir))
+        plt.tight_layout()
+        # plt.show()
+        fig.savefig(os.path.join(mean_firing_plot_dir, f'{os.path.basename(this_dir)}_mean_{firing_type}_firing.svg'))
+        plt.close(fig)
     #
     #     ############################## 
     #     # Plot spikes
@@ -560,73 +570,143 @@ for this_dir in tqdm(data_dir_list):
     #     fig.savefig(os.path.join(mean_firing_plot_dir, f'{os.path.basename(this_dir)}_spikes.png'))
     #     plt.close(fig)
     
-    region_firing_long = region_firing.copy()
-    region_firing_long = [np.concatenate(x, axis=0) for x in region_firing_long]
-    region_firing_long = [x.swapaxes(0,1) for x in region_firing_long]
-    region_firing_long = [np.reshape(x, (x.shape[0], -1)) for x in region_firing_long]
+    if len(cat_mean_region_firing) > 1:
+        region_firing_long = region_firing.copy()
+        region_firing_long = [np.concatenate(x, axis=0) for x in region_firing_long]
+        region_firing_long = [x.swapaxes(0,1) for x in region_firing_long]
+        region_firing_long = [np.reshape(x, (x.shape[0], -1)) for x in region_firing_long]
 
-    # Perform pca
-    pca_list = [PCA(n_components=3).fit(x.T) for x in region_firing_long]
+        # Perform pca
+        pca_list = [PCA(n_components=3).fit(x.T) for x in region_firing_long]
 
-    # Also get a projection between PC components of regions
-    pca_region_long = [x.transform(y.T) for x,y in zip(pca_list, region_firing_long)]
-    X = pca_region_long[0]
-    y = pca_region_long[1]
-    y_projection = np.linalg.lstsq(X, y, rcond=None)[0]
+        # Also get a projection between PC components of regions
+        pca_region_long = [x.transform(y.T) for x,y in zip(pca_list, region_firing_long)]
+        X = pca_region_long[0]
+        y = pca_region_long[1]
+        y_projection = np.linalg.lstsq(X, y, rcond=None)[0]
 
-    # Peform pca on single_trials
-    region_pca_arrays = []
-    for this_pca_obj, this_region in zip(pca_list, region_firing):
-        this_region_tastes = []
-        for this_taste in this_region:
-            taste_inds = list(np.ndindex(this_taste.shape[:1]))
-            pca_array = np.empty((this_taste.shape[0], 3, this_taste.shape[-1]))
-            for i, this_taste_ind in enumerate(taste_inds):
-                pca_array[this_taste_ind] = this_pca_obj.transform(this_taste[this_taste_ind].T).T
-            this_region_tastes.append(pca_array)
-        region_pca_arrays.append(this_region_tastes)
-        # this_region = this_region.swapaxes(1,2)
-        # region_inds = list(np.ndindex(this_region.shape[:2]))
-        # pca_array = np.empty((this_region.shape[0], this_region.shape[1], 3, this_region.shape[3]))
-        # for i, this_region_ind in enumerate(region_inds):
-        #     pca_array[this_region_ind] = this_pca_obj.transform(this_region[this_region_ind].T).T
-        # region_pca_arrays.append(pca_array)
+        # Peform pca on single_trials
+        region_pca_arrays = []
+        for this_pca_obj, this_region in zip(pca_list, region_firing):
+            this_region_tastes = []
+            for this_taste in this_region:
+                taste_inds = list(np.ndindex(this_taste.shape[:1]))
+                pca_array = np.empty((this_taste.shape[0], 3, this_taste.shape[-1]))
+                for i, this_taste_ind in enumerate(taste_inds):
+                    pca_array[this_taste_ind] = this_pca_obj.transform(this_taste[this_taste_ind].T).T
+                this_region_tastes.append(pca_array)
+            region_pca_arrays.append(this_region_tastes)
+            # this_region = this_region.swapaxes(1,2)
+            # region_inds = list(np.ndindex(this_region.shape[:2]))
+            # pca_array = np.empty((this_region.shape[0], this_region.shape[1], 3, this_region.shape[3]))
+            # for i, this_region_ind in enumerate(region_inds):
+            #     pca_array[this_region_ind] = this_pca_obj.transform(this_region[this_region_ind].T).T
+            # region_pca_arrays.append(pca_array)
 
-    # Shape : region, taste, trial, pca, time
-    # all_region_pca_array = np.stack(region_pca_arrays)
-    # region_pca_arrays: region (list) --> taste (list) --> trials, pca, time
+        # Shape : region, taste, trial, pca, time
+        # all_region_pca_array = np.stack(region_pca_arrays)
+        # region_pca_arrays: region (list) --> taste (list) --> trials, pca, time
 
-    # mean_region_pca_array = np.mean(all_region_pca_array, axis=2)
-    # shape: region, taste, pca, time
-    mean_region_pca_array = np.stack(
-            [[x.mean(axis=0) for x in region] \
-                    for region in region_pca_arrays]
-            )
+        # mean_region_pca_array = np.mean(all_region_pca_array, axis=2)
+        # shape: region, taste, pca, time
+        mean_region_pca_array = np.stack(
+                [[x.mean(axis=0) for x in region] \
+                        for region in region_pca_arrays]
+                )
 
-    # vz.firing_overview(mean_region_pca_array[0])
-    # plt.show()
+        # vz.firing_overview(mean_region_pca_array[0])
+        # plt.show()
 
-    mean_region_pca_proj = np.tensordot(
-            mean_region_pca_array[0],
-            y_projection,
-            [1, 0],
-            ).swapaxes(1,2)
+        mean_region_pca_proj = np.tensordot(
+                mean_region_pca_array[0],
+                y_projection,
+                [1, 0],
+                ).swapaxes(1,2)
 
-    fig = plt.figure(figsize=(12, 6))
-    ax0 = fig.add_subplot(131, projection='3d')
-    ax1 = fig.add_subplot(132, projection='3d')
-    ax2 = fig.add_subplot(133, projection='3d')
-    ax = [ax0, ax1, ax2]
-    for i, this_region in enumerate(mean_region_pca_array):
-        for taste in this_region:
-            ax[i].plot(*taste, alpha=0.5)
-    for taste in mean_region_pca_proj:
-        ax[2].plot(*taste, alpha=0.5)
-    ax[0].set_title('Region 1 PCA')
-    ax[1].set_title('Region 2 PCA')
-    ax[2].set_title('Region 1 PCA projected onto Region 2 PCA')
-    basename = os.path.basename(this_dir)
-    fig.suptitle(f'{basename}')
-    fig.savefig(os.path.join(plot_dir, f'{basename}_pca.svg'))
-    plt.close(fig)
-    # plt.show()
+        fig = plt.figure(figsize=(12, 6))
+        ax0 = fig.add_subplot(131, projection='3d')
+        ax1 = fig.add_subplot(132, projection='3d')
+        ax2 = fig.add_subplot(133, projection='3d')
+        ax = [ax0, ax1, ax2]
+        for i, this_region in enumerate(mean_region_pca_array):
+            for taste in this_region:
+                ax[i].plot(*taste, alpha=0.5)
+        for taste in mean_region_pca_proj:
+            ax[2].plot(*taste, alpha=0.5)
+        ax[0].set_title('Region 1 PCA')
+        ax[1].set_title('Region 2 PCA')
+        ax[2].set_title('Region 1 PCA projected onto Region 2 PCA')
+        basename = os.path.basename(this_dir)
+        fig.suptitle(f'{basename}')
+        fig.savefig(os.path.join(plot_dir, f'{basename}_pca.svg'))
+        plt.close(fig)
+        # plt.show()
+
+        ############################## 
+        # Perform and align pca on a single-taste basis
+        # region_firing_long = [x[0] for x in region_firing_long]
+        n_tastes = len(region_firing[0])
+        region_pca_list = []
+        region_pca_proj_list = []
+        for taste_ind in range(n_tastes):
+            # taste_ind = 0
+            region_firing_long = region_firing.copy()
+            taste_firing = [x[taste_ind] for x in region_firing_long]
+            region_firing_long = taste_firing.copy()
+            # region_firing_long = [np.concatenate(x, axis=0) for x in region_firing_long]
+            region_firing_long = [x.swapaxes(0,1) for x in region_firing_long]
+            region_firing_long = [np.reshape(x, (x.shape[0], -1)) for x in region_firing_long]
+
+            # Perform pca
+            pca_list = [PCA(n_components=3).fit(x.T) for x in region_firing_long]
+
+            # Also get a projection between PC components of regions
+            pca_region_long = [x.transform(y.T) for x,y in zip(pca_list, region_firing_long)]
+            X = pca_region_long[0]
+            y = pca_region_long[1]
+            y_projection = np.linalg.lstsq(X, y, rcond=None)[0]
+
+            # Peform pca on single_trials
+            region_pca_arrays = []
+            # for this_pca_obj, this_region in zip(pca_list, region_firing):
+            for this_pca_obj, this_region in zip(pca_list, taste_firing):
+                taste_inds = list(np.ndindex(this_region.shape[:1]))
+                pca_array = np.empty((this_region.shape[0], 3, this_region.shape[-1]))
+                for i, this_taste_ind in enumerate(taste_inds):
+                    pca_array[this_taste_ind] = this_pca_obj.transform(this_region[this_taste_ind].T).T
+                region_pca_arrays.append(pca_array)
+
+            # Shape : region, taste, trial, pca, time
+            # all_region_pca_array = np.stack(region_pca_arrays)
+            # region_pca_arrays: region (list) --> taste (list) --> trials, pca, time
+
+            # shape: region, taste, pca, time
+            mean_region_pca_array = np.stack(
+                    [x.mean(axis=0) for x in region_pca_arrays]
+                    )
+
+            mean_region_pca_proj = np.tensordot(
+                    mean_region_pca_array[0],
+                    y_projection,
+                    [0, 0],
+                    ).T
+
+            region_pca_list.append(mean_region_pca_array)
+            region_pca_proj_list.append(mean_region_pca_proj)
+
+            fig = plt.figure(figsize=(8, 6))
+            ax0 = fig.add_subplot(121, projection='3d')
+            ax1 = fig.add_subplot(122, projection='3d')
+            ax = [ax0, ax1]
+            for i, this_region in enumerate(mean_region_pca_array):
+                    ax[i].plot(*this_region, alpha=0.5)
+            ax[1].plot(*mean_region_pca_proj, alpha=0.5, c='r', label = 'Projected')
+            ax[0].set_title('Region 1 PCA')
+            ax[1].set_title('Region 2 PCA')
+            ax[1].legend()
+            basename = os.path.basename(this_dir)
+            fig.suptitle(f'{basename}')
+            fig.savefig(os.path.join(plot_dir, f'{basename}_pca_taste_{taste_ind}.svg'))
+            plt.close(fig)
+            # plt.show()
+
