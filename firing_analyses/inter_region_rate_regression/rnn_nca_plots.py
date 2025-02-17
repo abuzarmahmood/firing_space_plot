@@ -25,6 +25,21 @@ if not os.path.exists(this_plot_dir):
 data_dir_list_path = '/media/fastdata/Thomas_Data/data/sorted_new/data_dir_list.txt'
 data_dir_list = open(data_dir_list_path, 'r').read().splitlines()
 
+def make_ax_transparent(ax):
+    # make the panes transparent
+    ax.xaxis.set_pane_color((1.0, 1.0, 1.0, 0.0))
+    ax.yaxis.set_pane_color((1.0, 1.0, 1.0, 0.0))
+    ax.zaxis.set_pane_color((1.0, 1.0, 1.0, 0.0))
+    # make the grid lines transparent
+    ax.xaxis._axinfo["grid"]['color'] =  (1,1,1,0)
+    ax.yaxis._axinfo["grid"]['color'] =  (1,1,1,0)
+    ax.zaxis._axinfo["grid"]['color'] =  (1,1,1,0)
+    # remove tick labels
+    ax.set_xticklabels([])
+    ax.set_yticklabels([])
+    ax.set_zticklabels([])
+    return ax
+
 # rnn_latents_list = []
 error_list = []
 for this_dir in tqdm(data_dir_list):
@@ -109,6 +124,8 @@ for this_dir in tqdm(data_dir_list):
         for i, region_name in enumerate(data.region_names):
             ax_list[i].set_title(region_name)
             ax_list[i].legend()
+            # ax_list[i].set_axis_off()
+            ax_list[i] = make_ax_transparent(ax_list[i])
         # plt.show()
         fig.suptitle(f'{basename} RNN-NCA Latents Unaligned')
         plt.tight_layout()
@@ -128,6 +145,8 @@ for this_dir in tqdm(data_dir_list):
         for i, region_name in enumerate(data.region_names):
             ax_list[i].set_title(region_name)
             ax_list[i].legend()
+            # ax_list[i].set_axis_off()
+            ax_list[i] = make_ax_transparent(ax_list[i])
         # Set same lims
         # ax1.set_xlim(ax0.get_xlim())
         # ax1.set_ylim(ax0.get_ylim())
@@ -230,6 +249,8 @@ for this_dir in tqdm(data_dir_list):
         for i, region_name in enumerate(data.region_names):
             ax_list[i].set_title(region_name)
             ax_list[i].legend()
+            # ax_list[i].set_axis_off()
+            ax_list[i] = make_ax_transparent(ax_list[i])
         # plt.show()
         fig.suptitle(f'{basename} RNN-PCA Latents Unaligned')
         plt.tight_layout()
@@ -249,6 +270,8 @@ for this_dir in tqdm(data_dir_list):
         for i, region_name in enumerate(data.region_names):
             ax_list[i].set_title(region_name)
             ax_list[i].legend()
+            # ax_list[i].set_axis_off()
+            ax_list[i] = make_ax_transparent(ax_list[i])
         # Set same lims
         # ax1.set_xlim(ax0.get_xlim())
         # ax1.set_ylim(ax0.get_ylim())
