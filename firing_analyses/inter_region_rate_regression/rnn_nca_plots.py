@@ -129,7 +129,8 @@ for this_dir in tqdm(data_dir_list):
         # plt.show()
         fig.suptitle(f'{basename} RNN-NCA Latents Unaligned')
         plt.tight_layout()
-        plt.savefig(os.path.join(this_plot_dir, f'{basename}_rnn_nca_latents_unaligned.png'))
+        plt.savefig(os.path.join(this_plot_dir, f'{basename}_rnn_nca_latents_unaligned.png'),
+                    bbox_inches='tight', dpi=150)
         plt.close()
 
         # Also plot aligned
@@ -154,7 +155,8 @@ for this_dir in tqdm(data_dir_list):
         # plt.show()
         fig.suptitle(f'{basename} RNN-NCA Latents Aligned')
         plt.tight_layout()
-        plt.savefig(os.path.join(this_plot_dir, f'{basename}_rnn_nca_latents_aligned.png'))
+        plt.savefig(os.path.join(this_plot_dir, f'{basename}_rnn_nca_latents_aligned.png'),
+                    bbox_inches='tight', dpi=150)
         plt.close()
 
     except Exception as e:
@@ -254,7 +256,8 @@ for this_dir in tqdm(data_dir_list):
         # plt.show()
         fig.suptitle(f'{basename} RNN-PCA Latents Unaligned')
         plt.tight_layout()
-        plt.savefig(os.path.join(this_plot_dir, f'{basename}_rnn_pca_latents_unaligned.png'))
+        plt.savefig(os.path.join(this_plot_dir, f'{basename}_rnn_pca_latents_unaligned.png'),
+                    bbox_inches='tight', dpi=150)
         plt.close()
 
         # Also plot aligned
@@ -279,7 +282,8 @@ for this_dir in tqdm(data_dir_list):
         # plt.show()
         fig.suptitle(f'{basename} RNN-PCA Latents Aligned')
         plt.tight_layout()
-        plt.savefig(os.path.join(this_plot_dir, f'{basename}_rnn_pca_latents_aligned.png'))
+        plt.savefig(os.path.join(this_plot_dir, f'{basename}_rnn_pca_latents_aligned.png'),
+                    bbox_inches='tight', dpi=150)
         plt.close()
 
     except Exception as e:
