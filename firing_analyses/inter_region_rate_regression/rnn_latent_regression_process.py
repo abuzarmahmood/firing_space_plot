@@ -10,7 +10,7 @@ import hashlib
 import base64
 import seaborn as sns
 from sklearn.metrics import make_scorer, mean_squared_error
-from scipy.stats import spearmanr, pearsonr, wilcoxon, zscore
+from scipy.stats import spearmanr, pearsonr, wilcoxon, zscore, percentileofscore
 from sklearn.cross_decomposition import PLSRegression
 from sklearn.linear_model import LinearRegression
 from sklearn.neural_network import MLPRegressor
@@ -24,6 +24,8 @@ import sys
 import os
 from tqdm import tqdm, trange
 import pandas as pd
+from glob import glob
+
 
 blech_clust_dir = os.path.expanduser('~/Desktop/blech_clust')
 sys.path.append(blech_clust_dir)
@@ -38,6 +40,10 @@ if not os.path.exists(artifact_dir):
 
 data_dir_list_path = '/media/fastdata/Thomas_Data/data/sorted_new/data_dir_list.txt'
 data_dir_list = open(data_dir_list_path, 'r').read().splitlines()
+
+animal_name = [x.split('/')[-2] for x in data_dir_list]
+basename_list = [os.path.basename(x) for x in data_dir_list]
+base_to_animal_map = dict(zip(basename_list, animal_name))
 
 # rnn_latents_list = []
 error_list = []
@@ -152,83 +158,171 @@ for this_dir in tqdm(data_dir_list):
     except Exception as e:
         print(f'Error in {this_dir}: {e}')
 
-            # plt.hist(raw_shuffle_scores, label='Raw Shuffled', density=True)
-            # plt.hist(retrained_shuffle_scores, label='Retrained Shuffled', density=True)
-            # plt.axvline(actual_score, color='r', label='Actual')
-            # plt.show()
+# Load all saved pickles
+pkl_list = glob(os.path.join(artifact_dir, '*.pkl'))
+# Compile everything into a single dataframe for plotting
+long_frame_list = []
+for this_pkl in tqdm(pkl_list):
+    this_frame = pd.read_pickle(this_pkl)
+    long_frame = this_frame.melt(id_vars=['basename', 'taste_idx']).explode('value')
+    long_frame_list.append(long_frame)
 
-            # fig, ax = plt.subplots(1,2, sharex=True, sharey=True)
-            # ax[0].imshow(y, aspect='auto', interpolation='none')
-            # ax[1].imshow(y_shuffled, aspect='auto', interpolation='none')
-            # plt.show()
+long_frame = pd.concat(long_frame_list)
 
+##############################
+g = sns.catplot(
+        data=long_frame,
+        col = 'basename',
+        x = 'taste_idx',
+        hue='variable',
+        y='value',
+        kind='box',
+        )
+for ax in g.axes.flat:
+    ax.set_title(ax.get_title(), rotation=45, ha='left')
+fig = plt.gcf()
+fig.set_size_inches(20, 10)
+fig.suptitle('RNN Latent Regression Scores')
+fig.savefig(os.path.join(base_plot_dir, 'rnn_latent_regression.png'),
+            bbox_inches='tight')
+plt.close(fig)
+# plt.show()
 
+##############################
+# Min-max scale scores to allow easier comparison
+def min_max_scale(x):
+    return (x - x.min()) / (x.max() - x.min())
 
-        # # Remove first 250ms to aovid visible transients
-        # cut_ind = np.where(pred_x > 100)[0][0]
-        # latent_arrays = [x[..., cut_ind:] for x in latent_arrays]
+group_list = list(long_frame.groupby(['basename', 'taste_idx',]))
+updated_frames_list = []
+for group in group_list:
+    this_frame = group[1]
+    this_frame['scaled_value'] = min_max_scale(this_frame['value'])
+    updated_frames_list.append(this_frame)
 
-        # fig, ax = vz.firing_overview(latent_arrays[0])
-        # for this_ax in ax.flatten():
-        #     for this_count in cum_trial_counts:
-        #         this_ax.axhline(this_count, color='k', linestyle='--')
-        # plt.show()
-        #
-    #     taste_idx_array = np.zeros(latent_arrays[0].shape[1:])
-    #     for i in range(len(cum_trial_counts)-1):
-    #         taste_idx_array[cum_trial_counts[i]:cum_trial_counts[i+1]] = i
-    #
-    #     taste_idx_long = np.reshape(taste_idx_array, -1)
-    #
-    #     n_components = 3
-    #     nca_latents_long_list = []
-    #     nca_latents_taste_list = []
-    #     for this_latent in latent_arrays:
-    #         this_latent_long = np.reshape(
-    #             this_latent, (this_latent.shape[0], -1))
-    #         this_nca = NCA(n_components=n_components)
-    #         this_nca.fit(this_latent_long.T[::10], taste_idx_long[::10])
-    #         nca_latents = this_nca.transform(this_latent_long.T).T
-    #         nca_latents_long_list.append(nca_latents)
-    #         nca_latents_trial = np.reshape(
-    #             nca_latents, (n_components, *this_latent.shape[1:]))
-    #         nca_latents_taste = []
-    #         for i in range(len(cum_trial_counts)-1):
-    #             nca_latents_taste.append(
-    #                 nca_latents_trial[:, cum_trial_counts[i]:cum_trial_counts[i+1]])
-    #         # nca_latents_taste = np.stack(nca_latents_taste, axis=0)
-    #         nca_latents_taste_list.append(nca_latents_taste)
-    #
-    #     mean_nca_latents_taste = [
-    #         [x.mean(axis=1) for x in y] for y in nca_latents_taste_list]
-    #
-    #     # Shape: (n_regions, n_tastes, n_components, n_trials, n_timepoints)
-    #     # nca_latents_taste_array = np.stack(nca_latents_taste_list, axis=0)
-    #
-    #     # mean_nca_taste = np.mean(nca_latents_taste_array, axis=3)
-    #     # Shape: (n_regions, n_tastes, n_components, n_timepoints)
-    #     mean_nca_taste = np.stack(mean_nca_latents_taste, axis=0)
-    #
-    #     # Perform linear regression to align latents
-    #     mean_nca_long = mean_nca_taste.swapaxes(1, 2).reshape(
-    #         mean_nca_taste.shape[0], n_components, -1)
-    #     X = mean_nca_long[0].T
-    #     # Add bias
-    #     X = np.concatenate([X, np.ones((X.shape[0], 1))], axis=-1)
-    #     Y = mean_nca_long[1].T
-    #     align_mat = np.linalg.lstsq(X, Y, rcond=None)[0]
-    #
-    #     # Align mean latents
-    #     aligned_mean_nca_taste = []
-    #     taste_X = mean_nca_taste[0]
-    #     # Add bias
-    #     taste_X = np.concatenate(
-    #         [taste_X, np.ones((taste_X.shape[0], 1, taste_X.shape[-1]))], axis=1)
-    #     taste_Y = np.tensordot(taste_X, align_mat, axes=[1, 0]).swapaxes(1, 2)
-    #     aligned_mean_nca_taste.append(taste_Y)
-    #     aligned_mean_nca_taste.append(mean_nca_taste[1])
-    #
-    # except Exception as e:
-    #     print(f'Error in {this_dir}: {e}')
-    #     error_list.append(this_dir)
-    #     continue
+# Tally of actual score being the highest
+actual_score_max_bool = []
+for frame in updated_frames_list:
+    actual_score = frame[frame['variable'] == 'actual_score']['scaled_value'].values[0]
+    max_score = frame['scaled_value'].max()
+    actual_score_max_bool.append(actual_score == max_score)
+
+group_inds = [x[0] for x in group_list]
+actual_score_max_frame = pd.DataFrame(
+        group_inds,
+        columns=['basename', 'taste_idx']
+        )
+actual_score_max_frame['actual_score_max'] = actual_score_max_bool
+actual_score_max_frame.groupby('basename').mean()
+actual_score_max_frame['animal'] = actual_score_max_frame['basename'].map(base_to_animal_map)
+mean_actual_score_max = actual_score_max_frame.groupby(['animal', 'basename']).mean()
+mean_actual_score_max = mean_actual_score_max.reset_index()
+
+# Get counts per basename
+count_frame = actual_score_max_frame.groupby(['animal', 'basename']).count()
+count_frame = count_frame.reset_index()
+
+g = sns.barplot(
+        data=mean_actual_score_max,
+        x='basename',
+        y='actual_score_max',
+        hue='animal',
+        )
+fig = plt.gcf()
+fig.set_size_inches(5,7)
+# Annotate with counts
+for i, row in count_frame.iterrows():
+    plt.text(row['basename'], 1.1, row['taste_idx'], ha='center') 
+plt.ylim(0, 1.2)
+# Rotate x labels
+plt.xticks(rotation=90, ha='right')
+# Put legend outside of plot
+plt.legend(loc='center left', bbox_to_anchor=(1, 0.5))
+plt.title('Fraction of Trials where Actual Score is Max')
+plt.tight_layout()
+# plt.show()
+fig.savefig(os.path.join(base_plot_dir, 'rnn_latent_regression_actual_score_max.svg'),
+            bbox_inches='tight')
+plt.close(fig)
+
+##############################
+# Calculate percentile of actual score vs retrained_shuffle_scores
+percentile_list = []
+for frame in updated_frames_list:
+    actual_score = frame[frame['variable'] == 'actual_score']['scaled_value'].values[0]
+    retrained_shuffle_scores = frame[frame['variable'] == 'retrained_shuffle_scores']['scaled_value'].values
+    percentile = percentileofscore(retrained_shuffle_scores, actual_score)
+    percentile_list.append(percentile) 
+
+percentile_frame = pd.DataFrame(
+        group_inds,
+        columns=['basename', 'taste_idx']
+        )
+percentile_frame['percentile'] = percentile_list
+
+percentile_frame['animal'] = percentile_frame['basename'].map(base_to_animal_map)
+
+fig, ax = plt.subplots(1,2, sharey=True)
+g = sns.swarmplot(
+        data=percentile_frame,
+        x='basename',
+        y='percentile',
+        hue='animal',
+        ax=ax[0]
+        )
+fig.set_size_inches(5,7)
+# Rotate x labels
+ax[0].set_xticklabels(ax[0].get_xticklabels(), rotation=90)
+ax[0].yscale('log')
+ax[0].axhline(95, color='r', linestyle='--')
+# Put legend outside of plot
+ax[0].legend(loc='center left', bbox_to_anchor=(1, 0.5))
+ax[1].hist(percentile_frame['percentile'], bins=20, orientation='horizontal') 
+ax[1].axhline(95, color='r', linestyle='--')
+ax[1].set_xlabel('Count')
+fig.suptitle('Percentile of Actual Score vs Retrained Shuffle Scores')
+plt.tight_layout()
+# plt.show()
+fig.savefig(os.path.join(base_plot_dir, 'rnn_latent_regression_percentile.svg'),
+            bbox_inches='tight')
+plt.close(fig)
+
+##############################
+
+# long_frame['scaled_value'] = np.concatenate(scaled_values)
+long_frame = pd.concat(updated_frames_list)
+
+g = sns.catplot(
+        data=long_frame,
+        col = 'basename',
+        x = 'taste_idx',
+        hue='variable',
+        y='scaled_value',
+        kind='box',
+        )
+for ax in g.axes.flat:
+    ax.set_title(ax.get_title(), rotation=45, ha='left')
+fig = plt.gcf()
+fig.set_size_inches(20, 10)
+fig.suptitle('RNN Latent Regression Scores (Scaled)')
+fig.savefig(os.path.join(base_plot_dir, 'rnn_latent_regression_scaled.png'),
+            bbox_inches='tight')
+plt.close(fig)
+# plt.show()
+
+##############################
+# Plot pooled scaled values
+g = sns.boxenplot(
+        data=long_frame,
+        x = 'variable',
+        hue='variable',
+        y='scaled_value',
+        )
+fig = plt.gcf()
+fig.set_size_inches(3, 5)
+# Rotate x labels
+plt.xticks(rotation=45, ha='right')
+fig.suptitle('RNN Latent Regression Scores (Scaled - Pooled)')
+fig.savefig(os.path.join(base_plot_dir, 'rnn_latent_regression_pooled.svg'),
+            bbox_inches='tight')
+plt.close(fig)
