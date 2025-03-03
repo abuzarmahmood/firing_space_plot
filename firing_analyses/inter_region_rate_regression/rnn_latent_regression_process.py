@@ -25,6 +25,7 @@ import os
 from tqdm import tqdm, trange
 import pandas as pd
 from glob import glob
+import pingouin as pg
 
 
 blech_clust_dir = os.path.expanduser('~/Desktop/blech_clust')
@@ -198,10 +199,59 @@ mean_norm_mean_abs_diff = np.stack(norm_mean_abs_diff_list).mean(axis=0)
 zscored_norm_mean_abs_diff_list = [zscore(x) for x in norm_mean_abs_diff_list] 
 mean_zscored_norm_mean_abs_diff = np.stack(zscored_norm_mean_abs_diff_list).mean(axis=0)
 
+zscored_norm_mean_abs_diff_frame = pd.concat(
+        [pd.DataFrame(
+            dict(
+                basename = [basename_list[i]]*len(zscored_norm_mean_abs_diff_list[i]),
+                taste_idx = [taste_idx_list[i]]*len(zscored_norm_mean_abs_diff_list[i]),
+                zscored_norm_mean_abs_diff = zscored_norm_mean_abs_diff_list[i],
+                time = pred_x - 500,
+                )
+            ) for i in range(len(zscored_norm_mean_abs_diff_list))]
+         )
+
+wanted_time = [0, 2000]
+zscored_norm_mean_abs_diff_frame = zscored_norm_mean_abs_diff_frame[
+        (zscored_norm_mean_abs_diff_frame['time'] >= wanted_time[0]) & \
+        (zscored_norm_mean_abs_diff_frame['time'] <= wanted_time[1])
+        ]
+bins_width = 250
+zscored_norm_mean_abs_diff_frame['time_bin'] = pd.cut(
+        zscored_norm_mean_abs_diff_frame['time'],
+        bins=np.arange(wanted_time[0], wanted_time[1] + bins_width, bins_width),
+        right=False
+        )
+# Reset index
+zscored_norm_mean_abs_diff_frame.reset_index(drop=True, inplace=True)
+# Set time_bin to the start of the bin
+zscored_norm_mean_abs_diff_frame['time_bin'] = zscored_norm_mean_abs_diff_frame['time_bin'].apply(lambda x: x.left)
+# Drop nans
+zscored_norm_mean_abs_diff_frame.dropna(inplace=True)
+# Convert to int
+zscored_norm_mean_abs_diff_frame['time_bin'] = zscored_norm_mean_abs_diff_frame['time_bin'].astype(int)
+
+# Get mean and std by time bin 
+mean_zscored_norm_mean_abs_diff_frame = zscored_norm_mean_abs_diff_frame.groupby(
+        ['basename', 'taste_idx', 'time_bin']
+        ).mean().reset_index()
+std_zscored_norm_mean_abs_diff_frame = zscored_norm_mean_abs_diff_frame.groupby(
+        ['basename', 'taste_idx', 'time_bin']
+        ).std().reset_index()
+stats_zscored_norm_mean_abs_diff_frame = pd.merge(
+        mean_zscored_norm_mean_abs_diff_frame,
+        std_zscored_norm_mean_abs_diff_frame,
+        on=['basename', 'taste_idx', 'time_bin'],
+        suffixes=('_mean', '_std')
+        )
+# Rename
+stats_zscored_norm_mean_abs_diff_frame.rename(
+        columns={'zscored_norm_mean_abs_diff_mean': 'mean', 'zscored_norm_mean_abs_diff_std': 'std'},
+        inplace=True
+        )
 
 unique_animals = np.unique(animal_list)
 cmap = plt.cm.get_cmap('tab10', len(unique_animals))
-fig, ax = plt.subplots(2,1, sharex=True, figsize=(7,7))
+fig, ax = plt.subplots(3,1, figsize=(7,7))
 for i in range(len(norm_mean_abs_diff_list)):
     color_ind = np.where(unique_animals == animal_list[i])[0][0]
     ax[0].plot(pred_x - 500, norm_mean_abs_diff_list[i], color = cmap(color_ind), alpha=0.5) 
@@ -210,9 +260,18 @@ ax[0].plot(pred_x - 500, mean_norm_mean_abs_diff, color='k', linewidth=2)
 ax[0].set_title('Mean Abs Diff')
 ax[1].plot(pred_x - 500, mean_zscored_norm_mean_abs_diff, color='k', linewidth=2)
 ax[1].set_title('Zscored Mean Abs Diff')
-ax[1].set_xlabel('Time post-stimulus')
 ax[0].set_ylabel('Norm Mean Abs Diff')
 ax[1].set_ylabel('Zscored Norm Mean Abs Diff')
+ax[0].set_xlim(wanted_time)
+ax[1].set_xlim(wanted_time)
+sns.barplot(
+        data=zscored_norm_mean_abs_diff_frame,
+        x='time_bin',
+        y='zscored_norm_mean_abs_diff',
+        ax=ax[2]
+        )
+ax[2].set_title('Zscored Mean Abs Diff by Time Bin (error bars = SEM)\nNo significance in any error bin')
+ax[2].set_xlabel('Time post-stimulus')
 fig.suptitle('RNN Latent Regression Error')
 plt.tight_layout()
 fig.savefig(os.path.join(base_plot_dir, 'rnn_latent_regression_error.png'),
@@ -285,6 +344,8 @@ mean_actual_score_max = mean_actual_score_max.reset_index()
 count_frame = actual_score_max_frame.groupby(['animal', 'basename']).count()
 count_frame = count_frame.reset_index()
 
+count_frame.sort_values(['animal', 'basename'], inplace=True)
+
 g = sns.barplot(
         data=mean_actual_score_max,
         x='basename',
@@ -324,6 +385,8 @@ percentile_frame = pd.DataFrame(
 percentile_frame['percentile'] = percentile_list
 
 percentile_frame['animal'] = percentile_frame['basename'].map(base_to_animal_map)
+
+percentile_frame.sort_values(['animal', 'basename'], inplace=True)
 
 fig, ax = plt.subplots(1,2, sharey=True)
 g = sns.swarmplot(
@@ -389,3 +452,30 @@ fig.suptitle('RNN Latent Regression Scores (Scaled - Pooled)')
 fig.savefig(os.path.join(base_plot_dir, 'rnn_latent_regression_pooled.svg'),
             bbox_inches='tight')
 plt.close(fig)
+
+# Also plot mean pooled scaled values
+mean_frame = long_frame.groupby(['basename', 'taste_idx', 'variable']).mean().reset_index()
+g = sns.boxenplot(
+        data=mean_frame,
+        x = 'variable',
+        hue='variable',
+        y='scaled_value',
+        )
+fig = plt.gcf()
+fig.set_size_inches(3, 5)
+# Rotate x labels
+plt.xticks(rotation=45, ha='right')
+fig.suptitle('Mean RNN Latent Regression Scores (Scaled - Pooled)')
+fig.savefig(os.path.join(base_plot_dir, 'rnn_latent_regression_pooled_mean.svg'),
+            bbox_inches='tight')
+plt.close(fig)
+
+# Pairwise comparisons for pooled scaled values
+long_frame.dropna(inplace=True)
+long_frame['scaled_value'] = long_frame['scaled_value'].astype(float)
+pg.pairwise_ttests(
+        data=long_frame.groupby(['basename', 'taste_idx', 'variable']).mean().reset_index(),
+        dv='scaled_value',
+        within='variable',
+        padjust='bonf',
+        )
