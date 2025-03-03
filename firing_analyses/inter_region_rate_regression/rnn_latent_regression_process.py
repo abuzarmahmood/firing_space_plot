@@ -106,24 +106,40 @@ for this_dir in tqdm(data_dir_list):
         # plt.show()
 
         n_tastes = len(data.spikes)
-        split_latent_long = [np.stack(np.array_split(x, n_tastes, axis=1)) for x in down_latents_long]
+        trial_len = latent_arrays[0].shape[-1]
+        # split_latent_long = [np.stack(np.array_split(x, n_tastes, axis=1)) for x in down_latents_long]
+        split_latent_long = [
+                [x[:, trial_len*cum_trial_counts[i]:trial_len*cum_trial_counts[i+1]] for i in range(len(cum_trial_counts)-1)] \
+                    for x in down_latents_long
+                ]
 
         n_shuffles = 100
 
         for i in range(n_tastes):
 
             out_frame_path = os.path.join(artifact_dir, f'{basename}_taste_{i}.pkl')
+            if os.path.exists(out_frame_path):
+                continue
 
             x = split_latent_long[0][i].T
             y = split_latent_long[1][i].T
             orig_mlp = MLPRegressor(hidden_layer_sizes=(100, 100), max_iter=1000)
             orig_mlp.fit(x, y)
+            y_pred = orig_mlp.predict(x)
             actual_score = orig_mlp.score(x, y)
+
+            # Difference over time
+            diff = y - y_pred
+
+            n_trials = data.spikes[i].shape[0]
+            diff_trial = np.stack(np.array_split(diff, n_trials, axis=0))
+            # mean_abs_diff = np.mean(np.abs(diff_trial), axis=0)
+            # norm_mean_abs_diff = np.linalg.norm(mean_abs_diff, axis=1)
 
             # Shuffle trials
             raw_shuffle_scores = []
             n_trials = data.spikes[i].shape[0]
-            for j in trange(n_shuffles):
+            for j in range(n_shuffles):
                 # Shuffle trials
                 y_split = np.stack(np.array_split(y, n_trials, axis=0))
                 y_split = np.random.permutation(y_split)
@@ -132,7 +148,7 @@ for this_dir in tqdm(data_dir_list):
                 raw_shuffle_scores.append(shuffle_score)
 
             retrained_shuffle_scores = []
-            for j in trange(n_shuffles // 10):
+            for j in range(n_shuffles // 10):
                 # Shuffle trials
                 y_split = np.stack(np.array_split(y, n_trials, axis=0))
                 y_split = np.random.permutation(y_split)
@@ -149,6 +165,7 @@ for this_dir in tqdm(data_dir_list):
                     ),
                     index=[0]
                     )
+            out_frame['diff_trial'] = [diff_trial]
             out_frame['actual_score'] = actual_score
             out_frame['raw_shuffle_scores'] = [raw_shuffle_scores]
             out_frame['retrained_shuffle_scores'] = [retrained_shuffle_scores]
@@ -160,10 +177,56 @@ for this_dir in tqdm(data_dir_list):
 
 # Load all saved pickles
 pkl_list = glob(os.path.join(artifact_dir, '*.pkl'))
+
+##############################
+# Analyze timeseries of error in predictions
+basename_list = []
+taste_idx_list = []
+norm_mean_abs_diff_list = []
+for this_pkl in tqdm(pkl_list):
+    this_frame = pd.read_pickle(this_pkl)
+    wanted_data = this_frame[['basename', 'taste_idx', 'diff_trial']]
+    diff_trial = wanted_data['diff_trial'].values[0]
+    mean_abs_diff = np.mean(np.abs(diff_trial), axis=0)
+    norm_mean_abs_diff = np.linalg.norm(mean_abs_diff, axis=1)
+    basename_list.append(wanted_data['basename'].values[0])
+    taste_idx_list.append(wanted_data['taste_idx'].values[0])
+    norm_mean_abs_diff_list.append(norm_mean_abs_diff)
+
+animal_list = [base_to_animal_map[x] for x in basename_list]
+mean_norm_mean_abs_diff = np.stack(norm_mean_abs_diff_list).mean(axis=0)
+zscored_norm_mean_abs_diff_list = [zscore(x) for x in norm_mean_abs_diff_list] 
+mean_zscored_norm_mean_abs_diff = np.stack(zscored_norm_mean_abs_diff_list).mean(axis=0)
+
+
+unique_animals = np.unique(animal_list)
+cmap = plt.cm.get_cmap('tab10', len(unique_animals))
+fig, ax = plt.subplots(2,1, sharex=True, figsize=(7,7))
+for i in range(len(norm_mean_abs_diff_list)):
+    color_ind = np.where(unique_animals == animal_list[i])[0][0]
+    ax[0].plot(pred_x - 500, norm_mean_abs_diff_list[i], color = cmap(color_ind), alpha=0.5) 
+    ax[1].plot(pred_x - 500, zscored_norm_mean_abs_diff_list[i], color = cmap(color_ind), alpha=0.5)
+ax[0].plot(pred_x - 500, mean_norm_mean_abs_diff, color='k', linewidth=2)
+ax[0].set_title('Mean Abs Diff')
+ax[1].plot(pred_x - 500, mean_zscored_norm_mean_abs_diff, color='k', linewidth=2)
+ax[1].set_title('Zscored Mean Abs Diff')
+ax[1].set_xlabel('Time post-stimulus')
+ax[0].set_ylabel('Norm Mean Abs Diff')
+ax[1].set_ylabel('Zscored Norm Mean Abs Diff')
+fig.suptitle('RNN Latent Regression Error')
+plt.tight_layout()
+fig.savefig(os.path.join(base_plot_dir, 'rnn_latent_regression_error.png'),
+            bbox_inches='tight')
+plt.close(fig)
+# plt.show()
+
+
+##############################
 # Compile everything into a single dataframe for plotting
 long_frame_list = []
 for this_pkl in tqdm(pkl_list):
     this_frame = pd.read_pickle(this_pkl)
+    this_frame.drop('diff_trial', axis=1, inplace=True)
     long_frame = this_frame.melt(id_vars=['basename', 'taste_idx']).explode('value')
     long_frame_list.append(long_frame)
 
