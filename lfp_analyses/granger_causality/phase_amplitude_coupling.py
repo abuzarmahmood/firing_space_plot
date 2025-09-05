@@ -350,10 +350,10 @@ else:
             
             # Save intermediate results after each session
             print(f'    Saving intermediate results after session {session_idx + 1}...')
-            np.save(pac_raw_baseline_path, all_raw_pac_baseline, allow_pickle=True)
-            np.save(pac_raw_stimulus_path, all_raw_pac_stimulus, allow_pickle=True)
-            np.save(pac_processed_baseline_path, all_processed_pac_baseline, allow_pickle=True)
-            np.save(pac_processed_stimulus_path, all_processed_pac_stimulus, allow_pickle=True)
+            np.save(pac_raw_baseline_path, np.array(all_raw_pac_baseline, dtype=object), allow_pickle=True)
+            np.save(pac_raw_stimulus_path, np.array(all_raw_pac_stimulus, dtype=object), allow_pickle=True)
+            np.save(pac_processed_baseline_path, np.array(all_processed_pac_baseline, dtype=object), allow_pickle=True)
+            np.save(pac_processed_stimulus_path, np.array(all_processed_pac_stimulus, dtype=object), allow_pickle=True)
             np.save(pac_region_names_path, region_names_list, allow_pickle=True)
             np.save(pac_phase_freqs_path, phase_freqs)
             np.save(pac_amp_freqs_path, amp_freqs)
@@ -366,10 +366,10 @@ else:
 
     # Final save of results
     print(f'\nSaving final results to {artifacts_dir}...')
-    np.save(pac_raw_baseline_path, all_raw_pac_baseline, allow_pickle=True)
-    np.save(pac_raw_stimulus_path, all_raw_pac_stimulus, allow_pickle=True)
-    np.save(pac_processed_baseline_path, all_processed_pac_baseline, allow_pickle=True)
-    np.save(pac_processed_stimulus_path, all_processed_pac_stimulus, allow_pickle=True)
+    np.save(pac_raw_baseline_path, np.array(all_raw_pac_baseline, dtype=object), allow_pickle=True)
+    np.save(pac_raw_stimulus_path, np.array(all_raw_pac_stimulus, dtype=object), allow_pickle=True)
+    np.save(pac_processed_baseline_path, np.array(all_processed_pac_baseline, dtype=object), allow_pickle=True)
+    np.save(pac_processed_stimulus_path, np.array(all_processed_pac_stimulus, dtype=object), allow_pickle=True)
     np.save(pac_region_names_path, region_names_list, allow_pickle=True)
     np.save(pac_phase_freqs_path, phase_freqs)
     np.save(pac_amp_freqs_path, amp_freqs)
