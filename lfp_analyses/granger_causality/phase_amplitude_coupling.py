@@ -323,11 +323,11 @@ print(f'\nCompleted processing {len(all_raw_pac_baseline)} sessions successfully
 
 # Save results
 print(f'\nSaving results to {artifacts_dir}...')
-np.save(os.path.join(artifacts_dir, 'pac_raw_baseline.npy'), all_raw_pac_baseline)
-np.save(os.path.join(artifacts_dir, 'pac_raw_stimulus.npy'), all_raw_pac_stimulus)
-np.save(os.path.join(artifacts_dir, 'pac_processed_baseline.npy'), all_processed_pac_baseline)
-np.save(os.path.join(artifacts_dir, 'pac_processed_stimulus.npy'), all_processed_pac_stimulus)
-np.save(os.path.join(artifacts_dir, 'pac_region_names.npy'), region_names_list)
+np.save(os.path.join(artifacts_dir, 'pac_raw_baseline.npy'), all_raw_pac_baseline, allow_pickle=True)
+np.save(os.path.join(artifacts_dir, 'pac_raw_stimulus.npy'), all_raw_pac_stimulus, allow_pickle=True)
+np.save(os.path.join(artifacts_dir, 'pac_processed_baseline.npy'), all_processed_pac_baseline, allow_pickle=True)
+np.save(os.path.join(artifacts_dir, 'pac_processed_stimulus.npy'), all_processed_pac_stimulus, allow_pickle=True)
+np.save(os.path.join(artifacts_dir, 'pac_region_names.npy'), region_names_list, allow_pickle=True)
 np.save(os.path.join(artifacts_dir, 'pac_phase_freqs.npy'), phase_freqs)
 np.save(os.path.join(artifacts_dir, 'pac_amp_freqs.npy'), amp_freqs)
 
