@@ -185,12 +185,45 @@ print(f"Phase frequencies: {phase_freqs} Hz")
 print(f"Amplitude frequencies: {amp_freqs} Hz")
 print(f"Total frequency pairs to analyze: {len(phase_freqs)} x {len(amp_freqs)} = {len(phase_freqs) * len(amp_freqs)}")
 
-# Storage for results
-all_raw_pac_baseline = []
-all_raw_pac_stimulus = []
-all_processed_pac_baseline = []
-all_processed_pac_stimulus = []
-region_names_list = []
+# Check for existing artifacts
+pac_raw_baseline_path = os.path.join(artifacts_dir, 'pac_raw_baseline.npy')
+pac_raw_stimulus_path = os.path.join(artifacts_dir, 'pac_raw_stimulus.npy')
+pac_processed_baseline_path = os.path.join(artifacts_dir, 'pac_processed_baseline.npy')
+pac_processed_stimulus_path = os.path.join(artifacts_dir, 'pac_processed_stimulus.npy')
+pac_region_names_path = os.path.join(artifacts_dir, 'pac_region_names.npy')
+pac_phase_freqs_path = os.path.join(artifacts_dir, 'pac_phase_freqs.npy')
+pac_amp_freqs_path = os.path.join(artifacts_dir, 'pac_amp_freqs.npy')
+
+# Check if all artifacts exist
+all_artifacts_exist = all([
+    os.path.exists(pac_raw_baseline_path),
+    os.path.exists(pac_raw_stimulus_path),
+    os.path.exists(pac_processed_baseline_path),
+    os.path.exists(pac_processed_stimulus_path),
+    os.path.exists(pac_region_names_path),
+    os.path.exists(pac_phase_freqs_path),
+    os.path.exists(pac_amp_freqs_path)
+])
+
+if all_artifacts_exist:
+    print("All PAC artifacts already exist. Skipping processing and loading existing data...")
+    all_raw_pac_baseline = np.load(pac_raw_baseline_path, allow_pickle=True)
+    all_raw_pac_stimulus = np.load(pac_raw_stimulus_path, allow_pickle=True)
+    all_processed_pac_baseline = np.load(pac_processed_baseline_path, allow_pickle=True)
+    all_processed_pac_stimulus = np.load(pac_processed_stimulus_path, allow_pickle=True)
+    region_names_list = np.load(pac_region_names_path, allow_pickle=True)
+    phase_freqs = np.load(pac_phase_freqs_path)
+    amp_freqs = np.load(pac_amp_freqs_path)
+    print(f"Loaded existing results for {len(all_raw_pac_baseline)} sessions")
+else:
+    print("Some or all PAC artifacts missing. Starting processing...")
+    
+    # Storage for results
+    all_raw_pac_baseline = []
+    all_raw_pac_stimulus = []
+    all_processed_pac_baseline = []
+    all_processed_pac_stimulus = []
+    region_names_list = []
 
 # Time windows for analysis
 baseline_start, baseline_end = 8, 10  # seconds
@@ -201,159 +234,162 @@ print(f"  Stimulus: {stimulus_start}-{stimulus_end} seconds")
 print(f"Starting PAC analysis across {len(dir_list)} sessions...")
 
 for session_idx, dir_name in enumerate(tqdm(dir_list, desc="Processing sessions")):
-    basename = dir_name.split('/')[-1]
-    h5_path = glob(dir_name + '/*.h5')[0]
-    
-    print(f'\n=== Session {session_idx + 1}/{len(dir_list)}: {basename} ===')
-    print(f'H5 file: {h5_path}')
-    
-    try:
-        dat = ephys_data(dir_name)
-        dat.get_info_dict()
+        basename = dir_name.split('/')[-1]
+        h5_path = glob(dir_name + '/*.h5')[0]
         
-        # Get LFP data
-        lfp_channel_inds, region_lfps, region_names = \
-            dat.return_representative_lfp_channels()
-        region_names_list.append(region_names)
-        print(f'Found {len(region_names)} regions: {region_names}')
-        print(f'LFP data shape: {region_lfps.shape} (regions, trials, time)')
+        print(f'\n=== Session {session_idx + 1}/{len(dir_list)}: {basename} ===')
+        print(f'H5 file: {h5_path}')
         
-        # Flatten data for processing
-        flat_region_lfps = np.reshape(
-            region_lfps, (region_lfps.shape[0], -1, region_lfps.shape[-1]))
-        
-        # Remove trials with artifacts
-        good_lfp_trials_bool = \
-            dat.lfp_processing.return_good_lfp_trial_inds(flat_region_lfps)
-        good_lfp_trials = flat_region_lfps[:, good_lfp_trials_bool]
-        print(f'Artifact removal: {np.sum(good_lfp_trials_bool)}/{len(good_lfp_trials_bool)} trials retained')
-        print(f'Clean LFP data shape: {good_lfp_trials.shape}')
-        
-        # Get sampling frequency with fallback
         try:
-            fs = dat.info_dict['sampling_rate']
-            print(f'Sampling rate: {fs} Hz')
-        except KeyError:
-            # Try alternative key structures or use default
-            if 'sampling_rate' in dat.info_dict:
+            dat = ephys_data(dir_name)
+            dat.get_info_dict()
+            
+            # Get LFP data
+            lfp_channel_inds, region_lfps, region_names = \
+                dat.return_representative_lfp_channels()
+            region_names_list.append(region_names)
+            print(f'Found {len(region_names)} regions: {region_names}')
+            print(f'LFP data shape: {region_lfps.shape} (regions, trials, time)')
+            
+            # Flatten data for processing
+            flat_region_lfps = np.reshape(
+                region_lfps, (region_lfps.shape[0], -1, region_lfps.shape[-1]))
+            
+            # Remove trials with artifacts
+            good_lfp_trials_bool = \
+                dat.lfp_processing.return_good_lfp_trial_inds(flat_region_lfps)
+            good_lfp_trials = flat_region_lfps[:, good_lfp_trials_bool]
+            print(f'Artifact removal: {np.sum(good_lfp_trials_bool)}/{len(good_lfp_trials_bool)} trials retained')
+            print(f'Clean LFP data shape: {good_lfp_trials.shape}')
+            
+            # Get sampling frequency with fallback
+            try:
                 fs = dat.info_dict['sampling_rate']
                 print(f'Sampling rate: {fs} Hz')
-            else:
-                print(f'Warning: Could not find sampling rate for {basename}, using default 1000 Hz')
-                fs = 1000  # Default sampling rate
-        
-        # Convert time windows to sample indices
-        baseline_samples = [int(baseline_start * fs), int(baseline_end * fs)]
-        stimulus_samples = [int(stimulus_start * fs), int(stimulus_end * fs)]
-        print(f'Sample indices - Baseline: {baseline_samples}, Stimulus: {stimulus_samples}')
-        
-        # Initialize storage for this session
-        session_raw_pac_baseline = []
-        session_raw_pac_stimulus = []
-        session_processed_pac_baseline = []
-        session_processed_pac_stimulus = []
-        
-        # Process each region
-        print(f'Processing PAC for each region...')
-        for region_idx in range(good_lfp_trials.shape[0]):
-            region_data = good_lfp_trials[region_idx]
-            print(f'  Region {region_idx + 1}/{good_lfp_trials.shape[0]} ({region_names[region_idx]}): {region_data.shape[0]} trials')
+            except KeyError:
+                # Try alternative key structures or use default
+                if 'sampling_rate' in dat.info_dict:
+                    fs = dat.info_dict['sampling_rate']
+                    print(f'Sampling rate: {fs} Hz')
+                else:
+                    print(f'Warning: Could not find sampling rate for {basename}, using default 1000 Hz')
+                    fs = 1000  # Default sampling rate
             
-            # Calculate PAC for raw data
-            print(f'    Computing raw PAC...')
-            region_raw_pac_baseline = []
-            region_raw_pac_stimulus = []
+            # Convert time windows to sample indices
+            baseline_samples = [int(baseline_start * fs), int(baseline_end * fs)]
+            stimulus_samples = [int(stimulus_start * fs), int(stimulus_end * fs)]
+            print(f'Sample indices - Baseline: {baseline_samples}, Stimulus: {stimulus_samples}')
             
-            for trial_idx in range(region_data.shape[0]):
-                trial_data = region_data[trial_idx]
+            # Initialize storage for this session
+            session_raw_pac_baseline = []
+            session_raw_pac_stimulus = []
+            session_processed_pac_baseline = []
+            session_processed_pac_stimulus = []
+            
+            # Process each region
+            print(f'Processing PAC for each region...')
+            for region_idx in range(good_lfp_trials.shape[0]):
+                region_data = good_lfp_trials[region_idx]
+                print(f'  Region {region_idx + 1}/{good_lfp_trials.shape[0]} ({region_names[region_idx]}): {region_data.shape[0]} trials')
                 
-                # Baseline period
-                baseline_data = trial_data[baseline_samples[0]:baseline_samples[1]]
-                baseline_comod = calculate_pac_comodulogram(
-                    baseline_data, fs, phase_freqs, amp_freqs)
-                region_raw_pac_baseline.append(baseline_comod)
+                # Calculate PAC for raw data
+                print(f'    Computing raw PAC...')
+                region_raw_pac_baseline = []
+                region_raw_pac_stimulus = []
                 
-                # Stimulus period
-                stimulus_data = trial_data[stimulus_samples[0]:stimulus_samples[1]]
-                stimulus_comod = calculate_pac_comodulogram(
-                    stimulus_data, fs, phase_freqs, amp_freqs)
-                region_raw_pac_stimulus.append(stimulus_comod)
-            
-            session_raw_pac_baseline.append(np.array(region_raw_pac_baseline))
-            session_raw_pac_stimulus.append(np.array(region_raw_pac_stimulus))
-            
-            # Process with Granger preprocessing
-            print(f'    Applying Granger preprocessing...')
-            this_granger = gu.granger_handler(region_data[np.newaxis, :, :])
-            this_granger.preprocess_data()
-            preprocessed_data = this_granger.preprocessed_data[0]
-            print(f'    Computing preprocessed PAC...')
-            
-            region_processed_pac_baseline = []
-            region_processed_pac_stimulus = []
-            
-            for trial_idx in range(preprocessed_data.shape[0]):
-                trial_data = preprocessed_data[trial_idx]
+                for trial_idx in range(region_data.shape[0]):
+                    trial_data = region_data[trial_idx]
+                    
+                    # Baseline period
+                    baseline_data = trial_data[baseline_samples[0]:baseline_samples[1]]
+                    baseline_comod = calculate_pac_comodulogram(
+                        baseline_data, fs, phase_freqs, amp_freqs)
+                    region_raw_pac_baseline.append(baseline_comod)
+                    
+                    # Stimulus period
+                    stimulus_data = trial_data[stimulus_samples[0]:stimulus_samples[1]]
+                    stimulus_comod = calculate_pac_comodulogram(
+                        stimulus_data, fs, phase_freqs, amp_freqs)
+                    region_raw_pac_stimulus.append(stimulus_comod)
                 
-                # Baseline period
-                baseline_data = trial_data[baseline_samples[0]:baseline_samples[1]]
-                baseline_comod = calculate_pac_comodulogram(
-                    baseline_data, fs, phase_freqs, amp_freqs)
-                region_processed_pac_baseline.append(baseline_comod)
+                session_raw_pac_baseline.append(np.array(region_raw_pac_baseline))
+                session_raw_pac_stimulus.append(np.array(region_raw_pac_stimulus))
                 
-                # Stimulus period
-                stimulus_data = trial_data[stimulus_samples[0]:stimulus_samples[1]]
-                stimulus_comod = calculate_pac_comodulogram(
-                    stimulus_data, fs, phase_freqs, amp_freqs)
-                region_processed_pac_stimulus.append(stimulus_comod)
+                # Process with Granger preprocessing
+                print(f'    Applying Granger preprocessing...')
+                this_granger = gu.granger_handler(region_data[np.newaxis, :, :])
+                this_granger.preprocess_data()
+                preprocessed_data = this_granger.preprocessed_data[0]
+                print(f'    Computing preprocessed PAC...')
+                
+                region_processed_pac_baseline = []
+                region_processed_pac_stimulus = []
+                
+                for trial_idx in range(preprocessed_data.shape[0]):
+                    trial_data = preprocessed_data[trial_idx]
+                    
+                    # Baseline period
+                    baseline_data = trial_data[baseline_samples[0]:baseline_samples[1]]
+                    baseline_comod = calculate_pac_comodulogram(
+                        baseline_data, fs, phase_freqs, amp_freqs)
+                    region_processed_pac_baseline.append(baseline_comod)
+                    
+                    # Stimulus period
+                    stimulus_data = trial_data[stimulus_samples[0]:stimulus_samples[1]]
+                    stimulus_comod = calculate_pac_comodulogram(
+                        stimulus_data, fs, phase_freqs, amp_freqs)
+                    region_processed_pac_stimulus.append(stimulus_comod)
+                
+                session_processed_pac_baseline.append(np.array(region_processed_pac_baseline))
+                session_processed_pac_stimulus.append(np.array(region_processed_pac_stimulus))
             
-            session_processed_pac_baseline.append(np.array(region_processed_pac_baseline))
-            session_processed_pac_stimulus.append(np.array(region_processed_pac_stimulus))
-        
-        all_raw_pac_baseline.append(session_raw_pac_baseline)
-        all_raw_pac_stimulus.append(session_raw_pac_stimulus)
-        all_processed_pac_baseline.append(session_processed_pac_baseline)
-        all_processed_pac_stimulus.append(session_processed_pac_stimulus)
-        
-    except Exception as e:
-        print(f'ERROR processing {basename}: {e}')
-        continue
+            all_raw_pac_baseline.append(session_raw_pac_baseline)
+            all_raw_pac_stimulus.append(session_raw_pac_stimulus)
+            all_processed_pac_baseline.append(session_processed_pac_baseline)
+            all_processed_pac_stimulus.append(session_processed_pac_stimulus)
+            
+            # Save intermediate results after each session
+            print(f'    Saving intermediate results after session {session_idx + 1}...')
+            np.save(pac_raw_baseline_path, all_raw_pac_baseline, allow_pickle=True)
+            np.save(pac_raw_stimulus_path, all_raw_pac_stimulus, allow_pickle=True)
+            np.save(pac_processed_baseline_path, all_processed_pac_baseline, allow_pickle=True)
+            np.save(pac_processed_stimulus_path, all_processed_pac_stimulus, allow_pickle=True)
+            np.save(pac_region_names_path, region_names_list, allow_pickle=True)
+            np.save(pac_phase_freqs_path, phase_freqs)
+            np.save(pac_amp_freqs_path, amp_freqs)
+            
+        except Exception as e:
+            print(f'ERROR processing {basename}: {e}')
+            continue
 
-print(f'\nCompleted processing {len(all_raw_pac_baseline)} sessions successfully')
+    print(f'\nCompleted processing {len(all_raw_pac_baseline)} sessions successfully')
 
-# Save results
-print(f'\nSaving results to {artifacts_dir}...')
-np.save(os.path.join(artifacts_dir, 'pac_raw_baseline.npy'), all_raw_pac_baseline, allow_pickle=True)
-np.save(os.path.join(artifacts_dir, 'pac_raw_stimulus.npy'), all_raw_pac_stimulus, allow_pickle=True)
-np.save(os.path.join(artifacts_dir, 'pac_processed_baseline.npy'), all_processed_pac_baseline, allow_pickle=True)
-np.save(os.path.join(artifacts_dir, 'pac_processed_stimulus.npy'), all_processed_pac_stimulus, allow_pickle=True)
-np.save(os.path.join(artifacts_dir, 'pac_region_names.npy'), region_names_list, allow_pickle=True)
-np.save(os.path.join(artifacts_dir, 'pac_phase_freqs.npy'), phase_freqs)
-np.save(os.path.join(artifacts_dir, 'pac_amp_freqs.npy'), amp_freqs)
+    # Final save of results
+    print(f'\nSaving final results to {artifacts_dir}...')
+    np.save(pac_raw_baseline_path, all_raw_pac_baseline, allow_pickle=True)
+    np.save(pac_raw_stimulus_path, all_raw_pac_stimulus, allow_pickle=True)
+    np.save(pac_processed_baseline_path, all_processed_pac_baseline, allow_pickle=True)
+    np.save(pac_processed_stimulus_path, all_processed_pac_stimulus, allow_pickle=True)
+    np.save(pac_region_names_path, region_names_list, allow_pickle=True)
+    np.save(pac_phase_freqs_path, phase_freqs)
+    np.save(pac_amp_freqs_path, amp_freqs)
 
-print("PAC analysis complete. Results saved to artifacts directory.")
-print(f"Saved files:")
-print(f"  - pac_raw_baseline.npy: {len(all_raw_pac_baseline)} sessions")
-print(f"  - pac_raw_stimulus.npy: {len(all_raw_pac_stimulus)} sessions") 
-print(f"  - pac_processed_baseline.npy: {len(all_processed_pac_baseline)} sessions")
-print(f"  - pac_processed_stimulus.npy: {len(all_processed_pac_stimulus)} sessions")
-print(f"  - pac_region_names.npy, pac_phase_freqs.npy, pac_amp_freqs.npy")
+    print("PAC analysis complete. Results saved to artifacts directory.")
+    print(f"Saved files:")
+    print(f"  - pac_raw_baseline.npy: {len(all_raw_pac_baseline)} sessions")
+    print(f"  - pac_raw_stimulus.npy: {len(all_raw_pac_stimulus)} sessions") 
+    print(f"  - pac_processed_baseline.npy: {len(all_processed_pac_baseline)} sessions")
+    print(f"  - pac_processed_stimulus.npy: {len(all_processed_pac_stimulus)} sessions")
+    print(f"  - pac_region_names.npy, pac_phase_freqs.npy, pac_amp_freqs.npy")
 
 ############################################################
 # Generate plots
 ############################################################
 
 print(f'\n=== Starting plot generation ===')
-print(f'Loading results from {artifacts_dir}...')
 
-# Load results for plotting
-all_raw_pac_baseline = np.load(os.path.join(artifacts_dir, 'pac_raw_baseline.npy'), allow_pickle=True)
-all_raw_pac_stimulus = np.load(os.path.join(artifacts_dir, 'pac_raw_stimulus.npy'), allow_pickle=True)
-all_processed_pac_baseline = np.load(os.path.join(artifacts_dir, 'pac_processed_baseline.npy'), allow_pickle=True)
-all_processed_pac_stimulus = np.load(os.path.join(artifacts_dir, 'pac_processed_stimulus.npy'), allow_pickle=True)
-region_names_list = np.load(os.path.join(artifacts_dir, 'pac_region_names.npy'), allow_pickle=True)
-
-print(f'Loaded data for {len(all_raw_pac_baseline)} sessions')
+# Data is already loaded from either processing or loading existing artifacts
+print(f'Using data for {len(all_raw_pac_baseline)} sessions')
 
 # Average across sessions and trials for each condition
 def average_pac_data(pac_data_list):
