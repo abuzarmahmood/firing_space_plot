@@ -1284,6 +1284,53 @@ for this_ts in wanted_ts:
             bbox_inches = 'tight')
     plt.close()
 
+# Replot timeseries sorted by nca
+wanted_ts = ['resp_timeseries', 'id_timeseries', 'pal_timeseries']
+for this_ts in wanted_ts:
+    max_nrn_count = np.max(group_rates_df.groupby('group').size())
+    group_names = group_rates_df['group'].unique()
+    fig, ax = plt.subplots(1, len(group_names),
+                           sharex=True, sharey=True,
+                           figsize = (8,5))
+    all_vals = -np.log10(np.stack(group_rates_df[this_ts].values))
+    vmin = np.nanmin(all_vals)
+    vmax = np.nanmax(all_vals)
+    for ind, (this_group, this_df) in enumerate(group_rates_df.groupby('group')):
+        # Stack wanted timeseries
+        this_ts_stack = np.stack(this_df[this_ts].values)
+        # Sort by nca
+        this_nca_stack = np.stack(this_df[f'{this_ts}_nca'].values)
+        sorted_inds = np.argsort(this_nca_stack)
+        this_ts_stack = this_ts_stack[sorted_inds]
+        this_ts_stack = -np.log10(this_ts_stack)
+        # Pad to have max_nrn_count rows
+        if this_ts_stack.shape[0] < max_nrn_count:
+            temp_stack = np.empty((max_nrn_count, this_ts_stack.shape[1]))
+            temp_stack[:] = np.nan
+            temp_stack[:this_ts_stack.shape[0], :] = this_ts_stack
+            this_ts_stack = temp_stack
+        print(f'{this_group}: {this_ts_stack.shape}')
+        # ax[ind].imshow(this_ts_stack < alpha, aspect = 'auto',
+        #                interpolation = 'none',
+        #                vmin = 0, vmax = 1,
+        #                cmap = 'Greys');
+        ax[ind].pcolormesh(np.arange(this_ts_stack.shape[1]) - 500,
+                           np.arange(this_ts_stack.shape[0])[::-1],
+                           this_ts_stack,
+                           shading = 'auto',
+                           cmap = 'viridis',
+                           vmin = vmin,
+                           vmax = vmax
+                           )
+        ax[ind].axvline(0, color = 'r', linestyle = '--')
+        ax[ind].set_title(this_group)
+    plt.suptitle(this_ts)
+    fig.savefig(os.path.join(
+        coupling_analysis_plot_dir, f'all_group_{this_ts}_nca_sorted_neg_log.png'),
+            bbox_inches = 'tight')
+    plt.close()
+
+
 
 ##############################
 # Perform tensor decomposition on each group
