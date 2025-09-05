@@ -217,7 +217,7 @@ for dir_name in tqdm(dir_list):
         
         # Get sampling frequency with fallback
         try:
-            fs = dat.info_dict['common_params']['sampling_rate']
+            fs = dat.info_dict['sampling_rate']
         except KeyError:
             # Try alternative key structures or use default
             if 'sampling_rate' in dat.info_dict:
