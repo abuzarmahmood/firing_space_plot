@@ -816,12 +816,14 @@ if recreate_group_rates:
         this_nrn_id = this_row.nrn_id
         this_data_index = this_row.data_index
         this_group_label = this_row.group_label
-        this_mean_rates = mean_design_rates[this_data_index]
+        # this_mean_rates = mean_design_rates[this_data_index]
+        this_mean_rates = design_rates_list[this_data_index] 
         wanted_rates.append(this_mean_rates)
 
     gc_inter_sig_frame['mean_rates'] = wanted_rates
 
     group_rates_dict = {}
+    group_rates_dict_list = []
     for this_group_name, this_group_df in gc_inter_sig_frame.groupby('group_label'):
         group_rates_list = []
         for (this_session, this_nrn), this_df in this_group_df.groupby(['session','nrn']):
@@ -833,8 +835,16 @@ if recreate_group_rates:
             if len(this_inds) < 4:
                 print(f'Warning: {this_session}_{this_nrn} has only {len(this_inds)} tastes')
                 continue
-            rate_array = np.stack([mean_design_rates[x] for x in this_inds])
+            # rate_array = np.stack([mean_design_rates[x] for x in this_inds])
+            rate_array = np.stack([design_rates_list[x] for x in this_inds])
             group_rates_list.append(rate_array)
+            group_rates_dict_list.append(
+                    dict(
+                        group = this_group_name,
+                        session = this_session,
+                        neuron = this_nrn,
+                        rates = rate_array
+                    ))
         group_rates_dict[this_group_name] = np.stack(group_rates_list)
 
     for key, val in group_rates_dict.items():
@@ -854,6 +864,8 @@ else:
     for key, val in group_rates_dict.items():
         print(f'{key}: {val.shape}')
 
+group_rates_df = pd.DataFrame(group_rates_dict_list)
+
 # Normalize the rates for each neuron
 norm_group_rates_dict = {}
 for key, val in group_rates_dict.items():
@@ -867,15 +879,221 @@ for key, val in group_rates_dict.items():
 wanted_lims = [500, 3000]
 max_nrn_count = np.max([x.shape[0] for x in norm_group_rates_dict.values()])
 fig, ax = plt.subplots(max_nrn_count, len(norm_group_rates_dict),
-                       sharex=True, sharey=True, 
-                       figsize = (5,10))
+                       sharex=True, sharey=False, 
+                       figsize = (10,15))
 for ind, (key, val) in enumerate(norm_group_rates_dict.items()):
     for i in range(val.shape[0]):
-        ax[i, ind].plot(val[i][:, wanted_lims[0]:wanted_lims[1]].T) 
+        ax[i, ind].plot(val[i].mean(axis=1)[:, wanted_lims[0]:wanted_lims[1]].T) 
+        # Mark stimulus time
+        ax[i, ind].axvline(500, color = 'k', linestyle = '--')
+        # Remove y labels
+        ax[i, ind].set_yticklabels([])
+        ax[i, ind].set_ylabel(str(i))
     ax[0, ind].set_title(key)
+# plt.show()
+fig.savefig(os.path.join(
+    coupling_analysis_plot_dir, 'all_group_mean_rates.png'),
+            bbox_inches = 'tight')
+plt.close()
+
+##############################
+# Get timecourses for 
+# 1) responsiveness
+# 2) identity
+# 3) palatability
+##############################
+
+def calc_resp_timeseries(nrn_rates, pre_stim, progress=False):
+    """
+    Calculate responsiveness timeseries for a neuron
+    Concatenate all tastes
+    Perform t-test for each timepoint
+    nrn_rates: (n_tastes, n_trials, n_timepoints)
+    pre_stim: numeric
+
+    Returns:
+    resp_timeseries: p-values (n_timepoints,)
+    """
+    cat_rates = np.concatenate(nrn_rates, axis = 0)
+    pre_stim_rates = cat_rates[..., :pre_stim].flatten()
+    resp_timeseries = []
+    if progress:
+        iterable = trange(cat_rates.shape[-1])
+    else:
+        iterable = range(cat_rates.shape[-1])
+    for t in iterable: 
+        this_time_rates = cat_rates[..., t].flatten()
+        # this_time_mean = this_time_rates.mean()
+        # percentile = percentileofscore(pre_stim_rates, this_time_mean)
+        # # Two-tailed p-value
+        # if percentile > 50:
+        #     p_val = 2 * (100 - percentile) / 100
+        # else:
+        #     p_val = 2 * percentile / 100
+        t_stat, p_val = stats.ttest_ind(this_time_rates, pre_stim_rates)
+        resp_timeseries.append(p_val)
+    resp_timeseries = np.array(resp_timeseries)
+    return resp_timeseries
+
+def calc_identity_timeseries(nrn_rates, progress=False):
+    """
+    Calculate identity timeseries for a neuron
+    Perform one-way anova for each timepoint
+    nrn_rates: (n_tastes, n_trials, n_timepoints)
+    Returns:
+        id_timeseries: p-values (n_timepoints,)
+    """
+    cat_rates = np.concatenate(nrn_rates, axis = 0)
+    group_labels = np.concatenate([
+        np.ones(x.shape[0])*i for i,x in enumerate(nrn_rates)], axis = 0)
+    if progress:
+        iterable = trange(cat_rates.shape[-1])
+    else:
+        iterable = range(cat_rates.shape[-1])
+    id_timeseries = []
+    for t in iterable:
+        this_time_rates = cat_rates[..., t].flatten()
+        groups = [this_time_rates[group_labels == i] for i in np.unique(group_labels)]
+        f_stat, p_val = stats.f_oneway(*groups)
+        id_timeseries.append(p_val)
+    id_timeseries = np.array(id_timeseries)
+    return id_timeseries
+
+def calc_pal_timeseries(nrn_rates, pal_ranks, progress=False):
+    """ 
+    Calculate palatability timeseries for a neuron
+    Perform spearman correlation for each timepoint
+    nrn_rates: (n_tastes, n_trials, n_timepoints)
+    pal_ranks: list of palatability ranks for each taste
+    Returns:
+        pal_timeseries: p-values (n_timepoints,)
+    """
+    cat_rates = np.concatenate(nrn_rates, axis = 0)
+    pal_rank_vec = np.concatenate([
+        np.ones(x.shape[0])*pal_ranks[i] for i,x in enumerate(nrn_rates)], axis = 0)
+
+    if progress:
+        iterable = trange(cat_rates.shape[-1])
+    else:
+        iterable = range(cat_rates.shape[-1])
+
+    pal_timeseries = []
+    for t in iterable:
+        this_time_rates = cat_rates[..., t].flatten()
+        rho, p_val = stats.spearmanr(this_time_rates, pal_rank_vec)
+        pal_timeseries.append(p_val)
+    pal_timeseries = np.array(pal_timeseries)
+    return pal_timeseries
+
+def get_unit_desc_timeseries(nrn_rates, pre_stim, pal_ranks):
+    resp_timeseries = calc_resp_timeseries(nrn_rates, pre_stim)
+    id_timeseries = calc_identity_timeseries(nrn_rates)
+    pal_timeseries = calc_pal_timeseries(nrn_rates, pal_ranks)
+    return resp_timeseries, id_timeseries, pal_timeseries
+
+
+    fig, ax = plt.subplots(2,1, figsize = (5,5), sharex=True)
+    ax[0].plot(nrn_rates.mean(axis=1).T)
+    ax[1].plot(pal_timeseries)
+    ax[1].plot(pal_timeseries < 0.05, color = 'k')
+    plt.show()
+
+# We will need palatability ranks for every session
+file_list_path = '/media/bigdata/projects/pytau/pytau/data/fin_inter_list_3_14_22.txt'
+file_list = [x.strip() for x in open(file_list_path,'r').readlines()]
+
+# Load pal_rankings for each session
+pal_rankings = []
+for this_dir in tqdm(file_list):
+    this_info_path = glob(os.path.join(this_dir,'*.info'))[0] 
+    this_info_dict = json.load(open(this_info_path,'r')) 
+    this_rankings = this_info_dict['taste_params']['pal_rankings']
+    pal_rankings.append(this_rankings)
+
+# Check that order is same for all
+assert all([x == pal_rankings[0] for x in pal_rankings])
+
+from joblib import Parallel, delayed
+
+def paralleize(func, iterable, n_jobs = 8):
+    results = Parallel(n_jobs = n_jobs)(
+            delayed(func)(args) for args in tqdm(iterable))
+    return results
+
+
+group_rates_df['cut_rates'] = [x[...,wanted_lims[0]:wanted_lims[1]] for x in group_rates_df['rates']]
+
+def parallelize_ts_calc(nrn_rates):
+    return get_unit_desc_timeseries(nrn_rates, 500, pal_rankings[0])
+
+
+# Get timeseries for each neuron
+group_rates_df_path = os.path.join(
+        coupling_analysis_plot_dir, 'group_rates_dict.pkl')
+if not os.path.exists(group_rates_df_path):
+    # desc_timeseries_list = []
+    # for i, this_row in tqdm(group_rates_df.iterrows(), total = group_rates_df.shape[0]):
+    #     this_session = this_row['session']
+    #     this_nrn = this_row['neuron']
+    #     this_rates = this_row['rates'][...,wanted_lims[0]:wanted_lims[1]]
+    #     this_pal_ranks = pal_rankings[this_session]
+    #     this_desc_timeseries = get_unit_desc_timeseries(
+    #             this_rates, 500, this_pal_ranks)
+    #     desc_timeseries_list.append(this_desc_timeseries)
+    # group_rates_df['resp_timeseries'] = [x[0] for x in desc_timeseries_list]
+    # group_rates_df['id_timeseries'] = [x[1] for x in desc_timeseries_list]
+    # group_rates_df['pal_timeseries'] = [x[2] for x in desc_timeseries_list]
+    all_ts_out = paralleize(
+            parallelize_ts_calc,
+            [x for x in group_rates_df['cut_rates']],
+            n_jobs = 24)
+
+    # Add to dataframe
+    group_rates_df['resp_timeseries'] = [x[0] for x in all_ts_out]
+    # group_rates_df['resp_timeseries'] = [calc_resp_timeseries(x, 500) for x in tqdm(group_rates_df['cut_rates'])]
+    group_rates_df['id_timeseries'] = [x[1] for x in all_ts_out]
+    group_rates_df['pal_timeseries'] = [x[2] for x in all_ts_out]
+
+    # Write out group_rates_df as pickle
+    with open(group_rates_df_path, 'wb') as f:
+        pickle.dump(group_rates_df, f)
+else:
+    with open(group_rates_df_path, 'rb') as f:
+        group_rates_df = pickle.load(f)
+
+# Plot timeseries for each group
+alpha = 0.05
+wanted_ts = ['resp_timeseries', 'id_timeseries', 'pal_timeseries']
+for this_ts in wanted_ts:
+    max_nrn_count = np.max(group_rates_df.groupby('group').size())
+    group_names = group_rates_df['group'].unique()
+    fig, ax = plt.subplots(1, len(group_names),
+                           sharex=True, sharey=True,
+                           figsize = (5,5))
+    for ind, (this_group, this_df) in enumerate(group_rates_df.groupby('group')):
+        # Stack wanted timeseries
+        this_ts_stack = np.stack(this_df[this_ts].values)
+        # Pad to have max_nrn_count rows
+        if this_ts_stack.shape[0] < max_nrn_count:
+            temp_stack = np.empty((max_nrn_count, this_ts_stack.shape[1]))
+            temp_stack[:] = np.nan
+            temp_stack[:this_ts_stack.shape[0], :] = this_ts_stack
+            this_ts_stack = temp_stack
+        print(f'{this_group}: {this_ts_stack.shape}')
+        ax[ind].imshow(this_ts_stack < alpha, aspect = 'auto',
+                       interpolation = 'none',
+                       vmin = 0, vmax = 1,
+                       cmap = 'Greys');
+        ax[ind].axvline(500, color = 'r', linestyle = '--')
+        ax[ind].set_title(this_group)
+    plt.suptitle(this_ts)
 plt.show()
 
 
+
+
+
+##############################
 # Perform tensor decomposition on each group
 import tensorly as tl
 
@@ -957,21 +1175,6 @@ nrn_discrim_mean_stat = [np.mean(x) for x in nrn_discrim_stat]
 
 ##############################
 # 4- Palatability (max rho post-stimulus)
-
-# We will need palatability ranks for every session
-file_list_path = '/media/bigdata/projects/pytau/pytau/data/fin_inter_list_3_14_22.txt'
-file_list = [x.strip() for x in open(file_list_path,'r').readlines()]
-
-# Load pal_rankings for each session
-pal_rankings = []
-for this_dir in tqdm(file_list):
-    this_info_path = glob(os.path.join(this_dir,'*.info'))[0] 
-    this_info_dict = json.load(open(this_info_path,'r')) 
-    this_rankings = this_info_dict['taste_params']['pal_rankings']
-    pal_rankings.append(this_rankings)
-
-# Check that order is same for all
-assert all([x == pal_rankings[0] for x in pal_rankings])
 
 pal_save_path = os.path.join(
         coupling_analysis_plot_dir, 'palatability_stats.npy')
