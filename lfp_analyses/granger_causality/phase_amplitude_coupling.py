@@ -226,8 +226,8 @@ else:
     region_names_list = []
 
     # Time windows for analysis
-    baseline_start, baseline_end = 8, 10  # seconds
-    stimulus_start, stimulus_end = 10, 12  # seconds
+    baseline_start, baseline_end = 0, 2  # seconds
+    stimulus_start, stimulus_end = 2, 4  # seconds
     print(f"Analysis time windows:")
     print(f"  Baseline: {baseline_start}-{baseline_end} seconds")
     print(f"  Stimulus: {stimulus_start}-{stimulus_end} seconds")
