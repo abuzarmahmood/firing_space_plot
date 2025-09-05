@@ -25,6 +25,7 @@ import sys
 sys.path.append('/media/bigdata/firing_space_plot/firing_analyses/poisson_glm/src')
 from analysis.glm_coupling_analysis import *
 from sklearn.decomposition import NMF
+from scipy import stats
 from scipy.stats import (
         chisquare, percentileofscore, f_oneway, zscore,
         spearmanr, ks_2samp, mannwhitneyu, ttest_ind
@@ -45,6 +46,7 @@ from matplotlib import colors
 import matplotlib.patches as mpatches
 import tables
 import pingouin as pg
+import pickle
 
 def calc_firing_rates(spike_array, kern):
     """
@@ -776,6 +778,145 @@ pre_stim_lims = [250, 750]
 post_stim_lims = [1000, 3000]
 
 ##############################
+# Compare firing profiles of neurons in each group
+mean_design_rates = np.stack([np.mean(x, axis = (0)) for x in design_rates_list])
+
+nrn_groups = [
+        gc_inter_send_only, gc_inter_receive_only, gc_inter_send_receive,
+        bla_inter_send_only, bla_inter_receive_only, bla_inter_send_receive,
+        gc_intra_only, bla_intra_only]
+nrn_group_names = [
+        'gc_inter_send_only', 'gc_inter_receive_only', 'gc_inter_send_receive',
+        'bla_inter_send_only', 'bla_inter_receive_only', 'bla_inter_send_receive',
+        'gc_intra_only', 'bla_intra_only']
+
+recreate_group_rates = False
+if recreate_group_rates:
+    gc_inter_sig_frame = pd.concat([
+        pd.DataFrame(data = x, columns = ['nrn_id']).assign(group_label = y) \
+                for x,y in zip(nrn_groups[:3], nrn_group_names[:3])],
+        ignore_index = True)
+    data_ind_temps_frame = data_inds_frame.copy()
+    data_ind_temps_frame['data_index'] = data_ind_temps_frame.index
+    gc_inter_sig_frame['session'] = gc_inter_sig_frame['nrn_id'].apply(lambda x:x.split('_')[0])
+    gc_inter_sig_frame['nrn'] = gc_inter_sig_frame['nrn_id'].apply(lambda x:x.split('_')[1])
+    # Make all columns int64
+    gc_inter_sig_frame['session'] = gc_inter_sig_frame['session'].astype('int64')
+    gc_inter_sig_frame['nrn'] = gc_inter_sig_frame['nrn'].astype('int64')
+    gc_inter_sig_frame = gc_inter_sig_frame.merge(
+            data_ind_temps_frame,
+            how = 'left',
+            left_on = ['session','nrn'],
+            right_on = ['session','neuron'])
+    gc_inter_sig_frame.sort_values('data_index', inplace = True)
+
+    # Get mean firing rates for each group
+    wanted_rates = []
+    for this_row in gc_inter_sig_frame.itertuples():
+        this_nrn_id = this_row.nrn_id
+        this_data_index = this_row.data_index
+        this_group_label = this_row.group_label
+        this_mean_rates = mean_design_rates[this_data_index]
+        wanted_rates.append(this_mean_rates)
+
+    gc_inter_sig_frame['mean_rates'] = wanted_rates
+
+    group_rates_dict = {}
+    for this_group_name, this_group_df in gc_inter_sig_frame.groupby('group_label'):
+        group_rates_list = []
+        for (this_session, this_nrn), this_df in this_group_df.groupby(['session','nrn']):
+            # gc_inter_sig_frame does not have all tastes
+            # Get rates for all tastes using data_inds_frame
+            this_inds = data_inds_frame[
+                    (data_inds_frame['session'] == this_session) & \
+                    (data_inds_frame['neuron'] == this_nrn)].index
+            if len(this_inds) < 4:
+                print(f'Warning: {this_session}_{this_nrn} has only {len(this_inds)} tastes')
+                continue
+            rate_array = np.stack([mean_design_rates[x] for x in this_inds])
+            group_rates_list.append(rate_array)
+        group_rates_dict[this_group_name] = np.stack(group_rates_list)
+
+    for key, val in group_rates_dict.items():
+        print(f'{key}: {val.shape}')
+
+    # Write out as pickle
+    group_rates_save_path = os.path.join(
+            coupling_analysis_plot_dir, 'group_rates_dict.pkl')
+    with open(group_rates_save_path, 'wb') as f:
+        pickle.dump(group_rates_dict, f)
+
+else:
+    group_rates_save_path = os.path.join(
+            coupling_analysis_plot_dir, 'group_rates_dict.pkl')
+    with open(group_rates_save_path, 'rb') as f:
+        group_rates_dict = pickle.load(f)
+    for key, val in group_rates_dict.items():
+        print(f'{key}: {val.shape}')
+
+# Normalize the rates for each neuron
+norm_group_rates_dict = {}
+for key, val in group_rates_dict.items():
+    norm_rates_list = []
+    for this_nrn in val:
+        norm_rates = stats.zscore(this_nrn, axis = None)
+        norm_rates_list.append(norm_rates)
+    norm_group_rates_dict[key] = np.stack(norm_rates_list)
+
+# Plot all mean rates
+wanted_lims = [500, 3000]
+max_nrn_count = np.max([x.shape[0] for x in norm_group_rates_dict.values()])
+fig, ax = plt.subplots(max_nrn_count, len(norm_group_rates_dict),
+                       sharex=True, sharey=True, 
+                       figsize = (5,10))
+for ind, (key, val) in enumerate(norm_group_rates_dict.items()):
+    for i in range(val.shape[0]):
+        ax[i, ind].plot(val[i][:, wanted_lims[0]:wanted_lims[1]].T) 
+    ax[0, ind].set_title(key)
+plt.show()
+
+
+# Perform tensor decomposition on each group
+import tensorly as tl
+
+
+group_tucker_dict = {}
+for key, val in norm_group_rates_dict.items():
+    # val.shape = (n_neurons, n_tastes, n_timepoints)
+    # Decompose to obtain taste x time factor
+    wanted_val = val[...,wanted_lims[0]:wanted_lims[1]]
+    # tucker_decomp = tl.decomposition.tucker(val, rank = [4, 3, 3])
+    # group_tucker_dict[key] = tucker_decomp
+    # print(f'{key}: core shape = {tucker_decomp[0].shape}, ' + \
+    #         f'factor shapes = {[x.shape for x in tucker_decomp[1]]}')
+
+    cp_decomp = tl.decomposition.parafac(wanted_val, rank = 3)
+    print(f'{key}: CP factor shapes = {[x.shape for x in cp_decomp.factors]}')
+    # Compute taste x time interaction 
+    taste_time_interaction = np.tensordot(
+            cp_decomp.factors[1],
+            cp_decomp.factors[2],
+            axes = [1,1])
+    group_tucker_dict[key] = taste_time_interaction
+
+    plt.plot(cp_decomp.factors[-1])
+    plt.show()
+
+# Plot taste x time factors
+fig, ax = plt.subplots(len(group_tucker_dict),1,
+                       sharex=True, 
+                       figsize = (5,10))
+for ind, (key, val) in enumerate(group_tucker_dict.items()):
+    for i in range(val.shape[0]):
+        ax[ind].plot(val[i], label = f'Taste {i+1}', alpha = 0.7, linewidth = 2)
+    ax[ind].set_title(key)
+    ax[ind].set_ylabel('Factor Magnitude')
+    ax[ind].legend(loc='center left', bbox_to_anchor=(1, 0.5))
+plt.tight_layout()
+plt.show()
+
+
+##############################
 # 1- Firing rates (mean post-stimulus)
 mean_post_stim_rates = [np.mean(x[:,post_stim_lims[0]:post_stim_lims[1]],
                                 axis = (0,1)) for x in design_rates_list]
@@ -949,15 +1090,6 @@ encoding_frame.to_csv(os.path.join(
     index = False)
 
 ############################################################
-nrn_groups = [
-        gc_inter_send_only, gc_inter_receive_only, gc_inter_send_receive,
-        bla_inter_send_only, bla_inter_receive_only, bla_inter_send_receive,
-        gc_intra_only, bla_intra_only]
-nrn_group_names = [
-        'gc_inter_send_only', 'gc_inter_receive_only', 'gc_inter_send_receive',
-        'bla_inter_send_only', 'bla_inter_receive_only', 'bla_inter_send_receive',
-        'gc_intra_only', 'bla_intra_only']
-
 # For each group, add labels to encoding frame
 # First check that no neuron has already been labeled
 encoding_frame['group_label'] = None
