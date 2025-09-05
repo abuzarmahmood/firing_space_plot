@@ -1069,7 +1069,7 @@ for this_ts in wanted_ts:
     group_names = group_rates_df['group'].unique()
     fig, ax = plt.subplots(1, len(group_names),
                            sharex=True, sharey=True,
-                           figsize = (5,5))
+                           figsize = (8,5))
     for ind, (this_group, this_df) in enumerate(group_rates_df.groupby('group')):
         # Stack wanted timeseries
         this_ts_stack = np.stack(this_df[this_ts].values)
@@ -1080,11 +1080,17 @@ for this_ts in wanted_ts:
             temp_stack[:this_ts_stack.shape[0], :] = this_ts_stack
             this_ts_stack = temp_stack
         print(f'{this_group}: {this_ts_stack.shape}')
-        ax[ind].imshow(this_ts_stack < alpha, aspect = 'auto',
-                       interpolation = 'none',
-                       vmin = 0, vmax = 1,
-                       cmap = 'Greys');
-        ax[ind].axvline(500, color = 'r', linestyle = '--')
+        # ax[ind].imshow(this_ts_stack < alpha, aspect = 'auto',
+        #                interpolation = 'none',
+        #                vmin = 0, vmax = 1,
+        #                cmap = 'Greys');
+        ax[ind].pcolormesh(np.arange(this_ts_stack.shape[1]) - 500,
+                           np.arange(this_ts_stack.shape[0])[::-1],
+                           this_ts_stack < alpha,
+                           shading = 'auto',
+                           cmap = 'Greys',
+                           )
+        ax[ind].axvline(0, color = 'r', linestyle = '--')
         ax[ind].set_title(this_group)
     plt.suptitle(this_ts)
     fig.savefig(os.path.join(
@@ -1159,7 +1165,124 @@ for this_ts in wanted_ts:
             bbox_inches = 'tight')
     plt.close()
 
+    # Perform NCA on the NMF results to sort timeseries
+    # nca_obj = NCA(n_components = 1, max_iter = 1000)
+    # nca_result = nca_obj.fit_transform(all_ts_stack, group_codes)
+    nca_obj = PCA(n_components = 1)
+    nca_result = nca_obj.fit_transform(all_ts_stack)
+    group_rates_df[f'{this_ts}_nca'] = nca_result
 
+# Repeat the above plots but with NCA
+# Also do LDA
+# from sklearn.discriminant_analysis import LinearDiscriminantAnalysis as LDA
+#
+# for this_ts in wanted_ts:
+#     all_ts_stack = np.stack(group_rates_df[this_ts].values) < 0.05
+#     group_names = group_rates_df['group'].values
+#     group_code_map = {name:code for code, name in enumerate(np.unique(sorted_group_names))}
+#     group_codes = np.array([group_code_map[x] for x in group_names])
+#
+#     pca = LDA(n_components = 2) 
+#     pca_object = pca.fit(all_ts_stack, group_codes)
+#     pca_result = pca.transform(all_ts_stack) 
+#     # print(f'{this_ts}: Explained variance ratios: {pca.explained_variance_ratio_}')
+#     # Get pca factors
+#     # eigen_vectors = pca.components_
+#     eigen_vectors = pca.scalings_ 
+#
+#     # Sort pca_result by group
+#     sorted_inds = np.argsort(group_names)
+#
+#     sorted_group_names = group_names[sorted_inds]
+#     sorted_group_codes = np.array([group_code_map[x] for x in sorted_group_names])
+#     cmap = plt.get_cmap('brg', len(np.unique(sorted_group_names)))
+#     sorted_pca_result = pca_result[sorted_inds]
+#
+#     fig = plt.figure(figsize = (15,5)) 
+#     ax = []
+#     ax.append(fig.add_subplot(1,4,1))
+#     # Second ax shares y axis with first
+#     ax.append(fig.add_subplot(1,4,2, sharey = ax[0]))
+#     ax.append(fig.add_subplot(1,4,3))
+#     ax[0].scatter(sorted_group_names, np.arange(sorted_group_names.shape[0]))
+#     ax[0].set_xticklabels(np.unique(sorted_group_names), rotation = 90)
+#     im = ax[1].imshow(sorted_pca_result, aspect = 'auto',
+#                  interpolation = 'none')
+#     plt.colorbar(im, ax = ax[1])
+#     ax[1].set_title(f'{this_ts} NCA components')
+#     ax[1].set_xlabel('NCA Dimension')
+#     for i in range(3):
+#         ax[2].plot(np.arange(len(eigen_vectors[i])) -  500, eigen_vectors[i], label = f'PC {i}')
+#         ax[2].axvline(0, color = 'k', linestyle = '--')
+#     ax[2].legend()
+#     ax[2].set_title(f'{this_ts} NCA eigenvectors')
+#     # Add pca scatter plot
+#     ax.append(fig.add_subplot(1,4,4, projection = '3d'))
+#     for this_code in np.unique(sorted_group_codes):
+#         wanted_inds = sorted_group_codes == this_code
+#         wanted_pca_data = sorted_pca_result[wanted_inds]
+#         ax[3].scatter(wanted_pca_data[:,0], wanted_pca_data[:,1], wanted_pca_data[:,2],
+#                       label = list(group_code_map.keys())[list(group_code_map.values()).index(this_code)],
+#                       c = cmap(this_code),
+#                       alpha = 1,
+#                       linewidth = 0.5, edgecolor = 'k'
+#                       )
+#     ax[3].set_xlabel('NC 1')
+#     ax[3].set_ylabel('NC 2')
+#     ax[3].set_zlabel('NC 3')
+#     ax[3].legend(loc='center left', bbox_to_anchor=(1, 0.5))
+#     # im =  ax[3].scatter(pca_result[:,0], pca_result[:,1], pca_result[:,2],
+#     #               c = [cmap(x) for x in sorted_group_codes],
+#     #               linewidth = 0.5, edgecolor = 'k'
+#     #               )
+#     plt.suptitle(this_ts)
+#     plt.tight_layout()
+#     fig.savefig(os.path.join(
+#         coupling_analysis_plot_dir, f'all_group_{this_ts}_timeseries_NCA.png'),
+#             bbox_inches = 'tight')
+#     plt.close()
+
+
+# Replot timeseries sorted by nca
+alpha = 0.05
+wanted_ts = ['resp_timeseries', 'id_timeseries', 'pal_timeseries']
+for this_ts in wanted_ts:
+    max_nrn_count = np.max(group_rates_df.groupby('group').size())
+    group_names = group_rates_df['group'].unique()
+    fig, ax = plt.subplots(1, len(group_names),
+                           sharex=True, sharey=True,
+                           figsize = (8,5))
+    for ind, (this_group, this_df) in enumerate(group_rates_df.groupby('group')):
+        # Stack wanted timeseries
+        this_ts_stack = np.stack(this_df[this_ts].values)
+        # Sort by nca
+        this_nca_stack = np.stack(this_df[f'{this_ts}_nca'].values)
+        sorted_inds = np.argsort(this_nca_stack)
+        this_ts_stack = this_ts_stack[sorted_inds]
+        # Pad to have max_nrn_count rows
+        if this_ts_stack.shape[0] < max_nrn_count:
+            temp_stack = np.empty((max_nrn_count, this_ts_stack.shape[1]))
+            temp_stack[:] = np.nan
+            temp_stack[:this_ts_stack.shape[0], :] = this_ts_stack
+            this_ts_stack = temp_stack
+        print(f'{this_group}: {this_ts_stack.shape}')
+        # ax[ind].imshow(this_ts_stack < alpha, aspect = 'auto',
+        #                interpolation = 'none',
+        #                vmin = 0, vmax = 1,
+        #                cmap = 'Greys');
+        ax[ind].pcolormesh(np.arange(this_ts_stack.shape[1]) - 500,
+                           np.arange(this_ts_stack.shape[0])[::-1],
+                           this_ts_stack < alpha,
+                           shading = 'auto',
+                           cmap = 'Greys',
+                           )
+        ax[ind].axvline(0, color = 'r', linestyle = '--')
+        ax[ind].set_title(this_group)
+    plt.suptitle(this_ts)
+    fig.savefig(os.path.join(
+        coupling_analysis_plot_dir, f'all_group_{this_ts}_nca_sorted.png'),
+            bbox_inches = 'tight')
+    plt.close()
 
 
 ##############################
