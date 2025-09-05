@@ -1087,8 +1087,77 @@ for this_ts in wanted_ts:
         ax[ind].axvline(500, color = 'r', linestyle = '--')
         ax[ind].set_title(this_group)
     plt.suptitle(this_ts)
-plt.show()
+    fig.savefig(os.path.join(
+        coupling_analysis_plot_dir, f'all_group_{this_ts}_timeseries.png'),
+            bbox_inches = 'tight')
+    plt.close()
+# plt.show()
+    
+# Perform PCA on all significance timeseries and see if there are distinctions by group
+from sklearn.decomposition import PCA, NMF
 
+for this_ts in wanted_ts:
+    all_ts_stack = np.stack(group_rates_df[this_ts].values) < 0.05
+    pca = NMF(n_components = 3, max_iter = 1000, init = 'random', random_state = 0)
+    pca_object = pca.fit(all_ts_stack)
+    pca_result = pca.transform(all_ts_stack) 
+    # print(f'{this_ts}: Explained variance ratios: {pca.explained_variance_ratio_}')
+    # Get pca factors
+    eigen_vectors = pca.components_
+
+    # Sort pca_result by group
+    group_names = group_rates_df['group'].values
+    sorted_inds = np.argsort(group_names)
+
+    sorted_group_names = group_names[sorted_inds]
+    group_code_map = {name:code for code, name in enumerate(np.unique(sorted_group_names))}
+    sorted_group_codes = np.array([group_code_map[x] for x in sorted_group_names])
+    cmap = plt.get_cmap('brg', len(np.unique(sorted_group_names)))
+    sorted_pca_result = pca_result[sorted_inds]
+
+    fig = plt.figure(figsize = (15,5)) 
+    ax = []
+    ax.append(fig.add_subplot(1,4,1))
+    # Second ax shares y axis with first
+    ax.append(fig.add_subplot(1,4,2, sharey = ax[0]))
+    ax.append(fig.add_subplot(1,4,3))
+    ax[0].scatter(sorted_group_names, np.arange(sorted_group_names.shape[0]))
+    ax[0].set_xticklabels(np.unique(sorted_group_names), rotation = 90)
+    im = ax[1].imshow(sorted_pca_result, aspect = 'auto',
+                 interpolation = 'none')
+    plt.colorbar(im, ax = ax[1])
+    ax[1].set_title(f'{this_ts} PCA components')
+    ax[1].set_xlabel('PCA Dimension')
+    for i in range(3):
+        ax[2].plot(np.arange(len(eigen_vectors[i])) -  500, eigen_vectors[i], label = f'PC {i}')
+        ax[2].axvline(0, color = 'k', linestyle = '--')
+    ax[2].legend()
+    ax[2].set_title(f'{this_ts} PCA eigenvectors')
+    # Add pca scatter plot
+    ax.append(fig.add_subplot(1,4,4, projection = '3d'))
+    for this_code in np.unique(sorted_group_codes):
+        wanted_inds = sorted_group_codes == this_code
+        wanted_pca_data = sorted_pca_result[wanted_inds]
+        ax[3].scatter(wanted_pca_data[:,0], wanted_pca_data[:,1], wanted_pca_data[:,2],
+                      label = list(group_code_map.keys())[list(group_code_map.values()).index(this_code)],
+                      c = cmap(this_code),
+                      alpha = 1,
+                      linewidth = 0.5, edgecolor = 'k'
+                      )
+    ax[3].set_xlabel('PC 1')
+    ax[3].set_ylabel('PC 2')
+    ax[3].set_zlabel('PC 3')
+    ax[3].legend(loc='center left', bbox_to_anchor=(1, 0.5))
+    # im =  ax[3].scatter(pca_result[:,0], pca_result[:,1], pca_result[:,2],
+    #               c = [cmap(x) for x in sorted_group_codes],
+    #               linewidth = 0.5, edgecolor = 'k'
+    #               )
+    plt.suptitle(this_ts)
+    plt.tight_layout()
+    fig.savefig(os.path.join(
+        coupling_analysis_plot_dir, f'all_group_{this_ts}_timeseries_PCA.png'),
+            bbox_inches = 'tight')
+    plt.close()
 
 
 
