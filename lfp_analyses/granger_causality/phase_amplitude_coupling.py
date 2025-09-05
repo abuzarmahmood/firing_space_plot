@@ -225,15 +225,15 @@ else:
     all_processed_pac_stimulus = []
     region_names_list = []
 
-# Time windows for analysis
-baseline_start, baseline_end = 8, 10  # seconds
-stimulus_start, stimulus_end = 10, 12  # seconds
-print(f"Analysis time windows:")
-print(f"  Baseline: {baseline_start}-{baseline_end} seconds")
-print(f"  Stimulus: {stimulus_start}-{stimulus_end} seconds")
-print(f"Starting PAC analysis across {len(dir_list)} sessions...")
+    # Time windows for analysis
+    baseline_start, baseline_end = 8, 10  # seconds
+    stimulus_start, stimulus_end = 10, 12  # seconds
+    print(f"Analysis time windows:")
+    print(f"  Baseline: {baseline_start}-{baseline_end} seconds")
+    print(f"  Stimulus: {stimulus_start}-{stimulus_end} seconds")
+    print(f"Starting PAC analysis across {len(dir_list)} sessions...")
 
-for session_idx, dir_name in enumerate(tqdm(dir_list, desc="Processing sessions")):
+    for session_idx, dir_name in enumerate(tqdm(dir_list, desc="Processing sessions")):
         basename = dir_name.split('/')[-1]
         h5_path = glob(dir_name + '/*.h5')[0]
         
