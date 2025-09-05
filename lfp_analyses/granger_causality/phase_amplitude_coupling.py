@@ -215,8 +215,16 @@ for dir_name in tqdm(dir_list):
             dat.lfp_processing.return_good_lfp_trial_inds(flat_region_lfps)
         good_lfp_trials = flat_region_lfps[:, good_lfp_trials_bool]
         
-        # Get sampling frequency
-        fs = dat.info_dict['common_params']['sampling_rate']
+        # Get sampling frequency with fallback
+        try:
+            fs = dat.info_dict['common_params']['sampling_rate']
+        except KeyError:
+            # Try alternative key structures or use default
+            if 'sampling_rate' in dat.info_dict:
+                fs = dat.info_dict['sampling_rate']
+            else:
+                print(f'Warning: Could not find sampling rate for {basename}, using default 1000 Hz')
+                fs = 1000  # Default sampling rate
         
         # Convert time windows to sample indices
         baseline_samples = [int(baseline_start * fs), int(baseline_end * fs)]
