@@ -87,7 +87,7 @@ def compute_pac_comodulogram(signal, fs, low_fq_range, high_fq_range,
 
 def process_session_pac(dir_name, low_fq_range, high_fq_range, 
                        baseline_samples, stimulus_samples, 
-                       pac_methods=['tort', 'ozkurt', 'canolty']):
+                       pac_methods=['tort']):
     """
     Process PAC for a single session.
     
@@ -145,7 +145,7 @@ def process_session_pac(dir_name, low_fq_range, high_fq_range,
             'methods': {}
         }
         
-        # Process each PAC method
+        # Process PAC method
         for method in pac_methods:
             print(f'  Computing {method} PAC...')
             
@@ -239,11 +239,11 @@ print(f"Found {len(dir_list)} directories to process")
 # Define frequency ranges for PAC analysis
 low_fq_range = np.linspace(2, 20, 19)  # 2-20 Hz for phase
 high_fq_range = np.linspace(30, 100, 15)  # 30-100 Hz for amplitude
-pac_methods = ['tort', 'ozkurt', 'canolty', 'penny']  # Multiple PAC methods
+pac_methods = ['tort']  # Use only tort method
 
 print(f"Phase frequencies: {low_fq_range[0]:.1f}-{low_fq_range[-1]:.1f} Hz ({len(low_fq_range)} bands)")
 print(f"Amplitude frequencies: {high_fq_range[0]:.1f}-{high_fq_range[-1]:.1f} Hz ({len(high_fq_range)} bands)")
-print(f"PAC methods: {pac_methods}")
+print(f"PAC method: {pac_methods[0]}")
 
 # Time windows for analysis
 baseline_start, baseline_end = 0, 2  # seconds
@@ -347,7 +347,7 @@ def average_pac_results(all_results, method):
     
     return averaged_results, region_names
 
-# Generate plots for each PAC method
+# Generate plots for PAC method
 for method in pac_methods:
     print(f'\nGenerating plots for {method} method...')
     
@@ -468,4 +468,4 @@ except Exception as e:
 print(f"\nPAC analysis with pactools complete!")
 print(f"Results saved to: {pac_results_path}")
 print(f"Plots saved to: {plot_dir}")
-print(f"Processed {len(all_results)} sessions with {len(pac_methods)} PAC methods")
+print(f"Processed {len(all_results)} sessions with {pac_methods[0]} PAC method")
