@@ -97,13 +97,11 @@ def plot_data_and_results(data, true_changepoints, inferred_changepoints=None,
         
         # Plot inferred changepoints if provided
         if inferred_changepoints is not None:
-            # Plot median of inferred changepoints
+            # Plot median of inferred changepoints as vertical lines
             median_cps = np.median(inferred_changepoints, axis=0)
-            for cp_idx, cp in enumerate(median_cps.T):
-                # axes[dim_idx].axvline(cp, color='green', linestyle='-', alpha=0.8,
-                #                      label='Inferred CP' if dim_idx == 0 and cp_idx == 0 else "")
-                axes[dim_idx].hist(cp, bins=30, color='green', alpha=0.3, label='Inferred CP' if dim_idx == 0 and cp_idx == 0 else "",
-                                   density=True)
+            for cp_idx, cp in enumerate(median_cps):
+                axes[dim_idx].axvline(cp, color='green', linestyle='-', alpha=0.8,
+                                     label='Inferred CP' if dim_idx == 0 and cp_idx == 0 else "")
         
         axes[dim_idx].set_ylabel(f'Dim {dim_idx+1}')
         axes[dim_idx].grid(True, alpha=0.3)
