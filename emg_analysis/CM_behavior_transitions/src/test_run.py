@@ -175,10 +175,11 @@ def main():
         best_model, model_list, elbo_values = find_best_states(
             data=data,
             model_generator=model_generator,
-            n_fit=1000,  # Fewer iterations for speed
+            n_fit=100000,  # Fewer iterations for speed
             n_samples=500,
             min_states=2,
-            max_states=6
+            max_states=6,
+            convergence_tol=1e-2,
         )
         
         # Plot ELBO values
