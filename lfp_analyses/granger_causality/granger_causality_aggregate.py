@@ -9,7 +9,7 @@ import numpy as np
 from glob import glob
 import matplotlib.pyplot as plt
 from tqdm import trange, tqdm
-from scipy.stats import zscore, mode
+from scipy.stats import zscore, mode, ttest_ind, ttest_1samp
 from sklearn.decomposition import PCA
 
 # import sys
@@ -301,6 +301,87 @@ mesh_kwargs = dict(
 
 mean_granger_actual = np.nanmean(granger_actual, axis=0)
 mean_granger_mask = np.nanmean(masked_granger, axis=0)
+
+# Difference in mean_causality at different frequencies
+time_inds = np.where((time_vec >= 0) & (time_vec <= 1))[0]
+post_stim_granger_actual = granger_actual[:, time_inds]
+post_stim_granger_actual = np.stack(
+        [
+            post_stim_granger_actual[..., 0, 1],
+            post_stim_granger_actual[..., 1, 0],
+            ], 
+        axis=-1)
+
+post_stim_mean_granger_actual = np.nanmean(post_stim_granger_actual, axis=1)
+post_stim_granger_diff = post_stim_mean_granger_actual[..., 0] - post_stim_mean_granger_actual[..., 1]
+mean_diff = np.nanmean(post_stim_granger_diff, axis=0)
+
+fig = plt.figure(figsize=(5, 5))
+plt.plot(freq_vec, post_stim_granger_diff.T,
+         color = 'k', alpha = 0.1)
+plt.plot(freq_vec, mean_diff, 
+         '-x',
+         color = 'r', linewidth = 2,
+         label = 'Mean Difference')
+plt.legend()
+plt.axvline(12, color = 'r', linestyle = '--')
+plt.text(12, 0.1, '12 Hz', color = 'r', rotation = 90)
+plt.axvline(20, color = 'r', linestyle = '--')
+plt.text(20, 0.1, '20 Hz', color = 'r', rotation = 90)
+plt.axvline(60, color = 'r', linestyle = '--')
+plt.text(60, 0.1, '60 Hz', color = 'r', rotation = 90)
+plt.ylim(-0.1, 0.1)
+plt.axhline(0, color = 'r', linestyle = '--')
+plt.ylabel('<- GC to BLA | BLA to GC ->')
+plt.suptitle('Granger Causality Difference\n' +\
+        'Time-lims: [0, 1] s post-stimulus')
+plt.xlabel('Frequency (Hz)')
+plt.subplots_adjust(top=0.8)
+fig.savefig(
+        os.path.join(aggregate_plot_dir, 'granger_diff_per_freq.png'),
+        bbox_inches='tight',
+        )
+plt.close(fig)
+
+# Split by 0-17, and 17-60 Hz
+lower_band = [0, 12]
+upper_band = [20, 60]
+lower_band_inds = np.where((freq_vec >= lower_band[0]) & (freq_vec <= lower_band[1]))[0]
+upper_band_inds = np.where((freq_vec >= upper_band[0]) & (freq_vec <= upper_band[1]))[0]
+lower_band_diff_mean = np.nanmean(post_stim_granger_diff[:, lower_band_inds], axis=1)
+upper_band_diff_mean = np.nanmean(post_stim_granger_diff[:, upper_band_inds], axis=1)
+
+lower_test = ttest_1samp(lower_band_diff_mean, popmean=0)
+upper_test = ttest_1samp(upper_band_diff_mean, popmean=0)
+
+fig = plt.figure(figsize=(3, 5))
+plt.boxplot(
+        [lower_band_diff_mean, upper_band_diff_mean],
+        showfliers=False,
+        )
+for i, this_mean in enumerate([lower_band_diff_mean, upper_band_diff_mean]):
+    this_mean = this_mean[this_mean > -0.1]
+    plt.scatter(
+            np.ones_like(this_mean) + i,
+            this_mean,
+            color = 'k',
+            alpha = 0.3,
+            )
+plt.axhline(0, color = 'r', linestyle = '--')
+plt.xticks([1, 2], [str(lower_band), str(upper_band)]) 
+plt.xlabel('Frequency Band (Hz)')
+plt.ylabel('<- GC to BLA | BLA to GC ->')
+plt.title('Mean Granger Causality Difference\n' +\
+        'p-values:\n ' +\
+        f'Lower Band: {lower_test.pvalue:.3f}, Upper Band: {upper_test.pvalue:.3f}')
+plt.savefig(
+        os.path.join(aggregate_plot_dir, 'mean_granger_diff.png'),
+        bbox_inches='tight',
+        )
+plt.close(fig)
+
+
+##############################
 mean_mask = 1 - np.nanmean(mask_array, axis=0)
 
 mean_granger_c_lims = [
@@ -413,6 +494,15 @@ plt.tight_layout()
 fig.savefig(os.path.join(aggregate_plot_dir, 'summed_mean_mask_image.png'), dpi=300,
             bbox_inches='tight')
 plt.close(fig)
+
+wanted_mean_mask_sum = [
+        mean_mask_sum[:, 0, 1],
+        mean_mask_sum[:, 1, 0],
+        ]
+
+plt.plot(wanted_freq_vec, wanted_mean_mask_sum[0], '-x', color='black')
+plt.plot(wanted_freq_vec, wanted_mean_mask_sum[1], '-x', color='red')
+plt.show()
 
 ##############################
 

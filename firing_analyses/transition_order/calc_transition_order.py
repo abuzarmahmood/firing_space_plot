@@ -123,6 +123,7 @@ session_num_list = []
 tau_diff_list = []
 region_order_list = []
 percentile_list = []
+mode_tau_list = []
 for num, data_dir in tqdm(enumerate(inter_frame.path)):
 
     if data_dir[-1] == '/':
@@ -162,6 +163,19 @@ for num, data_dir in tqdm(enumerate(inter_frame.path)):
     session_num_list.append(num)
     tau_diff_list.append(diff_mode_tau)
     region_order_list.append(sorted_region_names)
+    mode_tau_list.append(mode_tau)
+
+
+# Get mean and std of transition times
+mode_tau_array = np.stack(mode_tau_list)
+mean_mode_tau = np.mean(mode_tau_array, axis = (0,1,3))
+std_mode_tau = np.std(mode_tau_array, axis = (0,1,3))
+
+scaled_mean_mode_tau = mean_mode_tau * params.bin_width
+scaled_std_mode_tau = std_mode_tau * params.bin_width
+
+for num, (mean_val, std_val) in enumerate(zip(scaled_mean_mode_tau, scaled_std_mode_tau)):
+    print(f'Transition {num} :: Mean : {mean_val:.0f}, Std : {std_val:.0f}')
 
 
 #dat_list_zip = list(zip(*dat_list))
@@ -241,6 +255,10 @@ boot_stat_tau_diff = np.array([x[boot_inds] for x in stat_tau_diff.T])
 boot_stat_tau_diff_stat = stat_used(boot_stat_tau_diff, axis = 1)
 boot_stat_diff_percs = np.percentile(boot_stat_tau_diff_stat, [2.5,97.5], axis = -1)
 
+# p-values for each transition
+zero_percs = [p_of_s(x,0) for x in boot_stat_tau_diff_stat] 
+p_vals = [2*np.min([x/100,1-(x/100)]) for x in zero_percs]
+
 stat_bins = 20
 #stat_tau_diff_hist = [np.histogram(x,bins=stat_bins) for x in stat_tau_diff.T]
 #min_x = np.min([np.min(x[1]) for x in stat_tau_diff_hist])
@@ -266,7 +284,8 @@ ax[0,0].set_ylabel('Session #')
 ax[1,0].set_ylabel('Frequency')
 for num in range(tau_diff_hists.shape[1]):
     ax[1,num].set_xlabel('<-- GC Leads, BLA Leads -->')
-plt.suptitle('Aggregate Tau difference')
+plt.suptitle('Aggregate Tau difference\n' +\
+        f'p-values : {p_vals}')
 fig.savefig(os.path.join(plot_dir, 'agg_tau_diff'))
 plt.close(fig)
 #plt.show()

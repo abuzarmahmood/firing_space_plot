@@ -22,15 +22,15 @@ import pymc as pm
 import pytensor.tensor as tt
 
 
-base_dir = '/media/bigdata/projects/pytau'
-sys.path.append(base_dir)
-import pytau.changepoint_model as models
+# base_dir = '/media/bigdata/projects/pytau'
+# sys.path.append(base_dir)
+# import pytau.changepoint_model as models
 
 base_dir = '/media/bigdata/firing_space_plot/firing_analyses/trial_switch_model_comparison'
 
-src_dir = f'{base_dir}/src'
-sys.path.append(src_dir)
-from data_gen_utils import return_poisson_data_switch 
+# src_dir = f'{base_dir}/src'
+# sys.path.append(src_dir)
+# from data_gen_utils import return_poisson_data_switch 
 
 artifact_dir = f'{base_dir}/artifacts'
 
@@ -111,7 +111,8 @@ min_fit_states = df.n_states.min()
 n_fit = int(1e5)
 n_samples = int(2e4)
 
-for i, this_row in tqdm(df.iterrows()):
+for row_ind, this_row in tqdm(df.iterrows()):
+
 
     n_states = this_row['n_states']
     n_nrns = int(this_row['nrn_count'])
@@ -122,9 +123,11 @@ for i, this_row in tqdm(df.iterrows()):
     time_bins = spike_array.shape[-1]
 
     for fit_states in range(min_fit_states, max_fit_states+1):
-        file_name = f'{out_path}/data_{i}_fit_{fit_states}.pkl'
+        file_name = f'{out_path}/data_{row_ind}_fit_{fit_states}.pkl'
 
         if not os.path.exists(file_name):
+
+            print(f"Fitting data index : {row_ind}, Fit states : {fit_states}")
 
             start_time = time()
             model = single_taste_poisson(
@@ -147,8 +150,10 @@ for i, this_row in tqdm(df.iterrows()):
             for i, j in inds:
                 tau_hist[i,j], _ = np.histogram(tau_samples[:,:,i,j], bins=bins)
 
+            print('Completed fitting')
+            print(f"Data index : {row_ind}, Fit states : {fit_states}, Time taken : {time_taken}, ELBO : {elbo}")
             out_dict = dict(
-                    data_index = i,
+                    data_index = row_ind,
                     fit_states = fit_states,
                     time_taken = time_taken,
                     elbo = elbo,

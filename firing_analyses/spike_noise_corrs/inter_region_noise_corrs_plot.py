@@ -90,9 +90,11 @@ save_path = '/ancillary_analysis/spike_noise_corrs'
 frame_name_list = ['inter_region_frame',
                         'shuffle_inter_region_frame',
                         'intra_region_frame',
-                        'bin_inter_region_frame',
-                        'baseline_inter_region_frame',
-                        'baseline_intra_region_frame']
+                        'shuffle_intra_region_frame',
+                        # 'bin_inter_region_frame',
+                        # 'baseline_inter_region_frame',
+                        # 'baseline_intra_region_frame'
+                   ]
 
 frame_list = [pd.read_hdf(dat.hdf5_path,
                     os.path.join(save_path,frame_name)) \

@@ -21,6 +21,11 @@ from sklearn.neighbors import NeighborhoodComponentsAnalysis
 from scipy.spatial.distance import mahalanobis
 from pickle import dump, load
 
+from matplotlib.colors import ListedColormap
+from matplotlib.patches import Patch
+from umap import UMAP
+import matplotlib.pyplot as plt
+
 base_dir = '/media/bigdata/firing_space_plot/emg_analysis/mouth_movement_clustering'
 code_dir = os.path.join(base_dir, 'src')
 sys.path.append(code_dir)  # noqa
@@ -39,6 +44,10 @@ from utils.gape_clust_funcs import (extract_movements,
 artifact_dir = '/media/bigdata/firing_space_plot/emg_analysis/mouth_movement_clustering/src/classifier_pipeline/artifacts'
 if not os.path.isdir(artifact_dir):
     os.makedirs(artifact_dir)
+
+plot_dir = '/media/bigdata/firing_space_plot/emg_analysis/mouth_movement_clustering/src/classifier_pipeline/artifacts/pipeline_test_plots/'
+if not os.path.isdir(plot_dir):
+    os.makedirs(plot_dir)
 
 ############################################################
 # Helper functions
@@ -296,6 +305,8 @@ def run_AM_process(envs, pre_stim=2000):
 
     Outputs:
         segment_dat_list (list): List of segment data
+        feature_names (np.array): Array of feature names
+        inds (list): List of indices
     """
     this_day_prestim_dat = envs[..., :pre_stim]
     mean_prestim = np.mean(this_day_prestim_dat, axis=None)
@@ -816,95 +827,94 @@ if __name__ == '__main__':
 
     scored_df['event_codes'] = scored_df['event_type'].map(event_code_dict)
 
+    # Drop unnecessary columns
+    scored_df.drop(columns=['scored', 'updated_codes',
+                            'updated_event_type'], inplace=True)
+
     # Save scored_df
     scored_df.to_pickle(os.path.join(artifact_dir, 'fin_training_dataset.pkl'))
 
-    # ############################################################
-    # # Plotting to check process quality
-    # ############################################################
-    # from matplotlib.colors import ListedColormap
-    # from matplotlib.patches import Patch
-    # from umap import UMAP
-    # import matplotlib.pyplot as plt
-
-    # plot_dir = '/media/bigdata/firing_space_plot/emg_analysis/mouth_movement_clustering/src/classifier_pipeline/artifacts/pipeline_test_plots/'
-
-    # bsa_event_map = {
-    #         0 : 'no movement',
-    #         1 : 'gape',
-    #         2 : 'MTMs',
-    #         }
-    # event_color_map = {
-    #         0 : '#D1D1D1',
-    #         1 : '#EF8636',
-    #         2 : '#3B75AF',
-    #         }
-    # inv_bsa_event_map = {v: k for k, v in bsa_event_map.items()}
-
-    # # scored_df.reset_index(inplace=True)
-    # scored_df['animal_code'] = scored_df.animal_num.astype('category').cat.codes
-    # scored_df['session_code'] = scored_df.basename.astype('category').cat.codes
-
-    # cmap = ListedColormap(list(event_color_map.values()), name = 'NBT_cmap')
-
-    # ############################################################
-    # # 1- Features UMAP colored by predicted class
-    # # Create UMAP
-    # scored_df = scored_df.sort_values(['event_codes', 'animal_code', 'session_code'])
-    # feature_array = np.stack(scored_df.features.values)
-    # event_codes = scored_df.event_codes.values
-    # # Clip at +/- 3
-    # # feature_array = np.clip(feature_array, -3, 3)
-
-    # umap = UMAP(n_components=2)
-    # # umap = PCA(n_components=2) 
-    # umap.fit(feature_array)
-    # X_umap = umap.transform(feature_array) 
-
-    # # plt.imshow(umap.components_, interpolation='none', cmap='viridis')
-    # # plt.show()
-
-    # # Plot
-    # fig, ax = plt.subplots()
-    # for event_type in np.unique(event_codes): 
-    #     inds = np.where(event_codes == event_type)
-    #     ax.scatter(X_umap[inds,0], X_umap[inds,1], label = bsa_event_map[event_type],
-    #                alpha = 0.5, s = 5)
-    # ax.legend(title = 'Predicted Class')
-    # ax.set_xlabel('UMAP 1')
-    # ax.set_ylabel('UMAP 2')
-    # plt.title('UMAP of Features Colored by Predicted Class')
-    # fig.savefig(os.path.join(plot_dir, 'scored_df_umap.png'),
-    #             bbox_inches='tight', dpi = 300)
-    # plt.close(fig)
+    ############################################################
+    # Plotting to check process quality
+    ############################################################
 
 
-    # ############################################################
-    # # 3- Heatmap of features per class and session
-    # fig, ax = plt.subplots(1,5, sharey=True, sharex='col',
-    #                        figsize=(20,5))
-    # # Sort by prediction
-    # animal_codes = np.stack(scored_df.animal_code.values)
-    # session_codes = np.stack(scored_df.session_code.values)
-    # ax[0].imshow(X_umap, aspect='auto', cmap='viridis', 
-    #              interpolation='none')
-    # ax[1].imshow(feature_array, aspect='auto', cmap='viridis', vmin = -3, vmax = 3,
-    #            interpolation='none')
-    # ax[1].set_xlabel('Feature #')
-    # ax[1].set_xticks(np.arange(len(feature_names)))
-    # ax[1].set_xticklabels(feature_names, rotation=90)
-    # ax[2].imshow(event_codes[:,None], aspect='auto', cmap=cmap)
-    # # Generate legend
-    # legend_elements = [Patch(facecolor=event_color_map[x], label=bsa_event_map[x]) for x in np.unique(event_codes)]
-    # ax[2].legend(handles=legend_elements, title='Scored Class')
-    # ax[3].imshow(animal_codes[:,None], aspect='auto', cmap='tab20')
-    # ax[4].imshow(session_codes[:,None], aspect='auto', cmap='tab20')
-    # ax[0].set_title('PCA Features')
-    # ax[1].set_title('Feature Heatmap')
-    # ax[2].set_title('Predicted Class')
-    # ax[3].set_title('Animal Code')
-    # ax[4].set_title('Session Code')
-    # fig.savefig(os.path.join(plot_dir, 'scored_heatmap_ind.png'),
-    #             bbox_inches='tight', dpi = 300)
-    # plt.close(fig)
+    bsa_event_map = {
+            0 : 'no movement',
+            1 : 'gape',
+            2 : 'MTMs',
+            }
+    event_color_map = {
+            0 : '#D1D1D1',
+            1 : '#EF8636',
+            2 : '#3B75AF',
+            }
+    inv_bsa_event_map = {v: k for k, v in bsa_event_map.items()}
+
+    # scored_df.reset_index(inplace=True)
+    scored_df['animal_code'] = scored_df.animal_num.astype('category').cat.codes
+    scored_df['session_code'] = scored_df.basename.astype('category').cat.codes
+
+    cmap = ListedColormap(list(event_color_map.values()), name = 'NBT_cmap')
+
+    ############################################################
+    # 1- Features UMAP colored by predicted class
+    # Create UMAP
+    scored_df = scored_df.sort_values(['event_codes', 'animal_code', 'session_code'])
+    feature_array = np.stack(scored_df.features.values)
+    event_codes = scored_df.event_codes.values
+    # Clip at +/- 3
+    # feature_array = np.clip(feature_array, -3, 3)
+
+    umap = UMAP(n_components=2)
+    # umap = PCA(n_components=2) 
+    umap.fit(feature_array)
+    X_umap = umap.transform(feature_array) 
+
+    # plt.imshow(umap.components_, interpolation='none', cmap='viridis')
+    # plt.show()
+
+    # Plot
+    fig, ax = plt.subplots()
+    for event_type in np.unique(event_codes): 
+        inds = np.where(event_codes == event_type)
+        ax.scatter(X_umap[inds,0], X_umap[inds,1], label = bsa_event_map[event_type],
+                   alpha = 0.5, s = 5)
+    ax.legend(title = 'Predicted Class')
+    ax.set_xlabel('UMAP 1')
+    ax.set_ylabel('UMAP 2')
+    plt.title('UMAP of Features Colored by Predicted Class')
+    fig.savefig(os.path.join(plot_dir, 'scored_df_umap.png'),
+                bbox_inches='tight', dpi = 300)
+    plt.close(fig)
+
+
+    ############################################################
+    # 3- Heatmap of features per class and session
+    fig, ax = plt.subplots(1,5, sharey=True, sharex='col',
+                           figsize=(20,5))
+    # Sort by prediction
+    animal_codes = np.stack(scored_df.animal_code.values)
+    session_codes = np.stack(scored_df.session_code.values)
+    ax[0].imshow(X_umap, aspect='auto', cmap='viridis', 
+                 interpolation='none')
+    ax[1].imshow(feature_array, aspect='auto', cmap='viridis', vmin = -3, vmax = 3,
+               interpolation='none')
+    ax[1].set_xlabel('Feature #')
+    ax[1].set_xticks(np.arange(len(feature_names)))
+    ax[1].set_xticklabels(feature_names, rotation=90)
+    ax[2].imshow(event_codes[:,None], aspect='auto', cmap=cmap)
+    # Generate legend
+    legend_elements = [Patch(facecolor=event_color_map[x], label=bsa_event_map[x]) for x in np.unique(event_codes)]
+    ax[2].legend(handles=legend_elements, title='Scored Class')
+    ax[3].imshow(animal_codes[:,None], aspect='auto', cmap='tab20')
+    ax[4].imshow(session_codes[:,None], aspect='auto', cmap='tab20')
+    ax[0].set_title('PCA Features')
+    ax[1].set_title('Feature Heatmap')
+    ax[2].set_title('Predicted Class')
+    ax[3].set_title('Animal Code')
+    ax[4].set_title('Session Code')
+    fig.savefig(os.path.join(plot_dir, 'scored_heatmap_ind.png'),
+                bbox_inches='tight', dpi = 300)
+    plt.close(fig)
 

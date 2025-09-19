@@ -104,14 +104,22 @@ merged_units = pd.merge(
         )
 
 artifacts_dir = '/media/bigdata/firing_space_plot/firing_analyses/poisson_glm/artifacts'
-merged_units.to_csv(os.path.join(artifacts_dir,'single_neuron_match.csv'))
+merged_units_path = os.path.join(artifacts_dir,'single_neuron_match.csv')
+if os.path.exists(merged_units_path):
+    print(f'Loading merged units')
+    merged_units = pd.read_csv(merged_units_path)
+else:
+    print(f'Saving merged units')
+    merged_units.to_csv(merged_units_path)
 
 # Plot scatter plot of old and new waveform counts
 import matplotlib.pyplot as plt
 import seaborn as sns
 
 fig, ax = plt.subplots(2,1,figsize = (7,7))
-ax[0].set(xscale = 'log', yscale = 'log', aspect = 'equal')
+ax[0].set(xscale = 'log', 
+          yscale = 'log', 
+          aspect = 'equal')
 sns.scatterplot(
         data = merged_units.loc[merged_units['waveform_count_old'] > 0], 
         x = 'waveform_count_old', 
@@ -131,7 +139,18 @@ ax[0].set_title('Old vs New Waveform Counts\n' + f'N = {merged_units.shape[0]}')
 # Turn off legend
 ax[0].legend().remove()
 waveform_diff = merged_units['waveform_count_new'] - merged_units['waveform_count_old']
-ax[1].hist(waveform_diff, bins = 50, log = True)
+median_diff = np.median(waveform_diff)
+ax[1].hist(waveform_diff, bins = 50, log = False)
+ax[1].axvline(median_diff, color = 'r', linestyle = '--')
+ax[1].text(1.1* median_diff, 0.5, 
+           f'Median = {median_diff:.0f}', rotation = 90)
+# Get percentiles
+percs = [5, 95]
+percentiles = np.percentile(waveform_diff, percs)
+for perc, val in zip(percs, percentiles):
+    ax[1].axvline(val, color = 'r', linestyle = '--')
+    ax[1].text(1.1* val, 0.5, 
+               f'{perc:.1f}%', rotation = 90)
 ax[1].set_xlabel('New - Old Waveform Count\n(Positive = More New)')
 plt.savefig(os.path.join(artifacts_dir,'old_vs_new_waveform_counts.png'))
 plt.close()
