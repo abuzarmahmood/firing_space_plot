@@ -194,7 +194,7 @@ def main():
         plt.legend()
         plt.show()
         
-        best_n_states = n_states_tested[np.argmax(elbo_values)]  # Higher ELBO is better
+        best_n_states = n_states_tested[np.argmin(elbo_values)]  # Higher ELBO is better
         print(f"   Best number of states: {best_n_states}")
         print(f"   True number of states: 3")
         print(f"   ELBO values: {elbo_values}")
