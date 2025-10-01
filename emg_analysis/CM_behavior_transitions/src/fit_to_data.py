@@ -25,6 +25,7 @@ from pytau.changepoint_model import (
     GaussianChangepointMean2D,
     GaussianChangepointMeanDirichlet,
     PoissonChangepoint1D,
+    SingleTastePoisson,
     find_best_states,
     advi_fit,
     dpp_fit
@@ -248,6 +249,56 @@ def main():
     ax[0].imshow(raw_data.T, aspect='auto', cmap='viridis', interpolation='nearest')
     ax[1].imshow(pca_data, aspect='auto', cmap='viridis', interpolation='nearest')
     ax[2].plot(np.arange(len(summed_data)), summed_data)
+    plt.show()
+
+
+    ##############################
+    # Fit multivar poisson to binned data
+    bin_size = 250
+    # raw_data shape: trials x time
+    binned_data = np.reshape(raw_data, (raw_data.shape[0], raw_data.shape[1] // bin_size, bin_size)).sum(axis=2)
+
+    plt.imshow(binned_data.T, aspect='auto', cmap='viridis', interpolation='nearest')
+    plt.show()
+
+    # Need to reshape data to be trials x neurons x time, where neurons will be bins and time will be current trials
+    fit_data = np.transpose(binned_data, (1, 0))[None,:,:]  # Now shape is time x neurons
+    model = SingleTastePoisson(fit_data, n_states=3).generate_model()
+    model, approx = advi_fit(model, fit=50_000, samples=2000)
+    trace = approx.sample(draws=2000)
+    tau_samples = trace.posterior['tau'].values[0]
+    median_tau = np.median(tau_samples, axis=0).flatten()
+
+    fig,ax = plt.subplots(3,1, sharex=True)
+    ax[0].imshow(raw_data.T, aspect='auto', cmap='viridis', interpolation='nearest')
+    ax[1].imshow(binned_data.T, aspect='auto', cmap='viridis', interpolation='nearest')
+    for i, this_tau in enumerate(tau_samples.T):
+        ax[2].hist(this_tau.flatten(), bins=50, alpha=0.3, label=f'CP {i+1}' if i==0 else "")
+        ax[2].axvline(median_tau[i], color='red', linestyle='-', alpha=0.8)
+    ax[2].legend()
+    plt.show()
+
+    n_states_tested = np.arange(1, 7)
+    n_repeats = 5
+    n_states_tested = np.repeat(n_states_tested, n_repeats)
+    elbo_list = []
+    for n_states in n_states_tested:
+        model = SingleTastePoisson(fit_data, n_states=int(n_states)).generate_model()
+        model, approx = advi_fit(model, fit=50_000, samples=2000)
+        this_elbo = approx.hist[-1]
+        elbo_list.append(this_elbo)
+
+    elbo_df = pd.DataFrame({
+        'n_states': n_states_tested,
+        'elbo': elbo_list
+        })
+
+    plt.figure(figsize=(8, 5))
+    plt.scatter(n_states_tested, elbo_list, alpha = 0.5, edgecolor='k')
+    plt.xlabel('Number of States')
+    plt.ylabel('ELBO (Evidence Lower Bound)')
+    plt.title('Model Comparison: ELBO vs Number of States')
+    plt.grid(True, alpha=0.3)
     plt.show()
 
     ##############################
