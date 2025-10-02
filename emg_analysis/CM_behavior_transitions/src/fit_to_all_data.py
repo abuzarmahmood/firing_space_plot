@@ -12,10 +12,13 @@ from pathlib import Path
 import pandas as pd
 from pprint import pprint as pp
 import pymc as pm
+from tqdm import tqdm
+import cloudpickle
 
 from pytau.changepoint_model import (
     SingleTastePoisson,
     advi_fit,
+    dpp_fit
 )
 from pytau.changepoint_io import DatabaseHandler, FitHandler
 
@@ -115,8 +118,8 @@ data_list = os.listdir(data_dir)
 # Only keep files with "boolean" in the name
 data_list = [f for f in data_list if 'boolean' in f]
 
-for this_file in data_list:
-    
+for this_file in tqdm(data_list):
+    # break    
     basename = this_file.split('.')[0]
 
     raw_data, raw_metadata = load_data(
@@ -130,29 +133,18 @@ for this_file in data_list:
     binned_data = np.reshape(raw_data, (raw_data.shape[0], raw_data.shape[1] // bin_size, bin_size)).sum(axis=2)
 
 
-    fig, ax = plt.subplots()
-    im = ax.imshow(binned_data.T, aspect='auto', cmap='viridis', interpolation='nearest')
-    ax.set_title(f'Binned Data: {basename}')
-    ax.set_xlabel('Trials')
-    ax.set_ylabel('Time Bins')
-    plt.colorbar(im, ax=ax, label='Binned Counts')
-    fig.savefig(plot_dir / f'{basename}_binned_data.png')
-    plt.close(fig)
-
     fit_data = np.transpose(binned_data, (1, 0))[None,:,:]  # Now shape is time x neurons
 
-    n_state_vec = np.arange(1, 7)
+    n_state_vec = np.arange(2, 8)
 
     save_dict_list = []
     for this_states in n_state_vec:
+        # break
         model = SingleTastePoisson(fit_data, n_states=int(this_states)).generate_model()
         with model:
             inference = pm.ADVI("full-rank")
             approx = pm.fit(n=50_000, method=inference)
             idata = approx.sample(draws=2000)
-        # model, approx, idata = advi_fit(model, fit=50_000, samples=2000)
-        # model, approx, lambda_samples , tau_samples, _ = outs
-        trace = approx.sample(draws=2000)
         tau_samples = idata.posterior['tau'].values[0]
         save_dict = {
             'model': model,
@@ -163,4 +155,73 @@ for this_file in data_list:
             'bin_size': bin_size,
             'metadata': raw_metadata
         }
+        save_dict_list.append(save_dict)
     fin_save_dict = dict(zip(n_state_vec, save_dict_list))
+    # Save to artifacts directory
+    with open(artifacts_dir / f'{basename}_fit_dict.pkl', 'wb') as f:
+        pickle.dump(fin_save_dict, f)
+
+    all_elbo_values = [val['approx'].hist[-1] for val in save_dict_list]
+    all_tau_samples = [val['tau_samples'] for val in save_dict_list]
+
+    fig, ax = plt.subplots(2+len(n_state_vec), 1, figsize=(8, 4+2*len(n_state_vec)), sharex=False)
+    ax[0].plot(n_state_vec, all_elbo_values, '-o')
+    ax[0].set_xlabel('Number of States')
+    im = ax[1].imshow(binned_data.T, aspect='auto', cmap='viridis', interpolation='nearest')
+    ax[1].set_xlabel('Trials')
+    ax[1].set_ylabel('Time Bins')
+    ax[1].set_xlim(0, binned_data.shape[0])
+    for i, this_tau in enumerate(all_tau_samples):
+        for this_change in this_tau.T:
+            ax[2+i].hist(this_change.flatten(), bins=30, density=True) 
+            ax[2+i].set_ylabel(f'States={n_state_vec[i]}')
+            ax[2+i].set_xlim(0, binned_data.shape[0])
+    fig.suptitle(f'Fit results for {basename}')
+    # plt.colorbar(im, ax=ax, label='Binned Counts')
+    plt.tight_layout()
+    fig.savefig(plot_dir / f'{basename}_binned_data.png')
+    plt.close(fig)
+
+##############################
+# Also fit dpp model
+for this_file in tqdm(data_list):
+    # break    
+    basename = this_file.split('.')[0]
+
+    raw_data, raw_metadata = load_data(
+            os.path.join(data_dir,
+            [x for x in data_list if 'gape' in x][0]
+                         )
+            )
+
+    bin_size = 250
+    # raw_data shape: trials x time
+    binned_data = np.reshape(raw_data, (raw_data.shape[0], raw_data.shape[1] // bin_size, bin_size)).sum(axis=2)
+
+
+    fit_data = np.transpose(binned_data, (1, 0))[None,:,:]  # Now shape is time x neurons
+    model = SingleTastePoisson(fit_data, n_states=int(this_states)).generate_model()
+    dpp_trace = dpp_fit(model, n_chains = 24, n_cores = 24, use_numpyro=False) 
+
+    dpp_tau_samples = dpp_trace['tau']
+
+    fig, ax = plt.subplots(2, 1, figsize=(8, 6), sharex=True)
+    im = ax[0].imshow(binned_data.T, aspect='auto', cmap='viridis', interpolation='nearest')
+    ax[1].hist(dpp_tau_samples.flatten(), bins=50, density=True)
+    ax[1].set_ylabel(f'DPP Tau Samples')
+    ax[1].set_xlabel('Trials')
+    fig.suptitle(f'DPP Fit results for {basename}')
+    plt.tight_layout()
+    fig.savefig(plot_dir / f'{basename}_dpp_binned_data.png')
+    plt.close(fig)
+
+    # Dump to artifacts directory
+    save_dict = {
+        'model': model,
+        'dpp_trace': dpp_trace,
+        'fit_data': fit_data,
+        'bin_size': bin_size,
+        'metadata': raw_metadata
+    }
+    with open(artifacts_dir / f'{basename}_dpp_fit_dict.pkl', 'wb') as f:
+        cloudpickle.dump(save_dict, f)
