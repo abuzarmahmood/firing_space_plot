@@ -122,6 +122,11 @@ for this_file in tqdm(data_list):
     # break    
     basename = this_file.split('.')[0]
 
+    artifact_out_path = artifacts_dir / f'{basename}_fit_dict.pkl'
+    if artifact_out_path.exists():
+        print(f"Skipping {basename}, already exists.")
+        continue
+
     raw_data, raw_metadata = load_data(
             os.path.join(data_dir,
             [x for x in data_list if 'gape' in x][0]
@@ -158,8 +163,8 @@ for this_file in tqdm(data_list):
         save_dict_list.append(save_dict)
     fin_save_dict = dict(zip(n_state_vec, save_dict_list))
     # Save to artifacts directory
-    with open(artifacts_dir / f'{basename}_fit_dict.pkl', 'wb') as f:
-        pickle.dump(fin_save_dict, f)
+    with open(artifact_out_path, 'wb') as f:
+        cloudpickle.dump(fin_save_dict, f)
 
     all_elbo_values = [val['approx'].hist[-1] for val in save_dict_list]
     all_tau_samples = [val['tau_samples'] for val in save_dict_list]
