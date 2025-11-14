@@ -8,6 +8,15 @@ from pprint import pprint as pp
 from itertools import combinations, product
 import os
 from matplotlib import colors
+import json
+
+class NumpyTypeEncoder(json.JSONEncoder):
+        def default(self, obj):
+            if isinstance(obj, np.ndarray):
+                return obj.tolist()
+            elif isinstance(obj, np.generic):  # Handle NumPy scalar types
+                return obj.item()
+            return json.JSONEncoder.default(self, obj)
 
 data_dir = '/media/storage/NM_resorted_data/laser_2500ms/NM51_2500ms_161030_130155'
 
@@ -297,95 +306,247 @@ orig_data = wanted_taste_firing[..., firing_time_inds]
 orig_trial_chunks = trial_chunks.copy()
 num_units = orig_data.shape[1]
 num_chunks = len(orig_trial_chunks)
+orig_trial_inds = np.arange(orig_data.shape[0])
+orig_nrn_inds = np.arange(orig_data.shape[1])
 
+plot_dir = os.path.expanduser('~/Desktop/template_dynamics_removals/')
+os.makedirs(plot_dir, exist_ok=True)
 
-fig, ax = vz.firing_overview(orig_data.swapaxes(0,1))
-fig.suptitle('Original Data Before Any Removals')
-fig.savefig(os.path.expanduser('~/Desktop/template_dynamics_original_data.png'))
-plt.close()
 # plt.show()
 
-current_data = orig_data.copy()
-current_similarity = orig_similarity
-current_trial_chunks = orig_trial_chunks.copy()
+removal_mode = 'weighted'
+probabilistic_removal = True
+max_iters = 20
+n_runs = 50
 
-# Initialize array to hold similarity scores after each removal
-# Account for the fact that there should be a no-units-removed and no-chunks-removed case
-similarity_rm_array = np.zeros((num_units+1, num_chunks+1)) * np.nan
-datasset_loss_array = np.zeros((num_units+1, num_chunks+1)) * np.nan
+for this_run in range(n_runs):
 
-for rm_unit_idx in [np.nan, *np.arange(num_units)]:
-    for rm_chunk_idx in [np.nan, *np.arange(num_chunks)]:
-        print((rm_unit_idx, rm_chunk_idx))
+    this_plot_dir = os.path.join(plot_dir, f'run_{this_run}')
+    os.makedirs(this_plot_dir, exist_ok=True)
 
-        if not np.isnan(rm_chunk_idx):
-            rm_chunk_bounds = current_trial_chunks[rm_chunk_idx]
-            rm_trial_inds = np.arange(
-                    rm_chunk_bounds[0],
-                    rm_chunk_bounds[1]
+    fig, ax = vz.firing_overview(orig_data.swapaxes(0,1))
+    fig.suptitle('Original Data Before Any Removals')
+    fig.savefig(os.path.join(this_plot_dir, 'iter_0.png'))
+    plt.close()
+
+    iteration = 1
+    removal_list = []
+    current_data = orig_data.copy()
+    current_trial_chunks = orig_trial_chunks.copy()
+    current_similarity = orig_similarity
+    running_orig_trial_inds = orig_trial_inds.copy()
+    running_orig_nrn_inds = orig_nrn_inds.copy()
+
+    removal_list.append(
+            {
+                'orig_unit': np.array([]),  
+                'orig_trials': np.array([]), 
+                'current_similarity': current_similarity,
+                'current_data_fraction': current_data.size / orig_data.size
+            }
+            )
+
+    # Initialize array to hold similarity scores after each removal
+    # Account for the fact that there should be a no-units-removed and no-chunks-removed case
+    while iteration <= max_iters:
+        try:
+            similarity_rm_array = np.zeros((num_units+1, num_chunks+1)) * np.nan
+            dataset_loss_array = np.zeros((num_units+1, num_chunks+1)) * np.nan
+            num_chunks = len(current_trial_chunks)
+            num_units = current_data.shape[1]
+
+            for rm_unit_idx in [np.nan, *np.arange(num_units)]:
+                for rm_chunk_idx in [np.nan, *np.arange(num_chunks)]:
+
+                    if not np.isnan(rm_chunk_idx):
+                        rm_chunk_bounds = current_trial_chunks[rm_chunk_idx]
+                        rm_trial_inds = np.arange(
+                                rm_chunk_bounds[0],
+                                rm_chunk_bounds[1]
+                                )
+                        test_data = np.delete(
+                                current_data,
+                                rm_trial_inds,
+                                axis=0
+                                )
+                    else:
+                        test_data = current_data.copy()
+                    # Remove unit
+                    if not np.isnan(rm_unit_idx):
+                        test_data = np.delete(
+                                test_data,
+                                int(rm_unit_idx),
+                                axis=1
+                                )
+
+                    # Calculate dynamics for current data
+                    estim_weights, template_similarity = calc_chunk_template_dynamics(
+                            test_data,
+                            down_template
+                            )
+
+                    array_inds = (
+                            int(rm_unit_idx)+1 if not np.isnan(rm_unit_idx) else 0,
+                            int(rm_chunk_idx)+1 if not np.isnan(rm_chunk_idx) else 0
+                            )
+                    similarity_rm_array[array_inds] = template_similarity
+
+                    dataset_loss = 1 - (test_data.size / current_data.size)
+                    dataset_loss_array[array_inds] = dataset_loss
+                    # print((rm_unit_idx, rm_chunk_idx, dataset_loss, template_similarity))
+
+            delta_similarity = similarity_rm_array - current_similarity
+
+            improvement_loss_ratio = delta_similarity / dataset_loss_array
+            # Set (0,0) entry to nan since no removal happened there which makes ratio meaningless
+            improvement_loss_ratio[0,0] = np.nan
+
+            if removal_mode == 'weighted':
+                metric_array = improvement_loss_ratio
+            elif removal_mode == 'max_delta':
+                metric_array = delta_similarity
+            if not probabilistic_removal:
+                max_delta_ind = np.unravel_index(
+                    np.nanargmax(metric_array),
+                    delta_similarity.shape
                     )
-            test_data = np.delete(
-                    current_data,
-                    rm_trial_inds,
-                    axis=0
+            else:
+                # Min-max scale metric array to [0,1]
+                scaled_metric_array = (metric_array - np.nanmin(metric_array)) / (np.nanmax(metric_array) - np.nanmin(metric_array))
+                non_nan_inds = np.where(~np.isnan(scaled_metric_array))
+                non_nan_values = scaled_metric_array[non_nan_inds]
+                sampled_value = np.random.choice(
+                    non_nan_values,
+                    size = 1,
+                    p = non_nan_values / np.nansum(non_nan_values)
                     )
-        else:
-            test_data = current_data.copy()
-        # Remove unit
-        if not np.isnan(rm_unit_idx):
-            test_data = np.delete(
-                    test_data,
-                    int(rm_unit_idx),
-                    axis=1
-                    )
-        else:
-            test_data = current_data.copy()
+                max_delta_ind_raw = np.where(scaled_metric_array == sampled_value)
+                max_delta_ind = (max_delta_ind_raw[0][0], max_delta_ind_raw[1][0])
 
-        # Calculate dynamics for current data
-        estim_weights, template_similarity = calc_chunk_template_dynamics(
-                test_data,
-                down_template
+            rm_nrn_ind = max_delta_ind[0]-1 if max_delta_ind[0] !=0 else None
+            rm_chunk_ind = max_delta_ind[1]-1 if max_delta_ind[1] !=0 else None
+
+            updated_trial_chunks = current_trial_chunks.copy()
+            if rm_chunk_ind is not None:
+                del updated_trial_chunks[rm_chunk_ind]
+            # Make sure remaining chunks are contiguous
+            contig_chunks = []
+            start_trial = 0
+            for chunk_bounds in updated_trial_chunks:
+                num_trials_in_chunk = chunk_bounds[1] - chunk_bounds[0]
+                contig_chunks.append((start_trial, start_trial + num_trials_in_chunk))
+                start_trial += num_trials_in_chunk
+            updated_trial_chunks = contig_chunks
+
+            # Remove the identified unit and chunk from current data for next iteration
+            if rm_chunk_ind is not None:
+                rm_chunk_bounds = current_trial_chunks[rm_chunk_ind]
+
+                rm_trial_inds = np.arange(
+                        rm_chunk_bounds[0],
+                        rm_chunk_bounds[1]
+                        )
+                test_data = np.delete(
+                        current_data,
+                        rm_trial_inds,
+                        axis=0
+                        )
+                updated_running_orig_trial_inds = np.delete(
+                        running_orig_trial_inds,
+                        rm_trial_inds,
+                        axis=0
+                        )
+            else:
+                test_data = current_data.copy()
+            # Remove unit
+            if rm_nrn_ind is not None:
+                test_data = np.delete(
+                        test_data,
+                        int(rm_nrn_ind),
+                        axis=1
+                        )
+                updated_running_orig_nrn_inds = np.delete(
+                        running_orig_nrn_inds,
+                        int(rm_nrn_ind),
+                        axis=0
+                        )
+
+            current_trial_chunks = updated_trial_chunks
+            current_data = test_data.copy()
+            current_similarity = similarity_rm_array[max_delta_ind]
+
+            divnorm1 = colors.TwoSlopeNorm(vmin=-np.nanmax(np.abs(delta_similarity)), vcenter=0, vmax=np.nanmax(np.abs(delta_similarity)))
+            divnorm2 = colors.TwoSlopeNorm(vmin=-np.nanmax(np.abs(improvement_loss_ratio)), vcenter=0, vmax=np.nanmax(np.abs(improvement_loss_ratio)))
+            
+            # fig, ax = plt.subplots(1,3, figsize=(15,5))
+            # ax[0].matshow(delta_similarity, origin='lower', aspect='auto', cmap='bwr', 
+            #             vmin=-np.nanmax(np.abs(delta_similarity)), vmax=np.nanmax(np.abs(delta_similarity)),
+            #               norm=divnorm1)
+            # ax[0].set_title('Delta Template Similarity after Unit/Chunk Removal')
+            # plt.colorbar(ax[0].images[0], ax=ax[0], label='Delta Similarity')
+            # ax[1].matshow(dataset_loss_array, origin='lower', aspect='auto', cmap='viridis')
+            # ax[1].set_title('Dataset Loss after Unit/Chunk Removal')
+            # plt.colorbar(ax[1].images[0], ax=ax[1], label='Dataset Loss')
+            # ax[2].matshow(improvement_loss_ratio, origin='lower', aspect='auto', cmap='bwr',
+            #               vmin=-np.nanmax(np.abs(improvement_loss_ratio)), vmax=np.nanmax(np.abs(improvement_loss_ratio)),
+            #               norm=divnorm2)
+            # ax[2].set_title('Improvement to Loss Ratio after Unit/Chunk Removal')
+            # ax[2].scatter(*max_delta_ind[::-1], color='k', s=10, label='Max Ratio Point')
+            # plt.colorbar(ax[2].images[0], ax=ax[2], label='Improvement/Loss Ratio')
+            # plt.show()
+            #
+            removal_list.append(
+                    {
+                        'orig_unit': np.setdiff1d(running_orig_nrn_inds, updated_running_orig_nrn_inds),
+                        'orig_trials': np.setdiff1d(running_orig_trial_inds, updated_running_orig_trial_inds),
+                        'current_similarity': current_similarity,
+                        'current_data_fraction': current_data.size / orig_data.size
+                    }
+                    )
+            print(f'Removed orig unit: {removal_list[-1]["orig_unit"]}')
+            running_orig_nrn_inds = updated_running_orig_nrn_inds
+            print(f'Removed orig trials: {removal_list[-1]["orig_trials"]}')
+            running_orig_trial_inds = updated_running_orig_trial_inds
+
+            fig, ax = vz.firing_overview(current_data.swapaxes(0,1))
+            fig.suptitle(f'Data after Iteration {iteration} Removals')
+            fig.savefig(os.path.join(this_plot_dir, f'iter_{iteration}.png'))
+            plt.close()
+
+            iteration += 1
+        except Exception as e:
+            print(f"Error during iteration {iteration}: {e}")
+            break
+
+    # Plot details of removal list
+    # Plot as scatter of data_fraction vs similarity
+    frac_vector = [removal['current_data_fraction'] for removal in removal_list]
+    similarity_vector = [removal['current_similarity'] for removal in removal_list]
+    fig, ax = plt.subplots(1,1, figsize=(6,4))
+    ax.plot(
+            similarity_vector,
+            frac_vector,
+            '-o'
+            )
+    for i, removal in enumerate(removal_list):
+        ax.text(
+                removal['current_data_fraction'],
+                removal['current_similarity'],
+                f"Trials removed: {removal['orig_trials']}\nUnits removed: {removal['orig_unit']}",
+                fontsize=8,
+                transform=ax.transData,
                 )
-        array_inds = (
-                int(rm_unit_idx)+1 if not np.isnan(rm_unit_idx) else 0,
-                int(rm_chunk_idx)+1 if not np.isnan(rm_chunk_idx) else 0
-                )
-        similarity_rm_array[array_inds] = template_similarity
+    ax.set_ylabel('Fraction of Original Data Remaining')
+    ax.set_xlabel('Template Similarity')
+    ax.set_title('Template Similarity vs Data Fraction after Each Removal')
+    # plt.show()
+    fig.savefig(os.path.join(this_plot_dir, 'similarity_vs_data_fraction.png'))
+    plt.close()
 
-        dataset_loss = 1 - (test_data.size / orig_data.size)
-        datasset_loss_array[array_inds] = dataset_loss
-
-delta_similarity = similarity_rm_array - orig_similarity
-
-improvement_loss_ratio = delta_similarity / datasset_loss_array
-
-max_delta_ind = np.unravel_index(
-    np.nanargmax(improvement_loss_ratio),
-    delta_similarity.shape
-    )
-rm_nrn_ind = max_delta_ind[0]-1 if max_delta_ind[0] !=0 else None
-rm_chunk_ind = max_delta_ind[1]-1 if max_delta_ind[1] !=0 else None
-
-divnorm1 = colors.TwoSlopeNorm(vmin=-np.nanmax(np.abs(delta_similarity)), vcenter=0, vmax=np.nanmax(np.abs(delta_similarity)))
-divnorm2 = colors.TwoSlopeNorm(vmin=-np.nanmax(np.abs(improvement_loss_ratio)), vcenter=0, vmax=np.nanmax(np.abs(improvement_loss_ratio)))
-
-fig, ax = plt.subplots(1,3, figsize=(15,5))
-ax[0].matshow(delta_similarity, origin='lower', aspect='auto', cmap='bwr', 
-            vmin=-np.nanmax(np.abs(delta_similarity)), vmax=np.nanmax(np.abs(delta_similarity)),
-              norm=divnorm1)
-ax[0].set_title('Delta Template Similarity after Unit/Chunk Removal')
-plt.colorbar(ax[0].images[0], ax=ax[0], label='Delta Similarity')
-ax[1].matshow(datasset_loss_array, origin='lower', aspect='auto', cmap='viridis')
-ax[1].set_title('Dataset Loss after Unit/Chunk Removal')
-plt.colorbar(ax[1].images[0], ax=ax[1], label='Dataset Loss')
-ax[2].matshow(improvement_loss_ratio, origin='lower', aspect='auto', cmap='bwr',
-              vmin=-np.nanmax(np.abs(improvement_loss_ratio)), vmax=np.nanmax(np.abs(improvement_loss_ratio)),
-              norm=divnorm2)
-ax[2].set_title('Improvement to Loss Ratio after Unit/Chunk Removal')
-ax[2].scatter(*max_delta_ind[::-1], color='k', s=10, label='Max Ratio Point')
-plt.colorbar(ax[2].images[0], ax=ax[2], label='Improvement/Loss Ratio')
-plt.show()
-
+    # Write out removal list to text file
+    removal_list_path = os.path.join(this_plot_dir, 'removal_list.json')
+    with open(removal_list_path, 'w') as f:
+        json.dump(removal_list, f, indent=4, cls=NumpyTypeEncoder)
 
 
 ############################################################
