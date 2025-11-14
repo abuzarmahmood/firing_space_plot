@@ -9,6 +9,7 @@ from itertools import combinations, product
 import os
 from matplotlib import colors
 import json
+from glob import glob
 
 class NumpyTypeEncoder(json.JSONEncoder):
         def default(self, obj):
@@ -316,18 +317,22 @@ os.makedirs(plot_dir, exist_ok=True)
 
 removal_mode = 'weighted'
 probabilistic_removal = True
+bias_mode = 'unit'
+bias_strength = 0.5
 max_iters = 20
-n_runs = 50
+n_runs = 200
+plot_bool = False
 
 for this_run in range(n_runs):
 
     this_plot_dir = os.path.join(plot_dir, f'run_{this_run}')
     os.makedirs(this_plot_dir, exist_ok=True)
 
-    fig, ax = vz.firing_overview(orig_data.swapaxes(0,1))
-    fig.suptitle('Original Data Before Any Removals')
-    fig.savefig(os.path.join(this_plot_dir, 'iter_0.png'))
-    plt.close()
+    if plot_bool:
+        fig, ax = vz.firing_overview(orig_data.swapaxes(0,1))
+        fig.suptitle('Original Data Before Any Removals')
+        fig.savefig(os.path.join(this_plot_dir, 'iter_0.png'))
+        plt.close()
 
     iteration = 1
     removal_list = []
@@ -423,6 +428,23 @@ for this_run in range(n_runs):
                 max_delta_ind_raw = np.where(scaled_metric_array == sampled_value)
                 max_delta_ind = (max_delta_ind_raw[0][0], max_delta_ind_raw[1][0])
 
+            # Check for biasing
+            if bias_mode == 'unit':
+                # Bias towards removing units
+                # Set chunk removal indices to nan with probability bias_strength
+                if (not np.isnan(max_delta_ind[1])) and (np.random.rand() < bias_strength):
+                    max_delta_ind = (max_delta_ind[0], 0)
+            elif bias_mode == 'chunk':
+                # Bias towards removing chunks
+                # Set unit removal indices to nan with probability bias_strength
+                if (not np.isnan(max_delta_ind[0])) and (np.random.rand() < bias_strength):
+                    max_delta_ind = (0, max_delta_ind[1])
+
+            # If both indices are zero (no removal), skip this iteration
+            if max_delta_ind == (0,0):
+                print("No removal selected, ending iterations.")
+                break
+
             rm_nrn_ind = max_delta_ind[0]-1 if max_delta_ind[0] !=0 else None
             rm_chunk_ind = max_delta_ind[1]-1 if max_delta_ind[1] !=0 else None
 
@@ -475,9 +497,9 @@ for this_run in range(n_runs):
             current_data = test_data.copy()
             current_similarity = similarity_rm_array[max_delta_ind]
 
-            divnorm1 = colors.TwoSlopeNorm(vmin=-np.nanmax(np.abs(delta_similarity)), vcenter=0, vmax=np.nanmax(np.abs(delta_similarity)))
-            divnorm2 = colors.TwoSlopeNorm(vmin=-np.nanmax(np.abs(improvement_loss_ratio)), vcenter=0, vmax=np.nanmax(np.abs(improvement_loss_ratio)))
-            
+            # divnorm1 = colors.TwoSlopeNorm(vmin=-np.nanmax(np.abs(delta_similarity)), vcenter=0, vmax=np.nanmax(np.abs(delta_similarity)))
+            # divnorm2 = colors.TwoSlopeNorm(vmin=-np.nanmax(np.abs(improvement_loss_ratio)), vcenter=0, vmax=np.nanmax(np.abs(improvement_loss_ratio)))
+            # 
             # fig, ax = plt.subplots(1,3, figsize=(15,5))
             # ax[0].matshow(delta_similarity, origin='lower', aspect='auto', cmap='bwr', 
             #             vmin=-np.nanmax(np.abs(delta_similarity)), vmax=np.nanmax(np.abs(delta_similarity)),
@@ -508,10 +530,11 @@ for this_run in range(n_runs):
             print(f'Removed orig trials: {removal_list[-1]["orig_trials"]}')
             running_orig_trial_inds = updated_running_orig_trial_inds
 
-            fig, ax = vz.firing_overview(current_data.swapaxes(0,1))
-            fig.suptitle(f'Data after Iteration {iteration} Removals')
-            fig.savefig(os.path.join(this_plot_dir, f'iter_{iteration}.png'))
-            plt.close()
+            if plot_bool:
+                fig, ax = vz.firing_overview(current_data.swapaxes(0,1))
+                fig.suptitle(f'Data after Iteration {iteration} Removals')
+                fig.savefig(os.path.join(this_plot_dir, f'iter_{iteration}.png'))
+                plt.close()
 
             iteration += 1
         except Exception as e:
@@ -520,28 +543,29 @@ for this_run in range(n_runs):
 
     # Plot details of removal list
     # Plot as scatter of data_fraction vs similarity
-    frac_vector = [removal['current_data_fraction'] for removal in removal_list]
-    similarity_vector = [removal['current_similarity'] for removal in removal_list]
-    fig, ax = plt.subplots(1,1, figsize=(6,4))
-    ax.plot(
-            similarity_vector,
-            frac_vector,
-            '-o'
-            )
-    for i, removal in enumerate(removal_list):
-        ax.text(
-                removal['current_data_fraction'],
-                removal['current_similarity'],
-                f"Trials removed: {removal['orig_trials']}\nUnits removed: {removal['orig_unit']}",
-                fontsize=8,
-                transform=ax.transData,
+    if plot_bool:
+        frac_vector = [removal['current_data_fraction'] for removal in removal_list]
+        similarity_vector = [removal['current_similarity'] for removal in removal_list]
+        fig, ax = plt.subplots(1,1, figsize=(6,4))
+        ax.plot(
+                similarity_vector,
+                frac_vector,
+                '-o'
                 )
-    ax.set_ylabel('Fraction of Original Data Remaining')
-    ax.set_xlabel('Template Similarity')
-    ax.set_title('Template Similarity vs Data Fraction after Each Removal')
-    # plt.show()
-    fig.savefig(os.path.join(this_plot_dir, 'similarity_vs_data_fraction.png'))
-    plt.close()
+        for i, removal in enumerate(removal_list):
+            ax.text(
+                    removal['current_data_fraction'],
+                    removal['current_similarity'],
+                    f"Trials removed: {removal['orig_trials']}\nUnits removed: {removal['orig_unit']}",
+                    fontsize=8,
+                    transform=ax.transData,
+                    )
+        ax.set_ylabel('Fraction of Original Data Remaining')
+        ax.set_xlabel('Template Similarity')
+        ax.set_title('Template Similarity vs Data Fraction after Each Removal')
+        # plt.show()
+        fig.savefig(os.path.join(this_plot_dir, 'similarity_vs_data_fraction.png'))
+        plt.close()
 
     # Write out removal list to text file
     removal_list_path = os.path.join(this_plot_dir, 'removal_list.json')
@@ -550,6 +574,31 @@ for this_run in range(n_runs):
 
 
 ############################################################
+# Load all removal lists and plot summary
+removal_summary_dir = plot_dir
+all_removal_lists = glob(os.path.join(removal_summary_dir, 'run_*', 'removal_list.json'))
+summary_data = []
+for removal_list_path in all_removal_lists:
+    with open(removal_list_path, 'r') as f:
+        removal_list = json.load(f)
+        summary_data.append(removal_list)
+
+# Plot all runs on single figure
+fig, ax = plt.subplots(1,1, figsize=(6,4))
+for run_idx, removal_list in enumerate(summary_data):
+    frac_vector = [removal['current_data_fraction'] for removal in removal_list]
+    similarity_vector = [removal['current_similarity'] for removal in removal_list]
+    ax.plot(
+            similarity_vector,
+            frac_vector,
+            '-o',
+            label=f'Run {run_idx}',
+            alpha=0.5
+            )
+ax.set_ylabel('Fraction of Original Data Remaining')
+ax.set_xlabel('Template Similarity')
+ax.set_title('Template Similarity vs Data Fraction after Each Removal')
+plt.show()
 
 ##############################
 
