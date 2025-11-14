@@ -5,6 +5,9 @@ import numpy as np
 from tqdm import tqdm
 from numpy.linalg import norm
 from pprint import pprint as pp
+from itertools import combinations, product
+import os
+from matplotlib import colors
 
 data_dir = '/media/storage/NM_resorted_data/laser_2500ms/NM51_2500ms_161030_130155'
 
@@ -205,6 +208,187 @@ for this_ax, this_score in zip(ax.flatten(), sorted_scores):
     this_ax.set_title(str(this_score))
 plt.show()
 
+
+##############################
+# Loop over all units and all chunks and remove data incrementally based on template similarity
+# Check population similarity after each removal, not just single unit
+
+def calc_chunk_template_dynamics(
+        chunk_data,
+        template,
+        ):
+    """Calculate the dynamics of all units in a chunk with respect to a template.
+    Args:
+        chunk_data (np.ndarray): Shape (num_trials, num_units, num_time_bins)
+        template (np.ndarray): Shape (num_states, num_time_bins)
+    Returns:
+        estim_weights (np.ndarray): Shape (num_units, num_states)
+        projected_firing (np.ndarray): Shape (num_trials, num_units, num_time_bins)
+        template_similarity (float): Correlation between original and recovered template.
+    """
+    long_chunk = np.concatenate(chunk_data, axis=(1))
+    long_template = np.tile(template, (1, chunk_data.shape[0]))
+    estim_weights = estimate_weights(
+            long_chunk,
+            long_template
+            )
+    projected_firing = estim_weights.dot(long_template)
+    recov_template = np.linalg.pinv(estim_weights).dot(long_chunk)
+
+    mean_recov_template = recov_template.reshape(
+            recov_template.shape[0],
+            chunk_data.shape[0],
+            -1
+            ).mean(axis=1)
+
+    # fig, ax = plt.subplots(2,2, figsize=(10,6), sharex='col', sharey='row')
+    # ax[0,0].imshow(long_template, aspect='auto',interpolation='none')
+    # ax[0,0].set_title('Long Template')
+    # ax[1,0].imshow(recov_template, aspect='auto',interpolation='none')
+    # ax[1,0].set_title('Recovered Template from Chunk Data')
+    # ax[0,1].imshow(template, aspect='auto',interpolation='none')
+    # ax[0,1].set_title('Original Template')
+    # ax[1,1].imshow(mean_recov_template, aspect='auto',interpolation='none')
+    # ax[1,1].set_title('Mean Recovered Template across Trials')
+    # plt.show()
+    #
+    template_similarity = np.corrcoef(
+            long_template.flatten(),
+            recov_template.flatten()
+            )[0,1]
+    return estim_weights, template_similarity
+
+chunk_dynamics = []
+for chunk_idx in range(len(trial_chunks)):
+    chunk_data = wanted_taste_firing[:, :, :][
+            trial_chunks[chunk_idx][0]:trial_chunks[chunk_idx][1]
+            ]
+    chunk_data = chunk_data[..., firing_time_inds]
+    estim_weights, template_similarity = calc_chunk_template_dynamics(
+            chunk_data,
+            down_template
+            )
+    chunk_dynamics.append({
+        chunk_idx: template_similarity
+        })
+
+# Plot all chunks with their template similarities
+chunk_similarity_scores = [value for d in chunk_dynamics for value in d.values()]
+
+for chunk_idx in range(len(trial_chunks)):
+    chunk_data = wanted_taste_firing[:, :, :][
+            trial_chunks[chunk_idx][0]:trial_chunks[chunk_idx][1]
+            ]
+    fig,ax = vz.firing_overview(chunk_data.swapaxes(0,1)[..., firing_time_inds])
+    fig.suptitle(f'Chunk {chunk_idx} - Template Similarity: {chunk_similarity_scores[chunk_idx]:.3f}')
+plt.show()
+
+# fig, ax = plt.subplots(2,1, figsize=(10,6), sharex=True)
+# ax[0].imshow(long_chunk, aspect='auto', interpolation='none')
+# ax[0].set_title('Long Chunk Firing Data')
+# ax[1].imshow(projected_firing, aspect='auto', interpolation='none')
+# ax[1].set_title('Projected Firing Data from Estimated Weights')
+# plt.show()
+
+############################################################
+# Run loop over all chunks and units, removing the least dynamic units incrementally 
+
+orig_data = wanted_taste_firing[..., firing_time_inds]
+orig_trial_chunks = trial_chunks.copy()
+num_units = orig_data.shape[1]
+num_chunks = len(orig_trial_chunks)
+
+
+fig, ax = vz.firing_overview(orig_data.swapaxes(0,1))
+fig.suptitle('Original Data Before Any Removals')
+fig.savefig(os.path.expanduser('~/Desktop/template_dynamics_original_data.png'))
+plt.close()
+# plt.show()
+
+current_data = orig_data.copy()
+current_similarity = orig_similarity
+current_trial_chunks = orig_trial_chunks.copy()
+
+# Initialize array to hold similarity scores after each removal
+# Account for the fact that there should be a no-units-removed and no-chunks-removed case
+similarity_rm_array = np.zeros((num_units+1, num_chunks+1)) * np.nan
+datasset_loss_array = np.zeros((num_units+1, num_chunks+1)) * np.nan
+
+for rm_unit_idx in [np.nan, *np.arange(num_units)]:
+    for rm_chunk_idx in [np.nan, *np.arange(num_chunks)]:
+        print((rm_unit_idx, rm_chunk_idx))
+
+        if not np.isnan(rm_chunk_idx):
+            rm_chunk_bounds = current_trial_chunks[rm_chunk_idx]
+            rm_trial_inds = np.arange(
+                    rm_chunk_bounds[0],
+                    rm_chunk_bounds[1]
+                    )
+            test_data = np.delete(
+                    current_data,
+                    rm_trial_inds,
+                    axis=0
+                    )
+        else:
+            test_data = current_data.copy()
+        # Remove unit
+        if not np.isnan(rm_unit_idx):
+            test_data = np.delete(
+                    test_data,
+                    int(rm_unit_idx),
+                    axis=1
+                    )
+        else:
+            test_data = current_data.copy()
+
+        # Calculate dynamics for current data
+        estim_weights, template_similarity = calc_chunk_template_dynamics(
+                test_data,
+                down_template
+                )
+        array_inds = (
+                int(rm_unit_idx)+1 if not np.isnan(rm_unit_idx) else 0,
+                int(rm_chunk_idx)+1 if not np.isnan(rm_chunk_idx) else 0
+                )
+        similarity_rm_array[array_inds] = template_similarity
+
+        dataset_loss = 1 - (test_data.size / orig_data.size)
+        datasset_loss_array[array_inds] = dataset_loss
+
+delta_similarity = similarity_rm_array - orig_similarity
+
+improvement_loss_ratio = delta_similarity / datasset_loss_array
+
+max_delta_ind = np.unravel_index(
+    np.nanargmax(improvement_loss_ratio),
+    delta_similarity.shape
+    )
+rm_nrn_ind = max_delta_ind[0]-1 if max_delta_ind[0] !=0 else None
+rm_chunk_ind = max_delta_ind[1]-1 if max_delta_ind[1] !=0 else None
+
+divnorm1 = colors.TwoSlopeNorm(vmin=-np.nanmax(np.abs(delta_similarity)), vcenter=0, vmax=np.nanmax(np.abs(delta_similarity)))
+divnorm2 = colors.TwoSlopeNorm(vmin=-np.nanmax(np.abs(improvement_loss_ratio)), vcenter=0, vmax=np.nanmax(np.abs(improvement_loss_ratio)))
+
+fig, ax = plt.subplots(1,3, figsize=(15,5))
+ax[0].matshow(delta_similarity, origin='lower', aspect='auto', cmap='bwr', 
+            vmin=-np.nanmax(np.abs(delta_similarity)), vmax=np.nanmax(np.abs(delta_similarity)),
+              norm=divnorm1)
+ax[0].set_title('Delta Template Similarity after Unit/Chunk Removal')
+plt.colorbar(ax[0].images[0], ax=ax[0], label='Delta Similarity')
+ax[1].matshow(datasset_loss_array, origin='lower', aspect='auto', cmap='viridis')
+ax[1].set_title('Dataset Loss after Unit/Chunk Removal')
+plt.colorbar(ax[1].images[0], ax=ax[1], label='Dataset Loss')
+ax[2].matshow(improvement_loss_ratio, origin='lower', aspect='auto', cmap='bwr',
+              vmin=-np.nanmax(np.abs(improvement_loss_ratio)), vmax=np.nanmax(np.abs(improvement_loss_ratio)),
+              norm=divnorm2)
+ax[2].set_title('Improvement to Loss Ratio after Unit/Chunk Removal')
+ax[2].scatter(*max_delta_ind[::-1], color='k', s=10, label='Max Ratio Point')
+plt.colorbar(ax[2].images[0], ax=ax[2], label='Improvement/Loss Ratio')
+plt.show()
+
+
+
+############################################################
 
 ##############################
 
