@@ -418,6 +418,48 @@ fig.savefig(os.path.join(plot_dir_base, 'pca_granger_3d.svg'),
             )
 plt.close(fig)
 
+# Plot 3D with PC1, PC2, and Time as dimensions (each direction in different color)
+fig = plt.figure(figsize=(8,7))
+ax = fig.add_subplot(projection='3d')
+
+# Plot BLA-->GC in blue
+ax.plot(dir_0_reg[0], dir_0_reg[1], time_vec, 
+        color='blue', linewidth=3, alpha=0.8, label='BLA-->GC')
+ax.scatter(dir_0_reg[0], dir_0_reg[1], time_vec, 
+           color='blue', s=20, alpha=0.6)
+
+# Plot GC-->BLA in red  
+ax.plot(dir_1[0], dir_1[1], time_vec,
+        color='red', linewidth=3, alpha=0.8, label='GC-->BLA')
+ax.scatter(dir_1[0], dir_1[1], time_vec,
+           color='red', s=20, alpha=0.6)
+
+# Mark time markers
+for timepoint in time_markers:
+    ax.scatter(dir_0_reg[0, timepoint], dir_0_reg[1, timepoint], time_vec[timepoint],
+               color='blue', s=100, alpha=1.0, zorder=10, edgecolors='black', linewidth=2)
+    ax.scatter(dir_1[0, timepoint], dir_1[1, timepoint], time_vec[timepoint], 
+               color='red', s=100, alpha=1.0, zorder=10, edgecolors='black', linewidth=2)
+
+# Mark stimulus onset (time = 0)
+stim_onset_ind = np.argmin(np.abs(time_vec))
+ax.scatter(dir_0_reg[0, stim_onset_ind], dir_0_reg[1, stim_onset_ind], time_vec[stim_onset_ind],
+           color='green', s=150, alpha=1.0, zorder=15, marker='*', edgecolors='black', linewidth=2)
+ax.scatter(dir_1[0, stim_onset_ind], dir_1[1, stim_onset_ind], time_vec[stim_onset_ind],
+           color='green', s=150, alpha=1.0, zorder=15, marker='*', edgecolors='black', linewidth=2)
+
+ax.set_xlabel('PCA 0')
+ax.set_ylabel('PCA 1') 
+ax.set_zlabel('Time post-stimulus (s)')
+ax.legend()
+fig.suptitle('PCA Trajectories: PC1 vs PC2 vs Time\n' +\
+        f'MSE Percentile: {percentile}' + '\n' +\
+        f'Time markers: {[np.round(time_vec[x],2) for x in time_markers]}' + '\n' +\
+        'Green star: Stimulus onset')
+fig.savefig(os.path.join(plot_dir_base, 'pca_granger_pc1_pc2_time.svg'),
+            bbox_inches='tight')
+plt.close(fig)
+
 # fig, ax = plt.subplots(2,2, sharex=True, sharey=True)
 # ax[0,0].imshow(dir_0_reg, interpolation='nearest', aspect='auto')
 # ax[1,0].imshow(dir_1, interpolation='nearest', aspect='auto')
