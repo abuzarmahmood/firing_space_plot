@@ -591,7 +591,7 @@ plt.close(fig)
 
 ###############
 plt.figure()
-plt.hist(mse_auto_pred_list, bins=40,
+plt.hist(lr_mse_auto_pred_list, bins=40,
          label = 'Auto-predicted MSE')
 plt.hist(mse_list, bins=40, alpha=0.5,
          label = 'Shuffled MSE')
