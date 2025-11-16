@@ -205,10 +205,10 @@ mean_mask = np.stack([mean_mask[...,0,1],mean_mask[...,1,0],], axis=-1).T
 # Assess similarity in dynamics of either direction
 
 reg = LinearRegression()
-dir_0 = mean_mask[0]
-dir_1 = mean_mask[1]
-# dir_0 = mean_mask[1]
-# dir_1 = mean_mask[0]
+# dir_0 = mean_mask[0]
+# dir_1 = mean_mask[1]
+dir_0 = mean_mask[1]
+dir_1 = mean_mask[0]
 reg.fit(dir_0.T, dir_1.T)
 dir_0_reg = reg.predict(dir_0.T).T
 reg_mask = [dir_0_reg, dir_1]
@@ -435,6 +435,9 @@ fig.savefig(os.path.join(plot_dir_base, 'pca_granger_3d_imshow.png'),
                         bbox_inches = 'tight')
 plt.close(fig)
 
+# Make a plot with time as the 3d dimension
+
+
 
 # ##############################
 # # Estimate switches using ARHMM
@@ -564,12 +567,12 @@ plt.close()
 ###############
 # Bar plot
 
-pred_dir_ind = 1
+pred_dir_ind = 0
 
 mse_df = pd.DataFrame(
         dict(
             # type = 'other direction pred shuffled',
-            type = f'{dir_names[pred_dir_ind]} inter shuffled',
+            type = f'{dir_names[pred_dir_ind]} linear inter shuffled',
             mse = mse_list 
             )
         )
@@ -612,9 +615,46 @@ g.axes.text(0.1, actual_mse*0.75,f'{dir_names[pred_dir_ind]} inter', ha = 'cente
 # Rotate xticklabels
 xtick_labels = g.axes.get_xticklabels()
 g.axes.set_xticklabels(xtick_labels, rotation=45)
-g.figure.savefig(os.path.join(plot_dir_base, f'{dir_names[pred_dir_ind]}_mse_auto_pred_bar.png'),
+g.figure.savefig(os.path.join(plot_dir_base, f'{dir_names[pred_dir_ind]}_mse_auto_pred_bar.svg'),
                  bbox_inches = 'tight')
 plt.legend()
+plt.close(g.figure)
+
+# Make above plot but with fold-change relative to actual_mse
+mse_df['mse_fold'] = mse_df['mse'] / actual_mse
+fig, ax = plt.subplots(figsize = (3,4))
+g = sns.boxenplot(
+        data = mse_df,
+        x = 'type',
+        hue = 'type',
+        y = 'mse_fold',
+        legend=False,
+        alpha = 0.5,
+        ax = ax,
+        )
+g.axes.axhline(1, color = 'r', linestyle = '--', linewidth = 2,
+               label = "Linear,\nInter")
+# g.axes.text(0.1, 0.75,f'{dir_names[pred_dir_ind]} inter', ha = 'center', c = 'r',
+#             weight = 'bold')
+# Rotate xticklabels
+xtick_labels = g.axes.get_xticklabels()
+# Drop direction from xtick labels
+xtick_labels = [
+        " ".join([y for y in x.get_text().split(' ') if '-->' not in y])
+        for x in xtick_labels]
+# Convert to capitalized
+xtick_labels = [x.title() for x in xtick_labels]
+# Replace " "With "\n"
+xtick_labels = [x.replace(" ", "\n") for x in xtick_labels]
+g.axes.set_xticklabels(xtick_labels) 
+g.axes.set_ylabel('MSE (fold-change)')
+ax.set_xlabel('Prediction Type')
+# Remove top and right spines
+g.spines['top'].set_visible(False)
+g.spines['right'].set_visible(False)
+ax.legend()
+g.figure.savefig(os.path.join(plot_dir_base, f'{dir_names[pred_dir_ind]}_mse_auto_pred_fold_bar.svg'),
+                 bbox_inches = 'tight')
 plt.close(g.figure)
 
 ###############
