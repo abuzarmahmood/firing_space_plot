@@ -19,53 +19,6 @@ class NumpyTypeEncoder(json.JSONEncoder):
                 return obj.item()
             return json.JSONEncoder.default(self, obj)
 
-data_dir = '/media/storage/NM_resorted_data/laser_2500ms/NM51_2500ms_161030_130155'
-
-this_data = ephys_data.ephys_data(data_dir)
-this_data.get_firing_rates()
-this_data.separate_laser_firing()
-
-firing_array = this_data.off_firing
-stacked_firing = np.concatenate(firing_array, axis=0)
-
-vz.firing_overview(stacked_firing.swapaxes(0,1))
-plt.show()
-
-NBT_KM_paths_list_path = '/media/bigdata/firing_space_plot/NBT_EMB_Classifier_Analyses/src/GC_EMG_changepoints/data_dir_list.txt'
-NM_paths_list_path = '/media/storage/NM_resorted_data/dir_paths.txt'
-
-NBT_KM_paths = open(NBT_KM_paths_list_path).read().splitlines()
-NM_paths = open(NM_paths_list_path).read().splitlines()
-
-all_paths = NBT_KM_paths + NM_paths
-
-loaded_paths = []
-spike_list = []
-firing_rate_list = []
-#ind = 3
-for this_path in tqdm(all_paths): 
-    try:
-        dat = ephys_data.ephys_data(this_path)
-        dat.get_spikes()
-        dat.get_firing_rates()
-        loaded_paths.append(this_path)
-
-        dat.check_laser()
-        # If laser exists, only get non-laser trials
-        if dat.laser_exists:
-            dat.separate_laser_spikes()
-            dat.separate_laser_firing()
-            spike_list.append(np.array(dat.off_spikes))
-            firing_rate_list.append(np.array(dat.off_firing))
-        else:
-            spike_list.append(np.array(dat.spikes))
-            firing_rate_list.append(np.array(dat.firing_list))
-
-    except Exception as e:
-        print(f"Could not load data from {this_path}: {e}")
-        continue
-
-# Save
 class spike_time_converter:
     def __init__(self, spike_obj, max_time = 7000): 
         if isinstance(spike_obj, list):
@@ -85,16 +38,76 @@ class spike_time_converter:
             spike_array[unit_idx, unit_spikes] = True
         return spike_array
 
+load_artifacts_bool = True
+# artifacts_dir = '/media/bigdata/firing_space_plot/firing_analyses/intra_state_dynamics/artifacts'
+artifacts_dir = '/home/abuzarmahmood/projects/firing_space_plot/firing_analyses/intra_state_dynamics/artifacts'
 
-spike_time_lists = [spike_time_converter(spikes).spike_times for spikes in spike_list]
+if not load_artifacts_bool:
+    data_dir = '/media/storage/NM_resorted_data/laser_2500ms/NM51_2500ms_161030_130155'
 
-artifacts_dir = '/media/bigdata/firing_space_plot/firing_analyses/intra_state_dynamics/artifacts'
-np.savez(
-        os.path.join(artifacts_dir, 'loaded_firing_data.npz'),
-        paths = np.array(loaded_paths),
-        spikes = np.array(spike_time_lists, dtype=object), 
-        firing_rates = np.array(firing_rate_list, dtype=object)
-        )
+    this_data = ephys_data.ephys_data(data_dir)
+    this_data.get_firing_rates()
+    this_data.separate_laser_firing()
+
+    firing_array = this_data.off_firing
+    stacked_firing = np.concatenate(firing_array, axis=0)
+
+    vz.firing_overview(stacked_firing.swapaxes(0,1))
+    plt.show()
+
+    NBT_KM_paths_list_path = '/media/bigdata/firing_space_plot/NBT_EMB_Classifier_Analyses/src/GC_EMG_changepoints/data_dir_list.txt'
+    NM_paths_list_path = '/media/storage/NM_resorted_data/dir_paths.txt'
+
+    NBT_KM_paths = open(NBT_KM_paths_list_path).read().splitlines()
+    NM_paths = open(NM_paths_list_path).read().splitlines()
+
+    all_paths = NBT_KM_paths + NM_paths
+
+    loaded_paths = []
+    spike_list = []
+    firing_rate_list = []
+    #ind = 3
+    for this_path in tqdm(all_paths): 
+        try:
+            dat = ephys_data.ephys_data(this_path)
+            dat.get_spikes()
+            dat.get_firing_rates()
+            loaded_paths.append(this_path)
+
+            dat.check_laser()
+            # If laser exists, only get non-laser trials
+            if dat.laser_exists:
+                dat.separate_laser_spikes()
+                dat.separate_laser_firing()
+                spike_list.append(np.array(dat.off_spikes))
+                firing_rate_list.append(np.array(dat.off_firing))
+            else:
+                spike_list.append(np.array(dat.spikes))
+                firing_rate_list.append(np.array(dat.firing_list))
+
+        except Exception as e:
+            print(f"Could not load data from {this_path}: {e}")
+            continue
+
+    # Save
+    spike_time_lists = [spike_time_converter(spikes).spike_times for spikes in spike_list]
+
+    np.savez(
+            os.path.join(artifacts_dir, 'loaded_firing_data.npz'),
+            paths = np.array(loaded_paths),
+            spikes = np.array(spike_time_lists, dtype=object), 
+            firing_rates = np.array(firing_rate_list, dtype=object)
+            )
+
+else:
+    # Load
+    loaded_artifacts = np.load(
+            os.path.join(artifacts_dir, 'loaded_firing_data.npz'),
+            allow_pickle=True
+            )
+    loaded_paths = loaded_artifacts['paths'].tolist()
+    spike_list = loaded_artifacts['spikes'].tolist()
+    firing_rate_list = loaded_artifacts['firing_rates'].tolist()
 
 
 time_lims = [-500, 2000]
