@@ -38,6 +38,8 @@ class spike_time_converter:
             spike_array[unit_idx, unit_spikes] = True
         return spike_array
 
+
+
 load_artifacts_bool = True
 # artifacts_dir = '/media/bigdata/firing_space_plot/firing_analyses/intra_state_dynamics/artifacts'
 artifacts_dir = '/home/abuzarmahmood/projects/firing_space_plot/firing_analyses/intra_state_dynamics/artifacts'
@@ -96,7 +98,8 @@ if not load_artifacts_bool:
             os.path.join(artifacts_dir, 'loaded_firing_data.npz'),
             paths = np.array(loaded_paths),
             spikes = np.array(spike_time_lists, dtype=object), 
-            firing_rates = np.array(firing_rate_list, dtype=object)
+            firing_rates = np.array(firing_rate_list, dtype=object),
+            firing_time_vector = this_data.time_vector
             )
 
 else:
@@ -108,23 +111,25 @@ else:
     loaded_paths = loaded_artifacts['paths'].tolist()
     spike_list = loaded_artifacts['spikes'].tolist()
     firing_rate_list = loaded_artifacts['firing_rates'].tolist()
+    firing_time_vector = loaded_artifacts['firing_time_vector']
 
 
 time_lims = [-500, 2000]
-firing_time_inds = np.where((this_data.time_vector >= time_lims[0]) & (this_data.time_vector <= time_lims[1]))[0]
+firing_time_inds = np.where((firing_time_vector >= time_lims[0]) & (firing_time_vector <= time_lims[1]))[0]
 
-for i, this_firing in enumerate(firing_rate_list):
-    # fig, ax = plt.subplots(len(this_firing),1, figsize=(10,15), sharex=True)
-    stacked_firing = np.concatenate(this_firing, axis=0)  # Shape: (total_trials, num_neurons, num_time_bins)
-    fig, ax = vz.firing_overview(
-            stacked_firing.swapaxes(0,1)[..., firing_time_inds]  # Shape: (num_neurons, total_trials, selected_time_bins)
-            # stacked_firing.swapaxes(0,1)
-            )
-    this_base_name = loaded_paths[i].split('/')[-1]
-    fig.suptitle(this_base_name)
-    plt.show()
-    # plt.savefig(os.path.join(plot_dir, f'{this_base_name}_mean_firing_rates.png'))
-    # plt.close()
+#
+# for i, this_firing in enumerate(firing_rate_list):
+#     # fig, ax = plt.subplots(len(this_firing),1, figsize=(10,15), sharex=True)
+#     stacked_firing = np.concatenate(this_firing, axis=0)  # Shape: (total_trials, num_neurons, num_time_bins)
+#     fig, ax = vz.firing_overview(
+#             stacked_firing.swapaxes(0,1)[..., firing_time_inds]  # Shape: (num_neurons, total_trials, selected_time_bins)
+#             # stacked_firing.swapaxes(0,1)
+#             )
+#     this_base_name = loaded_paths[i].split('/')[-1]
+#     fig.suptitle(this_base_name)
+#     plt.show()
+#     # plt.savefig(os.path.join(plot_dir, f'{this_base_name}_mean_firing_rates.png'))
+#     # plt.close()
 
 wanted_basename_pattern = '210620'
 wanted_paths = [p for p in loaded_paths if wanted_basename_pattern in p]
@@ -154,6 +159,40 @@ test_chunk = 3
 test_data = wanted_taste_firing[:, test_unit, :][trial_chunks[test_chunk][0]:trial_chunks[test_chunk][1]]
 test_data = test_data[..., firing_time_inds]
 
+def estimate_weights(firing, template):
+    """Estimate weights for each neuron to match the template.
+
+    Args:
+        firing (np.ndarray): Shape (num_neurons, num_time_bins)
+        template (np.ndarray): Shape (num_states, num_time_bins)
+    Returns:
+        estim_weight (np.ndarray): Shape (num_neurons, num_states)
+    """
+    estim_weight = firing.dot(np.linalg.pinv(template))
+    return estim_weight
+
+##############################
+
+epoch_lims = [
+        [-500, 0],
+        [0,200],
+        [200,850],
+        [850,1450],
+        [1450,2000]
+        ]
+epoch_lims = np.array(epoch_lims)
+epoch_lims -= epoch_lims.min()
+states = len(epoch_lims)
+epoch_lens = np.array([np.abs(np.diff(x)[0]) for x in epoch_lims])
+basis_funcs = np.stack([np.zeros(epoch_lims.max()) for i in range(states)] )
+for this_func, this_lims in zip(basis_funcs, epoch_lims):
+    this_func[this_lims[0]:this_lims[1]] = 1
+basis_funcs = basis_funcs / norm(basis_funcs,axis=-1)[:,np.newaxis] 
+vz.imshow(basis_funcs);plt.show()
+
+assert np.abs(np.diff(time_lims)) == len(basis_funcs.T)
+
+##############################
 down_inds = np.linspace(0, basis_funcs.shape[1]-1, test_data.shape[1]).astype(int)
 down_template = basis_funcs[:, down_inds]
 
@@ -769,35 +808,3 @@ ax.set_xlabel('Template Similarity')
 ax.set_title('Template Similarity vs Data Fraction after Each Removal')
 plt.show()
 
-##############################
-
-epoch_lims = [
-        [-500, 0],
-        [0,200],
-        [200,850],
-        [850,1450],
-        [1450,2000]
-        ]
-epoch_lims = np.array(epoch_lims)
-epoch_lims -= epoch_lims.min()
-states = len(epoch_lims)
-epoch_lens = np.array([np.abs(np.diff(x)[0]) for x in epoch_lims])
-basis_funcs = np.stack([np.zeros(epoch_lims.max()) for i in range(states)] )
-for this_func, this_lims in zip(basis_funcs, epoch_lims):
-    this_func[this_lims[0]:this_lims[1]] = 1
-basis_funcs = basis_funcs / norm(basis_funcs,axis=-1)[:,np.newaxis] 
-vz.imshow(basis_funcs);plt.show()
-
-assert np.abs(np.diff(time_lims)) == len(basis_funcs.T)
-
-def estimate_weights(firing, template):
-    """Estimate weights for each neuron to match the template.
-
-    Args:
-        firing (np.ndarray): Shape (num_neurons, num_time_bins)
-        template (np.ndarray): Shape (num_states, num_time_bins)
-    Returns:
-        estim_weight (np.ndarray): Shape (num_neurons, num_states)
-    """
-    estim_weight = firing.dot(np.linalg.pinv(template))
-    return estim_weight
