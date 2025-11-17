@@ -245,6 +245,29 @@ def calc_chunk_template_dynamics(
     projected_firing = estim_weights.dot(long_template)
     recov_template = np.linalg.pinv(estim_weights).dot(long_chunk)
 
+    # # Check dot similarity
+    # dot_similarity = np.dot(
+    #     long_template,
+    #     recov_template.T,
+    #     ) / (
+    #             norm(long_template, axis=0)[:, np.newaxis] *
+    #             norm(recov_template, axis=0)[np.newaxis, :]
+    #             )
+    # 
+    # plt.matshow(dot_similarity, cmap='viridis')
+    # plt.title('Dot Product Similarity between Original and Recovered Templates')
+    # plt.colorbar(label='Dot Product Similarity')
+    # plt.show()
+
+    # Check recovered template per trial
+    recov_template_trials = recov_template.reshape(
+            recov_template.shape[0],
+            chunk_data.shape[0],
+            -1
+            )
+
+    # vz.firing_overview(recov_template_trials.swapaxes(0,1), cmap='viridis')
+
     mean_recov_template = recov_template.reshape(
             recov_template.shape[0],
             chunk_data.shape[0],
@@ -261,29 +284,118 @@ def calc_chunk_template_dynamics(
     # ax[1,1].imshow(mean_recov_template, aspect='auto',interpolation='none')
     # ax[1,1].set_title('Mean Recovered Template across Trials')
     # plt.show()
-    #
-    template_similarity = np.corrcoef(
-            long_template.flatten(),
-            recov_template.flatten()
-            )[0,1]
-    return estim_weights, template_similarity
+   
+    # template_similarity = np.corrcoef(
+    #         long_template.flatten(),
+    #         recov_template.flatten()
+    #         )[0,1]
+
+    all_template_similarity = [
+            np.corrcoef(
+                template.flatten(),
+                this_recov_template.flatten() 
+                )[0,1]
+            for this_recov_template in recov_template_trials.swapaxes(0,1)
+            ]
+
+    return estim_weights, np.mean(all_template_similarity), all_template_similarity, recov_template_trials
+
+# Chunk by single trials
+trial_chunks = [(i, i+1) for i in range(wanted_taste_firing.shape[0])]
 
 chunk_dynamics = []
+var_similarities = []
+all_recov_templates = []
 for chunk_idx in range(len(trial_chunks)):
     chunk_data = wanted_taste_firing[:, :, :][
             trial_chunks[chunk_idx][0]:trial_chunks[chunk_idx][1]
             ]
     chunk_data = chunk_data[..., firing_time_inds]
-    estim_weights, template_similarity = calc_chunk_template_dynamics(
+    (
+            estim_weights, 
+            template_similarity, 
+            all_similarities,
+            recov_template_trials
+                )= calc_chunk_template_dynamics(
             chunk_data,
             down_template
             )
     chunk_dynamics.append({
         chunk_idx: template_similarity
         })
+    var_similarities.append({
+        chunk_idx: np.var(all_similarities)
+        })
+    all_recov_templates.append(recov_template_trials)
+
+cat_recov_templates = np.concatenate(all_recov_templates, axis=1)
+
+vz.firing_overview(cat_recov_templates.swapaxes(0,1), cmap_lims='shared', cmap='viridis')
+plt.show()
+
+vz.firing_overview(wanted_taste_firing.swapaxes(0,1)[..., firing_time_inds], cmap='viridis') 
+fig, ax = vz.gen_square_subplots(len(cat_recov_templates), figsize=(12,12))
+for i in range(len(cat_recov_templates)):
+    ax.flatten()[i].plot(cat_recov_templates[i, :, :].T, alpha=0.3, color='gray')
+vz.firing_overview(cat_recov_templates, cmap_lims='shared', cmap='jet')
+plt.show()
+
+all_mean_recov_templates = [
+        recov_templates.mean(axis=1)
+        for recov_templates in all_recov_templates
+        ]
+
+vz.firing_overview(np.stack(all_mean_recov_templates), cmap_lims='shared', cmap='viridis')
+plt.show()
+
+# Check mean orthogonality of recovered templates for each trial
+trial_mean_similarity = []
+for trial_idx in range(cat_recov_templates.shape[1]):
+    this_trial_templates = cat_recov_templates[:, trial_idx, :]
+    norm_trial_templates = this_trial_templates / norm(this_trial_templates, axis=1)[:, np.newaxis]
+    dot_similarity = np.dot(
+        norm_trial_templates,
+        norm_trial_templates.T,
+        ) 
+    off_diag_inds = np.triu_indices(dot_similarity.shape[0], k=1)
+    mean_off_diag_abs_similarity = np.mean(np.abs(dot_similarity[off_diag_inds]))
+    trial_mean_similarity.append(mean_off_diag_abs_similarity)
+
+fig, ax = vz.gen_square_subplots(cat_recov_templates.shape[1], figsize=(12,12))
+for i in range(cat_recov_templates.shape[1]):
+    ax.flatten()[i].plot(cat_recov_templates[:, i, :].T)
+plt.show()
+
+similarity_thresh = 0.15
+fig, ax = plt.subplots(1,1, figsize=(6,4))
+ax.plot(trial_mean_similarity, '-o')
+ax.axhline(similarity_thresh, color='r', linestyle='--', label='Similarity Threshold')
+ax.set_xlabel('Trial Index')
+ax.set_ylabel('Mean Off-Diagonal Template Similarity')
+ax.set_title('Mean Template Similarity across Chunks per Trial')
+plt.show()
+
+wanted_similarity_inds = np.array(trial_mean_similarity) < similarity_thresh
+
+orthogonal_dynamics_trials = cat_recov_templates[:, wanted_similarity_inds, :]
+
+vz.firing_overview(orthogonal_dynamics_trials, cmap_lims='shared', cmap='jet')
+vz.firing_overview(orthogonal_dynamics_trials.swapaxes(0,1), cmap_lims='shared', cmap='viridis')
+plt.show()
+
+fig, ax = vz.gen_square_subplots(orthogonal_dynamics_trials.shape[1], figsize=(12,12))
+for i in range(orthogonal_dynamics_trials.shape[1]):
+    ax.flatten()[i].plot(orthogonal_dynamics_trials[:, i, :].T)
+plt.show()
+
+# Find 
+
+
+##############################
 
 # Plot all chunks with their template similarities
 chunk_similarity_scores = [value for d in chunk_dynamics for value in d.values()]
+chunk_variance_scores = [value for d in var_similarities for value in d.values()]
 
 for chunk_idx in range(len(trial_chunks)):
     chunk_data = wanted_taste_firing[:, :, :][
@@ -291,6 +403,18 @@ for chunk_idx in range(len(trial_chunks)):
             ]
     fig,ax = vz.firing_overview(chunk_data.swapaxes(0,1)[..., firing_time_inds])
     fig.suptitle(f'Chunk {chunk_idx} - Template Similarity: {chunk_similarity_scores[chunk_idx]:.3f}')
+plt.show()
+
+# Plot mean similarity vs variance
+fig, ax = plt.subplots(1,1, figsize=(6,4))
+ax.scatter(
+        chunk_similarity_scores,
+        chunk_variance_scores
+        )
+ax.set_xlabel('Template Similarity')
+ax.set_ylabel('Variance of Template Similarity across Trials')
+for i, (sim, var) in enumerate(zip(chunk_similarity_scores, chunk_variance_scores)):
+    ax.text(sim, var, str(i))
 plt.show()
 
 # fig, ax = plt.subplots(2,1, figsize=(10,6), sharex=True)
