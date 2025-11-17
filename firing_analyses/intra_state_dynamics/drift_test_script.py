@@ -463,6 +463,103 @@ for i in range(cat_recov_templates.shape[1]):
     ax.flatten()[i].plot(cat_recov_templates[:, i, :].T)
 plt.show()
 
+# "Infer" states
+inferred_states = np.argmax(cat_recov_templates, axis=0)
+
+# get transition times by finding the first time in each trial when a state comes on
+# First smooth states with a n-window median filter
+from scipy.signal import medfilt, convolve
+smoothed_states = medfilt(inferred_states, kernel_size=(1,15))
+# kernel_size = 11
+# kernel = np.ones(kernel_size) / kernel_size
+# smoothed_states = np.apply_along_axis(
+#         lambda m: convolve(m, kernel, mode='same'),
+#         axis=1,
+#         arr=inferred_states
+#         )
+
+fig, ax = plt.subplots(2,1, figsize=(10,6), sharex=True)
+ax[0].imshow(inferred_states, aspect='auto', interpolation='none')
+ax[0].set_title('Inferred States across Trials and Time')
+ax[1].imshow(smoothed_states, aspect='auto', interpolation='none')
+ax[1].set_title('Smoothed Inferred States across Trials and Time')
+plt.show()
+
+transition_times = []
+for trial_idx in range(inferred_states.shape[0]):
+    this_trial_states = smoothed_states[trial_idx, :]
+    this_trial_transitions = [np.where(this_trial_states >= state)[0][0] for state in range(states)]
+    transition_times.append(this_trial_transitions)
+
+plt.imshow(inferred_states, aspect='auto', interpolation='none')
+plt.title('Inferred States across Trials and Time')
+plt.xlabel('Time Bins')
+plt.ylabel('Trials')
+plt.colorbar(label='Inferred State')
+# Plot transition times
+for trial_idx, this_trial_transitions in enumerate(transition_times):
+    plt.scatter(
+            this_trial_transitions,
+            [trial_idx]*len(this_trial_transitions),
+            color='r',
+            marker='x'
+            )
+plt.show()
+
+##############################
+# Align neural activity to transition times 
+dat_to_align = wanted_taste_firing[..., firing_time_inds]
+window_radius = 25
+
+# shape: states x units x trials x window*2
+aligned_data = np.empty((states-1, dat_to_align.shape[1], dat_to_align.shape[0], window_radius*2)) 
+for trial_idx in range(dat_to_align.shape[0]):
+    trial_changes = transition_times[trial_idx]
+    trial_firing = dat_to_align[trial_idx, :, :]
+    # Drop first state
+    trial_changes = trial_changes[1:]
+    for change_idx, this_change in enumerate(trial_changes):
+        pre_data = trial_firing[:, max(0, this_change - window_radius):this_change] 
+        post_data = trial_firing[:, this_change:min(trial_firing.shape[1], this_change + window_radius)]
+        aligned_data[change_idx, :, trial_idx, window_radius - pre_data.shape[1]:window_radius] = pre_data 
+        aligned_data[change_idx, :, trial_idx, window_radius:window_radius+post_data.shape[1]] = post_data
+
+
+mean_transitions = np.mean(transition_times, axis=0).astype(int)[1:]
+unaligned_data = np.empty(aligned_data.shape)
+for state_idx in range(len(mean_change_bins)):
+    pre_data = dat_to_align[:, :, max(0, mean_transitions[state_idx] - window_radius):mean_transitions[state_idx]]
+    post_data = dat_to_align[:, :, mean_transitions[state_idx]:min(dat_to_align.shape[2], mean_transitions[state_idx] + window_radius)]
+    unaligned_data[state_idx, :, :, window_radius - pre_data.shape[2]:window_radius] = pre_data.swapaxes(0,1)
+    unaligned_data[state_idx, :, :, window_radius:window_radius+post_data.shape[2]] = post_data.swapaxes(0,1)
+
+align_plot_dir = os.path.expanduser('~/Desktop/template_dynamics_aligned/plots/transition_aligned/')
+os.makedirs(align_plot_dir, exist_ok=True)
+
+for this_unit in range(num_units):
+    fig, ax = plt.subplots(2, states - 1, figsize=(15,5), sharey=True)
+    for state_idx in range(states - 1):
+        ax[0,state_idx].imshow(
+                aligned_data[state_idx, this_unit, :, :],
+                aspect='auto',
+                interpolation='none'
+                )
+        ax[0,state_idx].set_title(f'State {state_idx+1} Transition Aligned - Unit {this_unit}')
+        ax[1,state_idx].imshow(
+                unaligned_data[state_idx, this_unit, :, :],
+                aspect='auto',
+                interpolation='none'
+                )
+    plt.savefig(os.path.join(align_plot_dir, f'unit_{this_unit}_aligned.png'))
+
+
+
+
+
+
+
+##############################
+
 similarity_thresh = 0.15
 fig, ax = plt.subplots(1,1, figsize=(6,4))
 ax.plot(trial_mean_similarity, '-o')
