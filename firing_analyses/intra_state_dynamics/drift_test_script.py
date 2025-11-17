@@ -154,10 +154,6 @@ for i in trial_chunks:
     vz.firing_overview(this_trials.swapaxes(0,1))
 plt.show()
 
-test_unit = 22
-test_chunk = 3
-test_data = wanted_taste_firing[:, test_unit, :][trial_chunks[test_chunk][0]:trial_chunks[test_chunk][1]]
-test_data = test_data[..., firing_time_inds]
 
 def estimate_weights(firing, template):
     """Estimate weights for each neuron to match the template.
@@ -193,6 +189,12 @@ vz.imshow(basis_funcs);plt.show()
 assert np.abs(np.diff(time_lims)) == len(basis_funcs.T)
 
 ##############################
+
+test_unit = 22
+test_chunk = 3
+test_data = wanted_taste_firing[:, test_unit, :][trial_chunks[test_chunk][0]:trial_chunks[test_chunk][1]]
+test_data = test_data[..., firing_time_inds]
+
 down_inds = np.linspace(0, basis_funcs.shape[1]-1, test_data.shape[1]).astype(int)
 down_template = basis_funcs[:, down_inds]
 
@@ -424,13 +426,24 @@ for i in range(len(cat_recov_templates)):
 vz.firing_overview(cat_recov_templates, cmap_lims='shared', cmap='jet')
 plt.show()
 
-all_mean_recov_templates = [
-        recov_templates.mean(axis=1)
-        for recov_templates in all_recov_templates
-        ]
+# Write out recovered templates
+if not load_artifacts_bool: 
+    np.save(
+            os.path.join(artifacts_dir, 'recovered_templates.npy'),
+            cat_recov_templates
+            )
+else:
+    cat_recov_templates = np.load(
+            os.path.join(artifacts_dir, 'recovered_templates.npy')
+            )
 
-vz.firing_overview(np.stack(all_mean_recov_templates), cmap_lims='shared', cmap='viridis')
-plt.show()
+# all_mean_recov_templates = [
+#         recov_templates.mean(axis=1)
+#         for recov_templates in all_recov_templates
+#         ]
+#
+# vz.firing_overview(np.stack(all_mean_recov_templates), cmap_lims='shared', cmap='viridis')
+# plt.show()
 
 # Check mean orthogonality of recovered templates for each trial
 trial_mean_similarity = []
