@@ -65,6 +65,38 @@ for this_path in tqdm(all_paths):
         print(f"Could not load data from {this_path}: {e}")
         continue
 
+# Save
+class spike_time_converter:
+    def __init__(self, spike_obj, max_time = 7000): 
+        if isinstance(spike_obj, list):
+            self.spike_times = spike_obj
+        elif isinstance(spike_obj, np.ndarray):
+            self.spike_array = spike_obj
+
+        if hasattr(self, 'spike_array'):
+            self.spike_times = np.where(self.spike_array) 
+        else:
+            self.spike_array = self.convert_to_array(max_time)
+
+    def convert_to_array(self, max_time):
+        num_units = len(self.spike_times)
+        spike_array = np.zeros((num_units, max_time), dtype=bool)
+        for unit_idx, unit_spikes in enumerate(self.spike_times):
+            spike_array[unit_idx, unit_spikes] = True
+        return spike_array
+
+
+spike_time_lists = [spike_time_converter(spikes).spike_times for spikes in spike_list]
+
+artifacts_dir = '/media/bigdata/firing_space_plot/firing_analyses/intra_state_dynamics/artifacts'
+np.savez(
+        os.path.join(artifacts_dir, 'loaded_firing_data.npz'),
+        paths = np.array(loaded_paths),
+        spikes = np.array(spike_time_lists, dtype=object), 
+        firing_rates = np.array(firing_rate_list, dtype=object)
+        )
+
+
 time_lims = [-500, 2000]
 firing_time_inds = np.where((this_data.time_vector >= time_lims[0]) & (this_data.time_vector <= time_lims[1]))[0]
 
