@@ -10,6 +10,7 @@ import os
 from matplotlib import colors
 import json
 from glob import glob
+from scipy.stats import zscore
 
 class NumpyTypeEncoder(json.JSONEncoder):
         def default(self, obj):
@@ -41,8 +42,8 @@ class spike_time_converter:
 
 
 load_artifacts_bool = True
-# artifacts_dir = '/media/bigdata/firing_space_plot/firing_analyses/intra_state_dynamics/artifacts'
-artifacts_dir = '/home/abuzarmahmood/projects/firing_space_plot/firing_analyses/intra_state_dynamics/artifacts'
+artifacts_dir = '/media/bigdata/firing_space_plot/firing_analyses/intra_state_dynamics/artifacts'
+# artifacts_dir = '/home/abuzarmahmood/projects/firing_space_plot/firing_analyses/intra_state_dynamics/artifacts'
 
 if not load_artifacts_bool:
     data_dir = '/media/storage/NM_resorted_data/laser_2500ms/NM51_2500ms_161030_130155'
@@ -188,6 +189,11 @@ vz.imshow(basis_funcs);plt.show()
 
 assert np.abs(np.diff(time_lims)) == len(basis_funcs.T)
 
+# Check orthonormality of basis functions
+dot_product = basis_funcs.dot(basis_funcs.T)
+print("Dot Product Matrix of Basis Functions (Should be close to Identity):")
+pp(dot_product)
+
 ##############################
 
 test_unit = 22
@@ -331,6 +337,14 @@ def calc_chunk_template_dynamics(
     projected_firing = estim_weights.dot(long_template)
     recov_template = np.linalg.pinv(estim_weights).dot(long_chunk)
 
+    # fig, ax = plt.subplots(2,1, figsize=(10,6), sharex=True)
+    # ax[0].imshow(long_chunk, aspect='auto',interpolation='none')
+    # ax[0].set_title('Long Chunk Firing Data')
+    # ax[1].imshow(projected_firing, aspect='auto',interpolation='none')
+    # ax[1].set_title('Projected Firing Data from Estimated Weights')
+    # plt.show()
+
+
     # # Check dot similarity
     # dot_similarity = np.dot(
     #     long_template,
@@ -353,6 +367,7 @@ def calc_chunk_template_dynamics(
             )
 
     # vz.firing_overview(recov_template_trials.swapaxes(0,1), cmap='viridis')
+    # plt.show()
 
     mean_recov_template = recov_template.reshape(
             recov_template.shape[0],
@@ -384,7 +399,29 @@ def calc_chunk_template_dynamics(
             for this_recov_template in recov_template_trials.swapaxes(0,1)
             ]
 
-    return estim_weights, np.mean(all_template_similarity), all_template_similarity, recov_template_trials
+    # Also calculate reconstruction accuracy as R2
+    ss_total = np.sum((long_template - np.mean(long_template))**2)
+    ss_residual = np.sum((long_template - recov_template)**2)
+    r_squared = 1 - (ss_residual / ss_total)
+
+    # min_val = min(long_template.min(), recov_template.min())
+    # max_val = max(long_template.max(), recov_template.max())
+    # plt.scatter(
+    #         long_template.flatten(),
+    #         recov_template.flatten(),
+    #         alpha=0.1
+    #         )
+    # plt.plot(
+    #         [min_val, max_val],
+    #         [min_val, max_val],
+    #         color='r',
+    #         linestyle='--',
+    #         label='Unity Line'
+    #         )
+    # plt.show()
+    # 
+
+    return estim_weights, np.mean(all_template_similarity), all_template_similarity, recov_template_trials, r_squared
 
 # Chunk by single trials
 trial_chunks = [(i, i+1) for i in range(wanted_taste_firing.shape[0])]
@@ -392,6 +429,7 @@ trial_chunks = [(i, i+1) for i in range(wanted_taste_firing.shape[0])]
 chunk_dynamics = []
 var_similarities = []
 all_recov_templates = []
+all_r_squared = []
 for chunk_idx in range(len(trial_chunks)):
     chunk_data = wanted_taste_firing[:, :, :][
             trial_chunks[chunk_idx][0]:trial_chunks[chunk_idx][1]
@@ -401,7 +439,8 @@ for chunk_idx in range(len(trial_chunks)):
             estim_weights, 
             template_similarity, 
             all_similarities,
-            recov_template_trials
+            recov_template_trials,
+            r_squared
                 )= calc_chunk_template_dynamics(
             chunk_data,
             down_template
@@ -413,10 +452,22 @@ for chunk_idx in range(len(trial_chunks)):
         chunk_idx: np.var(all_similarities)
         })
     all_recov_templates.append(recov_template_trials)
+    all_r_squared.append(r_squared)
+
+r2_thresh = 0.2
+plt.plot(all_r_squared, '-o')
+plt.axhline(r2_thresh, color='r', linestyle='--')
+plt.show()
+
+wanted_r2_inds = np.array(all_r_squared) > r2_thresh
+
+vz.firing_overview(wanted_taste_firing.swapaxes(0,1)[..., firing_time_inds][:, wanted_r2_inds, :], cmap='viridis')
+plt.show()
 
 cat_recov_templates = np.concatenate(all_recov_templates, axis=1)
 
-vz.firing_overview(cat_recov_templates.swapaxes(0,1), cmap_lims='shared', cmap='viridis')
+vz.firing_overview(cat_recov_templates.swapaxes(0,1)[wanted_r2_inds],
+                   cmap_lims='shared', cmap='viridis')
 plt.show()
 
 vz.firing_overview(wanted_taste_firing.swapaxes(0,1)[..., firing_time_inds], cmap='viridis') 
@@ -458,9 +509,25 @@ for trial_idx in range(cat_recov_templates.shape[1]):
     mean_off_diag_abs_similarity = np.mean(np.abs(dot_similarity[off_diag_inds]))
     trial_mean_similarity.append(mean_off_diag_abs_similarity)
 
+# Plot orthogonality of recovered templates against r2
+plt.scatter(
+        all_r_squared,
+        trial_mean_similarity
+        )
+plt.xlabel('R² of Template Reconstruction')
+plt.ylabel('Mean Off-Diagonal Template Similarity')
+plt.title('Template Reconstruction R² vs Orthogonality')
+plt.show()
+
 fig, ax = vz.gen_square_subplots(cat_recov_templates.shape[1], figsize=(12,12))
 for i in range(cat_recov_templates.shape[1]):
     ax.flatten()[i].plot(cat_recov_templates[:, i, :].T)
+plt.show()
+
+# Plot only for trials with high r2
+fig, ax = vz.gen_square_subplots(np.sum(wanted_r2_inds), figsize=(12,12))
+for ax_ind, i in enumerate(np.where(wanted_r2_inds)[0]):
+    ax.flatten()[ax_ind].plot(cat_recov_templates[:, i, :].T)
 plt.show()
 
 # "Infer" states
@@ -491,6 +558,19 @@ for trial_idx in range(inferred_states.shape[0]):
     this_trial_transitions = [np.where(this_trial_states >= state)[0][0] for state in range(states)]
     transition_times.append(this_trial_transitions)
 
+# Plot transition time histograms
+transition_times = np.array(transition_times)
+transition_times_scaled = transition_times * 25
+bins = np.arange(0,2000,50)
+for state_idx in range(states):
+    plt.hist(transition_times_scaled[:, state_idx], 
+             bins=bins, alpha=0.5, label=f'State {state_idx}')
+plt.xlabel('Time Bins')
+plt.ylabel('Count')
+plt.title('Histogram of Transition Times per State')
+plt.legend()
+plt.show()
+
 plt.imshow(inferred_states, aspect='auto', interpolation='none')
 plt.title('Inferred States across Trials and Time')
 plt.xlabel('Time Bins')
@@ -509,7 +589,7 @@ plt.show()
 ##############################
 # Align neural activity to transition times 
 dat_to_align = wanted_taste_firing[..., firing_time_inds]
-window_radius = 25
+window_radius = 15
 
 # shape: states x units x trials x window*2
 aligned_data = np.empty((states-1, dat_to_align.shape[1], dat_to_align.shape[0], window_radius*2)) 
@@ -519,15 +599,17 @@ for trial_idx in range(dat_to_align.shape[0]):
     # Drop first state
     trial_changes = trial_changes[1:]
     for change_idx, this_change in enumerate(trial_changes):
-        pre_data = trial_firing[:, max(0, this_change - window_radius):this_change] 
-        post_data = trial_firing[:, this_change:min(trial_firing.shape[1], this_change + window_radius)]
+        pre_window = max(0, this_change - window_radius)
+        post_window = min(trial_firing.shape[1], this_change + window_radius)
+        pre_data = trial_firing[:, pre_window:this_change] 
+        post_data = trial_firing[:, this_change:post_window]
         aligned_data[change_idx, :, trial_idx, window_radius - pre_data.shape[1]:window_radius] = pre_data 
         aligned_data[change_idx, :, trial_idx, window_radius:window_radius+post_data.shape[1]] = post_data
 
 
 mean_transitions = np.mean(transition_times, axis=0).astype(int)[1:]
 unaligned_data = np.empty(aligned_data.shape)
-for state_idx in range(len(mean_change_bins)):
+for state_idx in range(len(mean_transitions)):
     pre_data = dat_to_align[:, :, max(0, mean_transitions[state_idx] - window_radius):mean_transitions[state_idx]]
     post_data = dat_to_align[:, :, mean_transitions[state_idx]:min(dat_to_align.shape[2], mean_transitions[state_idx] + window_radius)]
     unaligned_data[state_idx, :, :, window_radius - pre_data.shape[2]:window_radius] = pre_data.swapaxes(0,1)
@@ -536,6 +618,7 @@ for state_idx in range(len(mean_change_bins)):
 align_plot_dir = os.path.expanduser('~/Desktop/template_dynamics_aligned/plots/transition_aligned/')
 os.makedirs(align_plot_dir, exist_ok=True)
 
+num_units = aligned_data.shape[1]
 for this_unit in range(num_units):
     fig, ax = plt.subplots(2, states - 1, figsize=(15,5), sharey=True)
     for state_idx in range(states - 1):
@@ -551,10 +634,102 @@ for this_unit in range(num_units):
                 interpolation='none'
                 )
     plt.savefig(os.path.join(align_plot_dir, f'unit_{this_unit}_aligned.png'))
+    plt.close(fig)
 
+mean_aligned_data = np.mean(aligned_data, axis=2)
+mean_unaligned_data = np.mean(unaligned_data, axis=2)
 
+# fig,ax = vz.firing_overview(mean_aligned_data, cmap='viridis')
+# fig.suptitle('Mean Transition Aligned Data')
+# fig,ax = vz.firing_overview(mean_unaligned_data, cmap='viridis')
+# fig.suptitle('Mean Unaligned Data')
+# plt.show()
 
+fig, ax = plt.subplots(2, states - 1, figsize=(15,5), sharey=True)
+for state_idx in range(states - 1):
+    ax[0,state_idx].imshow(
+            zscore(mean_aligned_data[state_idx, :, :], axis=1),
+            aspect='auto',
+            interpolation='none'
+            )
+    ax[0,state_idx].set_title(f'State {state_idx+1} Aligned') 
+    ax[1,state_idx].imshow(
+            zscore(mean_unaligned_data[state_idx, :, :], axis=1),
+            aspect='auto',
+            interpolation='none'
+            )
+    ax[1,state_idx].set_title(f'State {state_idx+1} Unaligned') 
+    ax[0,state_idx].axvline(window_radius, color='r', linestyle='--')
+    ax[1,state_idx].axvline(window_radius, color='r', linestyle='--')
+plt.show()
 
+##############################
+# Repeat with alignment of projected templates
+aligned_recov_templates = np.empty((states-1, cat_recov_templates.shape[0], cat_recov_templates.shape[1], window_radius*2))
+for trial_idx in range(cat_recov_templates.shape[1]):
+    trial_changes = transition_times[trial_idx]
+    trial_templates = cat_recov_templates[:, trial_idx, :]
+    # Drop first state
+    trial_changes = trial_changes[1:]
+    for change_idx, this_change in enumerate(trial_changes):
+        pre_window = max(0, this_change - window_radius)
+        post_window = min(trial_templates.shape[1], this_change + window_radius)
+        pre_data = trial_templates[:, pre_window:this_change] 
+        post_data = trial_templates[:, this_change:post_window]
+        aligned_recov_templates[change_idx, :, trial_idx, window_radius - pre_data.shape[1]:window_radius] = pre_data 
+        aligned_recov_templates[change_idx, :, trial_idx, window_radius:window_radius+post_data.shape[1]] = post_data
+mean_aligned_recov_templates = np.mean(aligned_recov_templates, axis=2)
+
+unaligned_recov_templates = np.empty(aligned_recov_templates.shape)
+for state_idx in range(len(mean_transitions)):
+    pre_data = cat_recov_templates[:, :, max(0, mean_transitions[state_idx] - window_radius):mean_transitions[state_idx]]
+    post_data = cat_recov_templates[:, :, mean_transitions[state_idx]:min(cat_recov_templates.shape[2], mean_transitions[state_idx] + window_radius)]
+    unaligned_recov_templates[state_idx, :, :, window_radius - pre_data.shape[2]:window_radius] = pre_data
+    unaligned_recov_templates[state_idx, :, :, window_radius:window_radius+post_data.shape[2]] = post_data
+mean_unaligned_recov_templates = np.mean(unaligned_recov_templates, axis=2)
+
+plot_aligned_recov = aligned_recov_templates[:,:, wanted_r2_inds, :]
+plot_unaligned_recov = unaligned_recov_templates[:,:, wanted_r2_inds, :]
+plot_mean_aligned_recov = plot_aligned_recov.mean(axis=2)
+plot_mean_unaligned_recov = plot_unaligned_recov.mean(axis=2)
+
+fig, ax = plt.subplots(2, states - 1, figsize=(15,5), sharey=True)
+for state_idx in range(states - 1):
+    ax[0,state_idx].imshow(
+            zscore(plot_mean_aligned_recov[state_idx, :, :], axis=1),
+            aspect='auto',
+            interpolation='none'
+            )
+    ax[0,state_idx].set_title(f'State {state_idx+1} Aligned Recovered Templates') 
+    ax[1,state_idx].imshow(
+            zscore(plot_mean_unaligned_recov[state_idx, :, :], axis=1),
+            aspect='auto',
+            interpolation='none'
+            )
+    ax[1,state_idx].set_title(f'State {state_idx+1} Unaligned Recovered Templates') 
+    ax[0,state_idx].axvline(window_radius, color='r', linestyle='--')
+    ax[1,state_idx].axvline(window_radius, color='r', linestyle='--')
+plt.show()
+
+# Plot overlay of aligned and unaligned recovered templates for each state
+fig, ax = plt.subplots(states - 1,1, figsize=(8,12))
+for state_idx in range(states - 1):
+    ax[state_idx].plot(
+            plot_mean_aligned_recov[state_idx, :, :].T,
+            color='b',
+            alpha=0.3,
+            label='Aligned' if state_idx==0 else ""
+            )
+    ax[state_idx].plot(
+            plot_mean_unaligned_recov[state_idx, :, :].T,
+            color='g',
+            alpha=0.3,
+            label='Unaligned' if state_idx==0 else ""
+            )
+    ax[state_idx].set_title(f'State {state_idx+1} Recovered Templates')
+    if state_idx==0:
+        ax[state_idx].legend()
+plt.show()
 
 
 
