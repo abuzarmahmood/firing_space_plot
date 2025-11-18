@@ -545,11 +545,15 @@ for state_idx in range(down_template.shape[0]):
 norm_pos_neg_template = pos_neg_template / norm(pos_neg_template, axis=1)[:, np.newaxis]
 
 template_pc_similarity = np.dot(pcs, norm_pos_neg_template.T)
+scaled_template_pc_similarity = template_pc_similarity * explained_variance[:, np.newaxis]
 
-fig, ax = plt.subplots(1,2, figsize=(10,6), sharey=True)
-ax[0].matshow(template_pc_similarity, cmap='viridis')
+fig, ax = plt.subplots(1,5, figsize=(10,6)) 
+ax[0].matshow(np.abs(template_pc_similarity), cmap='viridis')
 plt.colorbar(ax=ax[0], label='Dot Product Similarity')
 ax[1].imshow(explained_variance[:, np.newaxis], aspect='auto', cmap='viridis')
+ax[2].imshow(pcs, aspect='auto', cmap='viridis', interpolation='none')
+ax[3].imshow(norm_pos_neg_template, aspect='auto', cmap='viridis', interpolation='none')
+ax[4].matshow(np.abs(scaled_template_pc_similarity), cmap='viridis')
 fig.suptitle('Dot Product Similarity between PCs and Template')
 plt.show()
 
