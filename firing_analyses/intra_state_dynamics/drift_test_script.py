@@ -49,6 +49,9 @@ if not load_artifacts_bool:
     data_dir = '/media/storage/NM_resorted_data/laser_2500ms/NM51_2500ms_161030_130155'
 
     this_data = ephys_data.ephys_data(data_dir)
+    this_data.firing_rate_params = this_data.default_firing_params
+    this_data.firing_rate_params['window_size'] = 250
+    this_data.firing_rate_params['step_size'] = 10
     this_data.get_firing_rates()
     this_data.separate_laser_firing()
 
@@ -73,6 +76,9 @@ if not load_artifacts_bool:
     for this_path in tqdm(all_paths): 
         try:
             dat = ephys_data.ephys_data(this_path)
+            dat.firing_rate_params = dat.default_firing_params
+            dat.firing_rate_params['window_size'] = 250
+            dat.firing_rate_params['step_size'] = 10
             dat.get_spikes()
             dat.get_firing_rates()
             loaded_paths.append(this_path)
@@ -94,13 +100,14 @@ if not load_artifacts_bool:
 
     # Save
     spike_time_lists = [spike_time_converter(spikes).spike_times for spikes in spike_list]
+    firing_time_vector = this_data.time_vector
 
     np.savez(
             os.path.join(artifacts_dir, 'loaded_firing_data.npz'),
             paths = np.array(loaded_paths),
             spikes = np.array(spike_time_lists, dtype=object), 
             firing_rates = np.array(firing_rate_list, dtype=object),
-            firing_time_vector = this_data.time_vector
+            firing_time_vector = firing_time_vector 
             )
 
 else:
@@ -117,6 +124,12 @@ else:
 
 time_lims = [-500, 2000]
 firing_time_inds = np.where((firing_time_vector >= time_lims[0]) & (firing_time_vector <= time_lims[1]))[0]
+
+# Plot all datasets' mean firing rates
+# for this_firing in firing_rate_list:
+#     plot_firing = this_firing[..., firing_time_inds]
+#     vz.firing_overview(np.concatenate(plot_firing, axis=0).swapaxes(0,1))
+# plt.show()
 
 #
 # for i, this_firing in enumerate(firing_rate_list):
@@ -151,7 +164,7 @@ trial_breaks = [0,3,10,15,25]
 trial_chunks = [(trial_breaks[i], trial_breaks[i+1]) for i in range(len(trial_breaks)-1)]
 
 for i in trial_chunks:
-    this_trials = wanted_taste_firing[trial_breaks[i]:trial_breaks[i+1]]
+    this_trials = wanted_taste_firing[i[0]:i[1], :, :][..., firing_time_inds]
     vz.firing_overview(this_trials.swapaxes(0,1))
 plt.show()
 
@@ -399,10 +412,13 @@ def calc_chunk_template_dynamics(
             for this_recov_template in recov_template_trials.swapaxes(0,1)
             ]
 
-    # Also calculate reconstruction accuracy as R2
+    # Also calculate reconstruction accuracy as R2 for the firing
     ss_total = np.sum((long_template - np.mean(long_template))**2)
     ss_residual = np.sum((long_template - recov_template)**2)
     r_squared = 1 - (ss_residual / ss_total)
+    # ss_total = np.sum((long_chunk - np.mean(long_chunk))**2)
+    # ss_residual = np.sum((long_chunk - projected_firing)**2)
+    # r_squared = 1 - (ss_residual / ss_total)
 
     # min_val = min(long_template.min(), recov_template.min())
     # max_val = max(long_template.max(), recov_template.max())
@@ -421,7 +437,7 @@ def calc_chunk_template_dynamics(
     # plt.show()
     # 
 
-    return estim_weights, np.mean(all_template_similarity), all_template_similarity, recov_template_trials, r_squared
+    return estim_weights, np.mean(all_template_similarity), all_template_similarity, recov_template_trials, projected_firing, r_squared
 
 # Chunk by single trials
 trial_chunks = [(i, i+1) for i in range(wanted_taste_firing.shape[0])]
@@ -430,6 +446,7 @@ chunk_dynamics = []
 var_similarities = []
 all_recov_templates = []
 all_r_squared = []
+all_estim_weights = []
 for chunk_idx in range(len(trial_chunks)):
     chunk_data = wanted_taste_firing[:, :, :][
             trial_chunks[chunk_idx][0]:trial_chunks[chunk_idx][1]
@@ -440,6 +457,7 @@ for chunk_idx in range(len(trial_chunks)):
             template_similarity, 
             all_similarities,
             recov_template_trials,
+            projected_firing,
             r_squared
                 )= calc_chunk_template_dynamics(
             chunk_data,
@@ -453,8 +471,16 @@ for chunk_idx in range(len(trial_chunks)):
         })
     all_recov_templates.append(recov_template_trials)
     all_r_squared.append(r_squared)
+    all_estim_weights.append(estim_weights)
 
-r2_thresh = 0.2
+# Plot all estim weights
+fig, ax = vz.gen_square_subplots(len(all_estim_weights), figsize=(12,12))
+for i in range(len(all_estim_weights)):
+    ax.flatten()[i].imshow(all_estim_weights[i], aspect='auto', interpolation='none')
+    ax.flatten()[i].set_title(f'Chunk {i} Estim Weights')
+plt.show()
+
+r2_thresh = 0.1
 plt.plot(all_r_squared, '-o')
 plt.axhline(r2_thresh, color='r', linestyle='--')
 plt.show()
@@ -465,6 +491,113 @@ vz.firing_overview(wanted_taste_firing.swapaxes(0,1)[..., firing_time_inds][:, w
 plt.show()
 
 cat_recov_templates = np.concatenate(all_recov_templates, axis=1)
+
+##############################
+# See if dynamics can be recovered from white noise
+noise_data = np.random.rand(
+        1,
+        wanted_taste_firing.shape[1],
+        len(firing_time_inds)
+        )
+# Smooth noise data with same params as firing rates
+kernel = np.ones(this_data.firing_rate_params['window_size']) / this_data.firing_rate_params['window_size']
+noise_data = np.apply_along_axis(
+        lambda m: np.convolve(m, kernel, mode='same'),
+        axis=2,
+        arr=noise_data
+        )
+
+(
+        estim_weights, 
+        template_similarity, 
+        all_similarities,
+        recov_template_trials,
+        projected_firing,
+        r_squared
+            )= calc_chunk_template_dynamics(
+        noise_data,
+        down_template
+        )
+
+plt.matshow(estim_weights, cmap='viridis')
+plt.show()
+
+fig, ax = plt.subplots(2,1, figsize=(10,6), sharex=True)
+ax[0].imshow(noise_data[0], aspect='auto', interpolation='none')
+ax[0].set_title('White Noise Data')
+ax[1].imshow(recov_template_trials[:,0], aspect='auto', interpolation='none')
+ax[1].set_title('Recovered Template from White Noise Data')
+fig.suptitle(f'R² of Template Reconstruction from White Noise: {r_squared:.4f}')
+plt.show()
+
+
+
+##############################
+# Perform pca on recovered templates
+from sklearn.decomposition import PCA
+
+recov_templates_long = cat_recov_templates.reshape(
+        cat_recov_templates.shape[0],
+        -1
+        ).T  # Shape: (num_trials * num_time_bins, num_states)
+vz.imshow(recov_templates_long.T) 
+# plt.show()
+
+pca = PCA(n_components=3)
+pca.fit(recov_templates_long)
+pca_scores = pca.transform(recov_templates_long)
+print("Explained Variance Ratios of PCA Components:")
+pp(pca.explained_variance_ratio_)
+fig, ax = plt.subplots(3,1, figsize=(8,10))
+for i in range(3):
+    ax[i].plot(pca_scores[:, i])
+    ax[i].set_title(f'PCA Component {i+1} Scores')
+plt.show()
+
+pca_scores_trials = pca_scores.reshape(
+        cat_recov_templates.shape[1],
+        -1,
+        3
+        )  # Shape: (num_trials, num_time_bins, num_components)
+pca_scores_trials = np.moveaxis(pca_scores_trials, -1, 0)  # Shape: (num_components, num_trials, num_time_bins)
+
+vz.firing_overview(pca_scores_trials.swapaxes(0,1), cmap='viridis')
+plt.show()
+
+# Plot all trajectories in 3d space
+from mpl_toolkits.mplot3d import Axes3D
+
+fig = plt.figure(figsize=(10,8))
+ax = fig.add_subplot(111, projection='3d')
+for trial_idx in range(pca_scores_trials.shape[1]):
+    ax.plot(
+            pca_scores_trials[0, trial_idx, :],
+            pca_scores_trials[1, trial_idx, :],
+            pca_scores_trials[2, trial_idx, :],
+            alpha=0.5
+            )
+ax.set_xlabel('PCA 1')
+ax.set_ylabel('PCA 2')
+ax.set_zlabel('PCA 3')
+plt.title('Neural Trajectories in PCA Space of Recovered Templates')
+plt.show()
+
+fig = plt.figure(figsize=(10,8))
+ax = fig.add_subplot(111, projection='3d')
+for trial_idx in range(pca_scores_trials.shape[1]):
+    ax.plot(
+            cat_recov_templates[0, trial_idx, :],
+            cat_recov_templates[1, trial_idx, :],
+            cat_recov_templates[2, trial_idx, :],
+            alpha=0.5
+            )
+plt.show()
+
+vz.firing_overview(cat_recov_templates.swapaxes(0,1), cmap='viridis', cmap_lims='shared')
+plt.show()
+
+
+##############################
 
 vz.firing_overview(cat_recov_templates.swapaxes(0,1)[wanted_r2_inds],
                    cmap_lims='shared', cmap='viridis')
