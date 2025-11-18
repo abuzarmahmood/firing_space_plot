@@ -519,6 +519,40 @@ noise_data = np.apply_along_axis(
         down_template
         )
 
+# Calculate prinicpal components of data
+from sklearn.decomposition import PCA
+pca = PCA()
+pca.fit(noise_data[0])
+explained_variance = pca.explained_variance_ratio_
+pcs = pca.components_
+
+plt.imshow(pcs, aspect='auto', interpolation='none')
+plt.title('Principal Components of White Noise Data')
+plt.show()
+
+# from sklearn.metrics.pairwise import cosine_similarity
+
+# norm_template = down_template / norm(down_template, axis=1)[:, np.newaxis]
+
+# Have template such that the bumps are positive and everything else is negative
+template_sums = down_template.sum(axis=1)
+zero_lens = np.sum(down_template == 0,axis=1)
+neg_vals = template_sums / zero_lens
+pos_neg_template = down_template.copy()
+for state_idx in range(down_template.shape[0]):
+    pos_neg_template[state_idx, down_template[state_idx,:] == 0] = -neg_vals[state_idx]
+
+norm_pos_neg_template = pos_neg_template / norm(pos_neg_template, axis=1)[:, np.newaxis]
+
+template_pc_similarity = np.dot(pcs, norm_pos_neg_template.T)
+
+fig, ax = plt.subplots(1,2, figsize=(10,6), sharey=True)
+ax[0].matshow(template_pc_similarity, cmap='viridis')
+plt.colorbar(ax=ax[0], label='Dot Product Similarity')
+ax[1].imshow(explained_variance[:, np.newaxis], aspect='auto', cmap='viridis')
+fig.suptitle('Dot Product Similarity between PCs and Template')
+plt.show()
+
 plt.matshow(estim_weights, cmap='viridis')
 plt.show()
 
