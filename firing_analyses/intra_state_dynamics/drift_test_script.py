@@ -2,7 +2,7 @@ from blech_clust.utils.ephys_data import ephys_data
 from blech_clust.utils.ephys_data import visualize as vz
 import matplotlib.pyplot as plt
 import numpy as np
-from tqdm import tqdm
+from tqdm import tqdm, trange
 from numpy.linalg import norm
 from pprint import pprint as pp
 from itertools import combinations, product
@@ -39,6 +39,40 @@ class spike_time_converter:
             spike_array[unit_idx, unit_spikes] = True
         return spike_array
 
+def calc_chunk_template_dynamics2(
+        chunk_data,
+        template,
+        ):
+    """Calculate the dynamics of all units in a chunk with respect to a template.
+    Args:
+        chunk_data (np.ndarray): Shape (num_trials, num_units, num_time_bins)
+        template (np.ndarray): Shape (num_states, num_time_bins)
+    Returns:
+        estim_weights (np.ndarray): Shape (num_units, num_states)
+        projected_firing (np.ndarray): Shape (num_trials, num_units, num_time_bins)
+        template_similarity (float): Correlation between original and recovered template.
+    """
+    long_chunk = np.concatenate(chunk_data, axis=1)
+    long_template = np.tile(template, (1, chunk_data.shape[0]))
+    # Make sure template is 0-mean and normed
+    long_template -= long_template.mean(axis=-1)[:,None]
+    long_template /= norm(long_template, axis=-1)[:,None]
+    # Make sure long_chunk is normed
+    long_chunk /= norm(long_chunk, axis=-1)[:,None]
+    similarity = long_chunk.dot(long_template.T)
+
+    abs_sim = np.abs(similarity)
+    max_abs_sim_ind = np.argmax(abs_sim,axis=0)
+    max_abs_sim = np.max(abs_sim, axis=0)
+
+    # Recreate long_template from projection
+    recov_template = similarity.T.dot(long_chunk) 
+    recov_template_normed = recov_template / norm(recov_template,axis=1)[:,None] 
+
+    template_self_sim = recov_template_normed.dot(long_template.T) 
+    recov_similarity = np.diag(template_self_sim)
+
+    return max_abs_sim, similarity, recov_similarity, recov_template_normed
 
 
 load_artifacts_bool = True
@@ -124,6 +158,71 @@ else:
 
 time_lims = [-500, 2000]
 firing_time_inds = np.where((firing_time_vector >= time_lims[0]) & (firing_time_vector <= time_lims[1]))[0]
+
+plot_dir = os.path.expanduser('~/Desktop/template_dynamics/population_dynamics_plots')
+os.makedirs(plot_dir, exist_ok=True)
+
+flat_firing = [x for sublist in firing_rate_list for x in sublist]
+
+max_sims_list = []
+for chunk_idx in trange(len(flat_firing)):
+    chunk_data = flat_firing[chunk_idx][:, :, firing_time_inds]
+    
+    max_sims, sim_mat, recov_sim, recov_template = calc_chunk_template_dynamics2(chunk_data, template)
+    max_sims_list.append(max_sims)
+
+    max_abs_sim_inds = np.argmax(np.abs(sim_mat),axis=0)
+    mean_sims = np.abs(sim_mat).mean(axis=0)
+
+    fig, ax = vz.firing_overview(chunk_data.swapaxes(0,1), figsize=(20,12))
+    for ax_ind, this_ax in enumerate(ax.flatten()):
+        if not ax_ind < len(sim_mat):
+            continue
+        this_ax.set_title(np.round(np.abs(sim_mat[ax_ind]),2))
+    fig.suptitle(f"Reconstruction similarity: {np.round(recov_sim,2)}")
+    fig.savefig(os.path.join(plot_dir, f'chunk_{chunk_idx}_firing_rates.png'))
+    plt.close(fig)
+
+    fig,ax = plt.subplots(2,1, sharex=True)
+    ax[0].imshow(np.tile(template, (1, len(chunk_data))), aspect='auto', interpolation='nearest')
+    ax[1].imshow(recov_template, aspect='auto', interpolation='nearest')
+    fig.suptitle(f"Reconstruction similarity: {np.round(recov_sim,2)}")
+    fig.savefig(os.path.join(plot_dir, f'chunk_{chunk_idx}_template_reconstruction.png'))
+    plt.close(fig)
+
+# Plot session with max and mean reconstruction similarity
+norm_max_sims = [norm(x) for x in max_sims_list]
+
+plt.hist(norm_max_sims, bins=30)
+plt.xlabel('Norm of Max Similarities')
+plt.ylabel('Count')
+plt.title('Distribution of Norms of Max Similarities Across Sessions')
+plt.show()
+
+max_session_ind = np.nanargmax(norm_max_sims)
+min_session_ind = np.nanargmin(norm_max_sims)
+
+for session_ind in [max_session_ind, min_session_ind]:
+    chunk_data = flat_firing[session_ind][:, :, firing_time_inds]
+    
+    max_sims, sim_mat, recov_sim, recov_template = calc_chunk_template_dynamics2(chunk_data, template)
+
+    max_abs_sim_inds = np.argmax(np.abs(sim_mat),axis=0)
+    mean_sims = np.abs(sim_mat).mean(axis=0)
+
+    fig, ax = vz.firing_overview(chunk_data.swapaxes(0,1), figsize=(20,12))
+    for ax_ind, this_ax in enumerate(ax.flatten()):
+        if not ax_ind < len(sim_mat):
+            continue
+        this_ax.set_title(np.round(np.abs(sim_mat[ax_ind]),2))
+    fig.suptitle(f"Reconstruction similarity: {np.round(recov_sim,2)}")
+
+    fig,ax = plt.subplots(2,1, sharex=True)
+    ax[0].imshow(np.tile(template, (1, len(chunk_data))), aspect='auto', interpolation='nearest')
+    ax[1].imshow(recov_template, aspect='auto', interpolation='nearest')
+    fig.suptitle(f"Reconstruction similarity: {np.round(recov_sim,2)}")
+plt.show()
+
 
 # Plot all datasets' mean firing rates
 # for this_firing in firing_rate_list:
@@ -328,40 +427,6 @@ plt.show()
 # Loop over all units and all chunks and remove data incrementally based on template similarity
 # Check population similarity after each removal, not just single unit
 
-def calc_chunk_template_dynamics2(
-        chunk_data,
-        template,
-        ):
-    """Calculate the dynamics of all units in a chunk with respect to a template.
-    Args:
-        chunk_data (np.ndarray): Shape (num_trials, num_units, num_time_bins)
-        template (np.ndarray): Shape (num_states, num_time_bins)
-    Returns:
-        estim_weights (np.ndarray): Shape (num_units, num_states)
-        projected_firing (np.ndarray): Shape (num_trials, num_units, num_time_bins)
-        template_similarity (float): Correlation between original and recovered template.
-    """
-    long_chunk = np.concatenate(chunk_data, axis=1)
-    long_template = np.tile(template, (1, chunk_data.shape[0]))
-    # Make sure template is 0-mean and normed
-    long_template -= long_template.mean(axis=-1)[:,None]
-    long_template /= norm(long_template, axis=-1)[:,None]
-    # Make sure long_chunk is normed
-    long_chunk /= norm(long_chunk, axis=-1)[:,None]
-    similarity = long_chunk.dot(long_template.T)
-
-    abs_sim = np.abs(similarity)
-    max_abs_sim_ind = np.argmax(abs_sim,axis=0)
-    max_abs_sim = np.max(abs_sim, axis=0)
-
-    # Recreate long_template from projection
-    recov_template = similarity.T.dot(long_chunk) 
-    recov_template_normed = recov_template / norm(recov_template,axis=1)[:,None] 
-
-    template_self_sim = recov_template_normed.dot(long_template.T) 
-    recov_similarity = np.diag(template_self_sim)
-
-    return max_abs_sim, similarity, recov_similarity, recov_template_normed
 
 for chunk_idx in range(len(trial_chunks)):
     chunk_data = wanted_taste_firing[:, :, firing_time_inds][
@@ -371,6 +436,12 @@ for chunk_idx in range(len(trial_chunks)):
     # vz.firing_overview(chunk_data.swapaxes(0,1));plt.show()
 
     max_sims, sim_mat, recov_sim, recov_template = calc_chunk_template_dynamics2(chunk_data, template)
+
+    # # If sim_mat has any nans, drop those units
+    # nan_inds = np.unique(np.where(np.isnan(sim_mat))[0])
+    #
+    # sim_mat = np.delete(sim_mat, nan_inds, axis=0)
+
     max_abs_sim_inds = np.argmax(np.abs(sim_mat),axis=0)
     mean_sims = np.abs(sim_mat).mean(axis=0)
 
@@ -1130,8 +1201,6 @@ num_chunks = len(orig_trial_chunks)
 orig_trial_inds = np.arange(orig_data.shape[0])
 orig_nrn_inds = np.arange(orig_data.shape[1])
 
-plot_dir = os.path.expanduser('~/Desktop/template_dynamics_removals/')
-os.makedirs(plot_dir, exist_ok=True)
 
 # plt.show()
 
