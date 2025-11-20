@@ -20,6 +20,7 @@ from glob import glob
 from scipy.stats import zscore
 import pingouin as pg
 from statsmodels.tsa.stattools import adfuller
+import pandas as pd
 
 class NumpyTypeEncoder(json.JSONEncoder):
         def default(self, obj):
@@ -232,11 +233,57 @@ for chunk_idx in trange(len(flat_firing)):
 # Relationship between mean firing rate, response stability, and max dynamicity
 mean_firing_rate = [x.mean(axis=None) for x in unit_firing_list]
 max_sim_list = [np.max(x) for x in unit_sim_list]
-trial_pca = [PCA(1).fit_transform(x) for x in unit_firing_list]
+# trial_pca = [PCA(1).fit_transform(x) for x in unit_firing_list]
+# stable_list = [adfuller(x.flatten()+(np.random.randn(len(x))*1e-3))[1] for x in trial_pca]
 
-stable_list = [adfuller(x.flatten()+(np.random.randn(len(x))*1e-3))[1] for x in trial_pca]
+time_bins = epoch_lims // 25
 
-fig, ax = plt.subplots(1,3)
+def bin_firing(
+        data_array,
+        time_bins,
+        ):
+    binned_data = np.stack([
+            data_array[:, time_bin[0]:time_bin[1]].mean(axis=1)
+            for time_bin in time_bins
+            ])
+    return binned_data.T  # Shape: (num_trials, num_bins)
+
+binned_unit_firing = [bin_firing(x, time_bins) for x in unit_firing_list]
+
+# Covert to pd.DataFrame for pingouin
+n_trial_bins = 4
+binned_firing_frame_list = []
+for binned_firing in binned_unit_firing:
+    n_trials, n_bins = binned_firing.shape
+    df_dict = {
+            'trial': np.repeat(np.arange(n_trials), n_bins),
+            'time_bin': np.tile(np.arange(n_bins), n_trials),
+            'firing_rate': binned_firing.flatten()
+            }
+    binned_firing_df = pd.DataFrame(df_dict)
+    # Cut trials
+    binned_firing_df['trial_bin'] = pd.cut(binned_firing_df.trial, n_trial_bins, labels=np.arange(n_trial_bins)) 
+    binned_firing_frame_list.append(binned_firing_df)
+
+# Do 2 way anova
+anova_list = [
+        pg.anova(
+            data = this_df,
+            dv = 'firing_rate',
+            between = ['trial_bin', 'time_bin'],
+            ) for this_df in tqdm(binned_firing_frame_list)
+        ]
+
+stable_list = []
+for x in anova_list:
+    try:
+        inv_p = 1-x['p-unc'][x['Source'] == 'trial_bin'].values[0] 
+        stable_list.append(inv_p)
+    except:
+        stable_list.append(np.nan)
+
+
+fig, ax = plt.subplots(1,3, figsize=(18,6))
 sc = ax[0].scatter(mean_firing_rate, max_sim_list, c=stable_list, cmap='viridis', norm=colors.LogNorm(),
                    alpha = 0.3)
 ax[0].set_xlabel('Mean Firing Rate')
@@ -248,6 +295,39 @@ ax[2].scatter(stable_list, max_sim_list, c=mean_firing_rate, cmap='cividis', alp
 ax[2].set_xlabel('ADF p-value (Stability) - Low p-values indicate stability')
 ax[2].set_ylabel('Max Similarity to Template')
 plt.show()
+
+# Make 3D plot
+from mpl_toolkits.mplot3d import Axes3D
+fig = plt.figure(figsize=(10,8))
+ax = fig.add_subplot(111, projection='3d')
+p = ax.scatter(
+        mean_firing_rate,
+        stable_list,
+        max_sim_list,
+        c=max_sim_list,
+        cmap='viridis',
+        alpha=0.5
+        )
+ax.set_xlabel('Mean Firing Rate')
+ax.set_ylabel('ADF p-value (Stability)')
+ax.set_zlabel('Max Similarity to Template')
+fig.colorbar(p, ax=ax, label='Max Similarity to Template')
+plt.show()
+
+# Plot units sorted by stability
+stability_sort_inds = np.argsort(stable_list)
+# Grab only top and bottom
+n_top = 10
+stability_sort_inds = [*stability_sort_inds[:n_top], *stability_sort_inds[-n_top:]]
+sorted_firing = [unit_firing_list[ind] for ind in stability_sort_inds]
+sorted_stability = [stable_list[ind] for ind in stability_sort_inds]
+fig,ax = vz.gen_square_subplots(len(sorted_firing), figsize=(12,12))
+for this_dat, this_ax in zip(sorted_firing, ax.flatten()):
+    this_ax.imshow(this_dat, aspect='auto', interpolation='None', cmap='jet')
+    this_ax.set_title(f"{sorted_stability.pop(0):.2e}")
+plt.show()
+
+##############################
 
 # Plot units sorted by their similarity for a template
 unit_plot_dir = os.path.expanduser('~/Desktop/template_dynamics/population_dynamics_plots/unit_sim_sorted')
