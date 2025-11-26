@@ -54,7 +54,8 @@ old_unit_frame[table_cols] = old_unit_frame[table_cols].astype(int)
 # New unit descriptors 
 ############################################################
 
-new_dir_file_path = '/media/storage/for_transfer/bla_gc/data_dir_list.txt'
+# new_dir_file_path = '/media/storage/for_transfer/bla_gc/data_dir_list.txt'
+new_dir_file_path = '/media/storage/abu_resorted/bla_gc/data_dir_list.txt'
 new_dir_list = [x.strip() for x in open(new_dir_file_path,'r').readlines()]
 
 # Get unit descriptor table for each session
@@ -105,13 +106,15 @@ merged_units = pd.merge(
 
 artifacts_dir = '/media/bigdata/firing_space_plot/firing_analyses/poisson_glm/artifacts'
 merged_units_path = os.path.join(artifacts_dir,'single_neuron_match.csv')
-if os.path.exists(merged_units_path):
-    print(f'Loading merged units')
-    merged_units = pd.read_csv(merged_units_path)
-else:
-    print(f'Saving merged units')
-    merged_units.to_csv(merged_units_path)
-
+print(f'Saving merged units to {merged_units_path}')
+merged_units.to_csv(merged_units_path)
+# if os.path.exists(merged_units_path):
+#     print(f'Loading merged units')
+#     merged_units = pd.read_csv(merged_units_path)
+# else:
+#     print(f'Saving merged units')
+#     merged_units.to_csv(merged_units_path)
+#
 # Plot scatter plot of old and new waveform counts
 import matplotlib.pyplot as plt
 import seaborn as sns
@@ -154,3 +157,15 @@ for perc, val in zip(percs, percentiles):
 ax[1].set_xlabel('New - Old Waveform Count\n(Positive = More New)')
 plt.savefig(os.path.join(artifacts_dir,'old_vs_new_waveform_counts.png'))
 plt.close()
+
+##############################
+# Write out cleaned frame where waveform counts are within some % of eachother
+sim_frac = 0.5
+merged_units['similar'] = np.logical_and(
+        merged_units['waveform_count_old']* (1-sim_frac) < merged_units['waveform_count_new'], 
+        merged_units['waveform_count_old']* (1+sim_frac) > merged_units['waveform_count_new']
+        )
+similar_units = merged_units.loc[merged_units['similar'] == True]
+similar_units_path = os.path.join(artifacts_dir,'single_neuron_match_similar.csv')
+print(f'Saving similar units to {similar_units_path}')
+similar_units.to_csv(similar_units_path)
