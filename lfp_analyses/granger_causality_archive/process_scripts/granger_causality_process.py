@@ -25,17 +25,17 @@ import tables
 import os
 import numpy as np
 import sys
-ephys_data_dir = '/media/bigdata/firing_space_plot/ephys_data'
+# ephys_data_dir = '/media/bigdata/firing_space_plot/ephys_data'
 granger_causality_path = \
     '/media/bigdata/firing_space_plot/lfp_analyses/granger_causality/process_scripts'
-sys.path.append(ephys_data_dir)
+# sys.path.append(ephys_data_dir)
 sys.path.append(granger_causality_path)
 import granger_utils as gu
-from ephys_data import ephys_data
+# from ephys_data import ephys_data
 
 # Log all stdout and stderr to a log file in results folder
-sys.stdout = open(os.path.join(granger_causality_path, 'stdout.txt'), 'w')
-sys.stderr = open(os.path.join(granger_causality_path, 'stderr.txt'), 'w')
+# sys.stdout = open(os.path.join(granger_causality_path, 'stdout.txt'), 'w')
+# sys.stderr = open(os.path.join(granger_causality_path, 'stderr.txt'), 'w')
 
 ############################################################
 # Load Data

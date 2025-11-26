@@ -23,6 +23,7 @@ from umap import UMAP
 from matplotlib.collections import PatchCollection
 from matplotlib.patches import Rectangle
 import matplotlib
+from pprint import pprint as pp
 
 import pandas as pd
 import seaborn as sns
@@ -224,10 +225,15 @@ pca_mean_mask = [x - x.mean(axis=-1)[:,None] for x in pca_mean_mask]
 pca_mean_mask = [x / x.std(axis=-1)[:,None] for x in pca_mean_mask]
 
 mean_pca_mask = np.stack(pca_mean_mask).mean(axis=0)
-np.save(
-        os.path.join(artifact_dir, 'mean_pca_mask.npy'),
-        mean_pca_mask
-        )
+if 'mean_pca_mask' in locals().keys():
+    np.save(
+            os.path.join(artifact_dir, 'mean_pca_mask.npy'),
+            mean_pca_mask
+            )
+else:
+    mean_pca_mask = np.load(
+            os.path.join(artifact_dir, 'mean_pca_mask.npy'),
+            )
 
 tau_samples = np.load(
         os.path.join(artifact_dir, 'pca_mask_changepoints_tau.npy'),
