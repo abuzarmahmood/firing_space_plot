@@ -86,7 +86,14 @@ def calc_chunk_template_dynamics2(
 
 
 load_artifacts_bool = True
-artifacts_dir = '/media/bigdata/firing_space_plot/firing_analyses/intra_state_dynamics/artifacts'
+base_dir = '/media/bigdata/firing_space_plot/firing_analyses/intra_state_dynamics/template_regression'
+artifacts_dir = os.path.join(base_dir, 'artifacts')
+plot_dir = os.path.join(base_dir, 'plots', 'population_dynamics_plots')
+if not os.path.exists(plot_dir):
+    os.makedirs(plot_dir, exist_ok=True)
+if not os.path.exists(artifacts_dir):
+    os.makedirs(artifacts_dir, exist_ok=True)
+# artifacts_dir = '/media/bigdata/firing_space_plot/firing_analyses/intra_state_dynamics/artifacts'
 # artifacts_dir = '/home/abuzarmahmood/projects/firing_space_plot/firing_analyses/intra_state_dynamics/artifacts'
 
 if not load_artifacts_bool:
@@ -165,12 +172,45 @@ else:
     firing_rate_list = loaded_artifacts['firing_rates'].tolist()
     firing_time_vector = loaded_artifacts['firing_time_vector']
 
+##############################
+
+epoch_lims = [
+        [-500, 0],
+        [0,200],
+        [200,850],
+        [850,1450],
+        [1450,2000]
+        ]
+epoch_lims = np.array(epoch_lims)
+epoch_lims -= epoch_lims.min()
+states = len(epoch_lims)
+epoch_lens = np.array([np.abs(np.diff(x)[0]) for x in epoch_lims])
+basis_funcs = np.stack([np.zeros(epoch_lims.max()) for i in range(states)] )
+for this_func, this_lims in zip(basis_funcs, epoch_lims):
+    this_func[this_lims[0]:this_lims[1]] = 1
+basis_funcs = basis_funcs / norm(basis_funcs,axis=-1)[:,np.newaxis] 
+vz.imshow(basis_funcs);plt.show()
+
+assert np.abs(np.diff(time_lims)) == len(basis_funcs.T)
+
+
+# Check orthonormality of basis functions
+dot_product = basis_funcs.dot(basis_funcs.T)
+print("Dot Product Matrix of Basis Functions (Should be close to Identity):")
+pp(dot_product)
+
+##############################
+
 
 time_lims = [-500, 2000]
 firing_time_inds = np.where((firing_time_vector >= time_lims[0]) & (firing_time_vector <= time_lims[1]))[0]
 
-plot_dir = os.path.expanduser('~/Desktop/template_dynamics/population_dynamics_plots')
-os.makedirs(plot_dir, exist_ok=True)
+# plot_dir = os.path.expanduser('~/Desktop/template_dynamics/population_dynamics_plots')
+# plot_dir = os.path.expanduser('~/Desktop/population_dynamics_plots')
+# os.makedirs(plot_dir, exist_ok=True)
+
+down_inds = np.linspace(0, basis_funcs.shape[1]-1, len(firing_time_inds)).astype(int)
+template = basis_funcs[:, down_inds]
 
 flat_firing = [x for sublist in firing_rate_list for x in sublist]
 session_nums = np.concatenate([np.ones(len(x))*i for i, x in enumerate(firing_rate_list)])
@@ -495,39 +535,11 @@ def estimate_weights(firing, template):
 
 ##############################
 
-epoch_lims = [
-        [-500, 0],
-        [0,200],
-        [200,850],
-        [850,1450],
-        [1450,2000]
-        ]
-epoch_lims = np.array(epoch_lims)
-epoch_lims -= epoch_lims.min()
-states = len(epoch_lims)
-epoch_lens = np.array([np.abs(np.diff(x)[0]) for x in epoch_lims])
-basis_funcs = np.stack([np.zeros(epoch_lims.max()) for i in range(states)] )
-for this_func, this_lims in zip(basis_funcs, epoch_lims):
-    this_func[this_lims[0]:this_lims[1]] = 1
-basis_funcs = basis_funcs / norm(basis_funcs,axis=-1)[:,np.newaxis] 
-vz.imshow(basis_funcs);plt.show()
-
-assert np.abs(np.diff(time_lims)) == len(basis_funcs.T)
-
-# Check orthonormality of basis functions
-dot_product = basis_funcs.dot(basis_funcs.T)
-print("Dot Product Matrix of Basis Functions (Should be close to Identity):")
-pp(dot_product)
-
-##############################
-
 test_unit = 22
 test_chunk = 3
 test_data = wanted_taste_firing[:, test_unit, :][trial_chunks[test_chunk][0]:trial_chunks[test_chunk][1]]
 test_data = test_data[..., firing_time_inds]
 
-down_inds = np.linspace(0, basis_funcs.shape[1]-1, test_data.shape[1]).astype(int)
-down_template = basis_funcs[:, down_inds]
 
 fig, ax = plt.subplots(2,1, figsize=(10,6), sharex=True)
 ax[0].imshow(test_data, aspect='auto')
