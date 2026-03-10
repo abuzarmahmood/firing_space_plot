@@ -63,10 +63,16 @@ fig, ax = plt.subplots(3,len(unique_tastes), sharex = 'col', sharey= 'row',
 for taste_idx, taste in enumerate(unique_tastes):
     ax[0, taste_idx].plot(taste_data_list[taste_idx])
     ax[1, taste_idx].plot(zscored_taste_data_list[taste_idx])
-    ax[2, taste_idx].hist(taste_cp_list[taste_idx], bins = 30)
+    bins = np.arange(0, taste_data_list[taste_idx].shape[0], 1)
+    bin_counts, _ = np.histogram(taste_cp_list[taste_idx], bins = bins)
+    ax[2, taste_idx].bar(bins[:-1], bin_counts, width = 0.8, alpha=0.7)
     ax[2, taste_idx].set_xlabel('Trial Number')
+    # Plot mode
+    mode_bin = bins[np.argmax(bin_counts)]
+    ax[2, taste_idx].axvline(mode_bin, color = 'red', linestyle = '--', zorder=-1, label='Mode')
 ax[0, 0].set_ylabel('Behavior Score')
 ax[1, 0].set_ylabel('Z-scored Behavior Score')
 ax[2, 0].set_ylabel('Changepoint Samples')
+plt.legend(loc='upper right')
 fig.suptitle('Behavior Score and Changepoint Distributions by Taste')
 plt.show()
