@@ -5,6 +5,7 @@ from matplotlib import pyplot as plt
 import pandas as pd
 from scipy.stats import zscore
 import numpy as np
+from tqdm import tqdm
 
 plot_base_dir = '/media/bigdata/firing_space_plot/emg_analysis/CM_behavior_transitions/plots'
 plot_dir = os.path.join(plot_base_dir, 'two_test_changepoint_plots')
@@ -18,7 +19,8 @@ with open(os.path.join(data_dir, data_file), 'rb') as f:
     # behavior_score_dict = load(f)
     behavior_score_df = load(f)
 
-for ind, row in behavior_score_df.iterrows(): 
+out_dict_list = []
+for ind, row in tqdm(behavior_score_df.iterrows()): 
     basename = row['session_name']
     behavior_score_dict = row['behavior_dict']
 
@@ -68,6 +70,16 @@ for ind, row in behavior_score_df.iterrows():
         tau_samples = fit[-2]
         taste_cp_list.append(tau_samples)
 
+        out_dict = dict(
+                basename = basename,
+                taste = taste,
+                taste_trials = taste_trials,
+                taste_behavior_array = taste_behavior_array,
+                zscored_taste_behavior_array = zscored_taste_behavior_array,
+                tau_samples = tau_samples,
+                )
+        out_dict_list.append(out_dict)
+
 
     fig, ax = plt.subplots(3,len(unique_tastes), sharex = 'col', sharey= 'row',
                            figsize = (len(unique_tastes)*3, 5))
@@ -114,3 +126,10 @@ for ind, row in behavior_score_df.iterrows():
     fig.savefig(os.path.join(plot_dir, f'{basename}_behavior_changepoint_plots_absolute_trial.png'))
     plt.close(fig)
     # plt.show()
+
+##############################
+# Compile out_dict_list into a dataframe and save
+out_df = pd.DataFrame(out_dict_list)
+out_df_file = 'behavior_changepoint_out_df.pkl'
+with open(os.path.join(data_dir, out_df_file), 'wb') as f:
+    pd.to_pickle(out_df, f)
