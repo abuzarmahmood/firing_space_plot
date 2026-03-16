@@ -130,6 +130,18 @@ for ind, row in tqdm(behavior_score_df.iterrows()):
 ##############################
 # Compile out_dict_list into a dataframe and save
 out_df = pd.DataFrame(out_dict_list)
+
+# Add a column for mode changepoint
+change_hists = [
+    np.histogram(out_dict['tau_samples'], bins = np.arange(0, out_dict['taste_behavior_array'].shape[0]+1, 1))[0]
+    for out_dict in out_dict_list
+    ]
+mode_changepoints = [
+    np.arange(0, out_dict['taste_behavior_array'].shape[0], 1)[np.argmax(change_hist)]
+    for out_dict, change_hist in zip(out_dict_list, change_hists)
+    ]
+out_df['mode_changepoint'] = mode_changepoints
+
 out_df_file = 'behavior_changepoint_out_df.pkl'
 with open(os.path.join(data_dir, out_df_file), 'wb') as f:
     pd.to_pickle(out_df, f)
