@@ -123,14 +123,12 @@ for this_file in tqdm(data_list):
     basename = this_file.split('.')[0]
 
     artifact_out_path = artifacts_dir / f'{basename}_fit_dict.pkl'
-    if artifact_out_path.exists():
-        print(f"Skipping {basename}, already exists.")
-        continue
+    # if artifact_out_path.exists():
+    #     print(f"Skipping {basename}, already exists.")
+    #     continue
 
     raw_data, raw_metadata = load_data(
-            os.path.join(data_dir,
-            [x for x in data_list if 'gape' in x][0]
-                         )
+            os.path.join(data_dir,this_file)
             )
 
     bin_size = 250
@@ -193,10 +191,13 @@ for this_file in tqdm(data_list):
     # break    
     basename = this_file.split('.')[0]
 
+    artifact_out_path = artifacts_dir / f'{basename}_fit_dict.pkl'
+    # if artifact_out_path.exists():
+    #     print(f"Skipping {basename}, already exists.")
+    #     continue
+
     raw_data, raw_metadata = load_data(
-            os.path.join(data_dir,
-            [x for x in data_list if 'gape' in x][0]
-                         )
+            os.path.join(data_dir,this_file)
             )
 
     bin_size = 250
@@ -228,5 +229,5 @@ for this_file in tqdm(data_list):
         'bin_size': bin_size,
         'metadata': raw_metadata
     }
-    with open(artifacts_dir / f'{basename}_dpp_fit_dict.pkl', 'wb') as f:
+    with open(artifact_out_path, 'wb') as f:
         cloudpickle.dump(save_dict, f)
